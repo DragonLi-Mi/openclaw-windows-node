@@ -13,6 +13,7 @@
 using OpenClaw.Shared;
 using OpenClaw.Shared.Inference;
 using OpenClaw.Shared.Inference.Catalog;
+using System.Collections.Immutable;
 using System.Net;
 using System.Text;
 
@@ -639,6 +640,7 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
                     {
                         LocalAiInstallManifest verifiedManifest = install.Manifest with
                         {
+                            PreviousEndpoints = ReplacementEndpointHistory(install, ownership.Endpoint),
                             Endpoint = ownership.Endpoint.AbsoluteUri,
                         };
                         await _manifestStore.SaveAsync(verifiedManifest, cancellationToken).ConfigureAwait(false);
@@ -1058,11 +1060,24 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
 
         LocalAiInstallManifest verifiedManifest = install.Manifest with
         {
+            PreviousEndpoints = ReplacementEndpointHistory(install, endpoint),
             Endpoint = endpoint.AbsoluteUri,
         };
         await _manifestStore.SaveAsync(verifiedManifest, cancellationToken).ConfigureAwait(false);
         _install = _manifestStore.ResolveAndValidate(verifiedManifest);
         return _install;
+    }
+
+    private static ImmutableArray<string> ReplacementEndpointHistory(
+        LocalAiResolvedInstall install,
+        Uri endpoint)
+    {
+        ImmutableArray<string> history = install.Manifest.PreviousEndpoints;
+        string? previous = install.Endpoint?.AbsoluteUri;
+        return install.Manifest.ReplacedManifest is not null && install.Endpoint != endpoint &&
+            previous is not null && !history.Contains(previous, StringComparer.Ordinal)
+                ? history.Add(previous)
+                : history;
     }
 
     private async Task<bool> TryLoadInstallAsync(CancellationToken cancellationToken, bool preserveUnavailableSnapshot = false)
