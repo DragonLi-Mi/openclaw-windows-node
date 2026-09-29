@@ -567,23 +567,46 @@ public sealed class LocalAiManifestStore
         return resolved;
     }
 
-    internal async Task<LocalAiResolvedInstall> RestoreReplacedManifestAsync(
+    internal async Task<LocalAiResolvedInstall> RestoreRecoveryManifestAsync(
         LocalAiInstallManifest expectedManifest,
+        LocalAiInstallManifest recoveryManifest,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(expectedManifest);
+        ArgumentNullException.ThrowIfNull(recoveryManifest);
         await using FileStream writeLock = await AcquireManifestWriteLockAsync(cancellationToken)
             .ConfigureAwait(false);
         LocalAiInstallManifest current = await ReadManifestAsync(cancellationToken).ConfigureAwait(false);
-        if (!HasSameRuntimeAndModel(current, expectedManifest) ||
-            current.ReplacedManifest is not { } replaced)
+        if (!HasSameRuntimeAndModel(current, expectedManifest) || current.ReplacedManifest is null)
         {
             throw new InvalidDataException(
-                "The Local AI model replacement changed before its original receipt could be restored.");
+                "The Local AI model replacement changed before its recovery receipt could be restored.");
         }
 
-        LocalAiResolvedInstall resolved = ResolveAndValidate(replaced);
-        await SaveWithoutLockAsync(replaced, cancellationToken).ConfigureAwait(false);
+        bool restoresOriginal = JsonElement.DeepEquals(
+            JsonSerializer.SerializeToElement(current.ReplacedManifest),
+            JsonSerializer.SerializeToElement(recoveryManifest));
+        bool endpointWasPublished = recoveryManifest.Endpoint is { } recoveryEndpoint &&
+            (string.Equals(current.Endpoint, recoveryEndpoint, StringComparison.Ordinal) ||
+                (current.PreviousEndpoints?.Contains(recoveryEndpoint, StringComparer.Ordinal) ?? false));
+        bool restoresPendingRoute = endpointWasPublished && JsonElement.DeepEquals(
+            JsonSerializer.SerializeToElement(current),
+            JsonSerializer.SerializeToElement(recoveryManifest with
+            {
+                Endpoint = current.Endpoint,
+                PreviousEndpoints = current.PreviousEndpoints,
+            }));
+        if (!restoresOriginal && !restoresPendingRoute)
+        {
+            throw new InvalidDataException(
+                "The requested Local AI recovery receipt is not an authorized replacement route.");
+        }
+
+        LocalAiInstallManifest restored = restoresPendingRoute
+            ? current with { Endpoint = recoveryManifest.Endpoint }
+            : recoveryManifest;
+        LocalAiResolvedInstall resolved = ResolveAndValidate(restored);
+        await SaveWithoutLockAsync(restored, cancellationToken).ConfigureAwait(false);
         return resolved;
     }
 

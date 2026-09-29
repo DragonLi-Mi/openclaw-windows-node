@@ -866,11 +866,15 @@ public sealed class PersistLocalAiManifestStep : SetupStep
         if (!ctx.LocalAiManifestCreatedThisRun)
         {
             if (ctx.LocalAiRecoveryReceiptRollbackAllowed &&
-                ctx.LocalAiResolvedInstall?.Manifest.ReplacedManifest is not null)
+                ctx.LocalAiResolvedInstall?.Manifest.ReplacedManifest is not null &&
+                ctx.LocalAiRecoveryOriginalInstall is { } recoveryInstall)
             {
                 var recoveryStore = new LocalAiManifestStore(new LocalAiPaths(ctx.LocalDataDir));
                 ctx.LocalAiResolvedInstall = await recoveryStore
-                    .RestoreReplacedManifestAsync(ctx.LocalAiResolvedInstall.Manifest, ct)
+                    .RestoreRecoveryManifestAsync(
+                        ctx.LocalAiResolvedInstall.Manifest,
+                        recoveryInstall.Manifest,
+                        ct)
                     .ConfigureAwait(false);
                 ctx.LocalAiRecoveryProviderTransition = false;
                 ctx.LocalAiRecoveryReceiptRollbackAllowed = false;

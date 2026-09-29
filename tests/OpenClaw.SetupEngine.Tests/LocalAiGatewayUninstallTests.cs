@@ -365,16 +365,22 @@ public sealed class LocalAiGatewayUninstallTests
         var step = new ConfigureLocalAiGatewayStep();
 
         StepResult result = await step.ExecuteAsync(context, CancellationToken.None);
+        await step.RollbackAsync(context, CancellationToken.None);
+        await new PersistLocalAiManifestStep().RollbackAsync(context, CancellationToken.None);
 
         Assert.Equal(StepOutcome.Success, result.Outcome);
-        Assert.True(context.LocalAiRecoveryProviderTransition);
-        Assert.Equal(replacementManifest.Endpoint, (await store.LoadAsync())!.Manifest.Endpoint);
+        Assert.False(context.LocalAiRecoveryProviderTransition);
+        LocalAiResolvedInstall restored = (await store.LoadAsync())!;
+        Assert.Equal(publishedRoute.Manifest.Endpoint, restored.Manifest.Endpoint);
+        Assert.Equal(published.Manifest.ModelCatalogId, restored.Manifest.ModelCatalogId);
+        Assert.NotNull(restored.Manifest.ReplacedManifest);
+        Assert.Equal(replacementManifest.PreviousEndpoints, restored.Manifest.PreviousEndpoints);
         Assert.True(LocalAiGatewayProviderDefinition.MatchesProviderJson(
             commands.ProviderJson!,
-            context.LocalAiResolvedInstall));
+            restored));
         Assert.Equal(
             JsonSerializer.Serialize(
-                LocalAiGatewayProviderDefinition.BuildPrimaryModel(context.LocalAiResolvedInstall)),
+                LocalAiGatewayProviderDefinition.BuildPrimaryModel(restored)),
             commands.PrimaryJson);
     }
 
