@@ -413,7 +413,7 @@ public sealed class LocalAiGatewayUninstallTests
     }
 
     [Fact]
-    public async Task Recovery_PreservesProviderThatMatchesNeitherEndpoint()
+    public async Task Recovery_DriftedProviderRejectsBeforeGatewayMutation()
     {
         using var temp = new TempDirectory("local-ai-gateway-recovery-");
         LocalAiResolvedInstall original = await SaveManifestAsync(temp.Path);
@@ -444,6 +444,8 @@ public sealed class LocalAiGatewayUninstallTests
         Assert.Equal(StepOutcome.Failed, result.Outcome);
         Assert.Equal(driftedProvider, commands.ProviderJson);
         Assert.Equal(primary, commands.PrimaryJson);
+        Assert.DoesNotContain(commands.WslCalls, command =>
+            command.Contains("LOCAL_AI_GATEWAY_CONFIGURED", StringComparison.Ordinal));
     }
 
     [Fact]
