@@ -202,6 +202,39 @@ public sealed class LocalAiGatewayUninstallTests
     }
 
     [Fact]
+    public async Task FreshProcessUninstall_RemovesHistoricalManagedProviderWhenPrimaryIsMissing()
+    {
+        using var temp = new TempDirectory("local-ai-gateway-uninstall-");
+        LocalAiResolvedInstall original = await SaveManifestAsync(temp.Path);
+        LocalAiInstallManifest pendingManifest = original.Manifest with
+        {
+            ModelCatalogId = LocalModelCatalog.Qwen27BModelId,
+            ModelAlias = LocalModelCatalog.Qwen27BModelId,
+            Endpoint = "http://127.0.0.1:39876/v1",
+            ReplacedManifest = original.Manifest,
+            PreviousEndpoints = [original.Manifest.Endpoint!],
+        };
+        var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
+        await store.SaveAsync(pendingManifest);
+        LocalAiResolvedInstall pending = (await store.LoadAsync())!;
+        LocalAiResolvedInstall historical = pending with
+        {
+            Manifest = pending.Manifest with { Endpoint = original.Manifest.Endpoint },
+            Endpoint = original.Endpoint,
+        };
+        var commands = new GatewayStateCommandRunner(
+            LocalAiGatewayProviderDefinition.BuildProviderJson(historical),
+            primaryJson: null);
+        SetupContext context = CreateContext(temp.Path, commands);
+        context.IsUninstalling = true;
+
+        await new ConfigureLocalAiGatewayStep().RollbackAsync(context, CancellationToken.None);
+
+        Assert.Null(commands.ProviderJson);
+        Assert.Null(commands.PrimaryJson);
+    }
+
+    [Fact]
     public async Task FreshProcessUninstall_AcceptsCliRedactedManagedApiKey()
     {
         using var temp = new TempDirectory("local-ai-gateway-uninstall-");

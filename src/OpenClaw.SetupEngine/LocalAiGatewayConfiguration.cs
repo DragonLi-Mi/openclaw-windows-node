@@ -457,11 +457,8 @@ public sealed class ConfigureLocalAiGatewayStep : SetupStep
             {
                 Endpoint = previousEndpoint,
             });
-            if (current.ProviderExisted && current.PrimaryModelExisted &&
-                LocalAiGatewayProviderDefinition.MatchesProviderJson(current.ProviderJson!, previous) &&
-                JsonEquals(
-                    current.PrimaryModelJson!,
-                    JsonSerializer.Serialize(LocalAiGatewayProviderDefinition.BuildPrimaryModel(previous))))
+            if (current.ProviderExisted &&
+                LocalAiGatewayProviderDefinition.MatchesProviderJson(current.ProviderJson!, previous))
             {
                 install = previous;
                 break;
