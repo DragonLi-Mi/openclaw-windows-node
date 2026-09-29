@@ -311,8 +311,8 @@ public sealed class LocalAiGatewayUninstallTests
         LocalAiResolvedInstall published = (await store.LoadAsync())!;
         LocalAiResolvedInstall publishedRoute = published with
         {
-            Manifest = published.Manifest with { Endpoint = published.Manifest.PreviousEndpoints[1] },
-            Endpoint = new Uri(published.Manifest.PreviousEndpoints[1]),
+            Manifest = published.Manifest with { Endpoint = published.Manifest.PreviousEndpoints!.Value[1] },
+            Endpoint = new Uri(published.Manifest.PreviousEndpoints!.Value[1]),
         };
         string publishedProvider = LocalAiGatewayProviderDefinition.BuildProviderJson(publishedRoute);
         string primary = JsonSerializer.Serialize(
@@ -325,7 +325,7 @@ public sealed class LocalAiGatewayUninstallTests
         LocalAiInstallManifest replacementManifest = publishedManifest with
         {
             Endpoint = "http://127.0.0.1:39879/v1",
-            PreviousEndpoints = publishedManifest.PreviousEndpoints.Add(publishedManifest.Endpoint!),
+            PreviousEndpoints = publishedManifest.PreviousEndpoints!.Value.Add(publishedManifest.Endpoint!),
         };
         await store.SaveAsync(replacementManifest);
         context.LocalAiResolvedInstall = (await store.LoadAsync())!;

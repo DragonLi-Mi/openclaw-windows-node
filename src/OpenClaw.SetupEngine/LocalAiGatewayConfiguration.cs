@@ -451,7 +451,7 @@ public sealed class ConfigureLocalAiGatewayStep : SetupStep
             return;
 
         var store = new LocalAiManifestStore(new LocalAiPaths(ctx.LocalDataDir));
-        foreach (string previousEndpoint in install.Manifest.PreviousEndpoints)
+        foreach (string previousEndpoint in install.Manifest.PreviousEndpoints ?? [])
         {
             LocalAiResolvedInstall previous = store.ResolveAndValidate(install.Manifest with
             {

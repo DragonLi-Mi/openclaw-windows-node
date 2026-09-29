@@ -231,6 +231,24 @@ public sealed partial class LocalAiPortLifecycleTests
     }
 
     [Fact]
+    public async Task Manifest_OrdinaryReceiptRemainsReadableBySchemaFourReader()
+    {
+        using var temp = new TempDirectory("local-ai-manifest-");
+        var paths = new LocalAiPaths(temp.Path);
+        await new LocalAiManifestStore(paths).SaveAsync(ValidManifest());
+
+        string json = await File.ReadAllTextAsync(paths.ManifestPath);
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow,
+        };
+
+        Assert.NotNull(JsonSerializer.Deserialize<SchemaFourTransitionalManifest>(json, options));
+        Assert.DoesNotContain("previousEndpoints", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("replacedManifest", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Router_RejectsRuntimeArchitectureMismatchWithoutHardwareProfile()
     {
         using var temp = new TempDirectory("local-ai-manifest-");
@@ -3601,6 +3619,35 @@ public sealed partial class LocalAiPortLifecycleTests
             DraftValueCachePrecision = KvCachePrecision.Q8_0,
             InstalledAtUtc = DateTimeOffset.Parse("2026-08-18T12:00:00Z"),
         };
+    }
+
+    private sealed record SchemaFourTransitionalManifest
+    {
+        public int SchemaVersion { get; init; }
+        public string? Engine { get; init; }
+        public string? EngineVersion { get; init; }
+        public string? Architecture { get; init; }
+        public string? HardwareProfileId { get; init; }
+        public string? RuntimeId { get; init; }
+        public string? ModelCatalogId { get; init; }
+        public string? SelectedGpuId { get; init; }
+        public string? ExecutablePath { get; init; }
+        public JsonElement RuntimeAssets { get; init; }
+        public string? ModelPath { get; init; }
+        public string? ModelCacheRoot { get; init; }
+        public string? CachedModelPath { get; init; }
+        public string? ModelId { get; init; }
+        public string? ModelAlias { get; init; }
+        public JsonElement ModelAsset { get; init; }
+        public int RequestedPort { get; init; }
+        public string? Endpoint { get; init; }
+        public string? GatewayFallbackModel { get; init; }
+        public int ContextLength { get; init; }
+        public string? KeyCachePrecision { get; init; }
+        public string? ValueCachePrecision { get; init; }
+        public string? DraftKeyCachePrecision { get; init; }
+        public string? DraftValueCachePrecision { get; init; }
+        public DateTimeOffset InstalledAtUtc { get; init; }
     }
 
     private sealed class SynchronizedEventLog : IReadOnlyCollection<string>

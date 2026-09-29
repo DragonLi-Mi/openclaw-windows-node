@@ -259,7 +259,8 @@ public sealed record LocalAiInstallManifest
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public LocalAiInstallManifest? ReplacedManifest { get; init; }
     /// <summary>Earlier verified replacement endpoints that may still be published to the Gateway.</summary>
-    public ImmutableArray<string> PreviousEndpoints { get; init; } = [];
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ImmutableArray<string>? PreviousEndpoints { get; init; }
     public required int ContextLength { get; init; }
     public KvCachePrecision KeyCachePrecision { get; init; } = KvCachePrecision.F16;
     public KvCachePrecision ValueCachePrecision { get; init; } = KvCachePrecision.F16;
@@ -656,14 +657,17 @@ public sealed class LocalAiManifestStore
             }
             _ = ResolveAndValidate(replaced);
         }
-        else if (!manifest.PreviousEndpoints.IsDefaultOrEmpty)
+        else if (manifest.PreviousEndpoints is { IsDefaultOrEmpty: false })
         {
             throw new InvalidDataException("Previous Local AI endpoints require a pending model replacement.");
         }
 
         Uri? endpoint = ValidateEndpoint(manifest.Endpoint, manifest.RequestedPort);
-        HashSet<string> previousEndpoints = manifest.PreviousEndpoints.ToHashSet(StringComparer.Ordinal);
-        if (previousEndpoints.Count != manifest.PreviousEndpoints.Length)
+        ImmutableArray<string> endpointHistory = manifest.PreviousEndpoints.GetValueOrDefault();
+        if (endpointHistory.IsDefault)
+            endpointHistory = [];
+        HashSet<string> previousEndpoints = endpointHistory.ToHashSet(StringComparer.Ordinal);
+        if (previousEndpoints.Count != endpointHistory.Length)
         {
             throw new InvalidDataException("Previous Local AI endpoints must be unique.");
         }

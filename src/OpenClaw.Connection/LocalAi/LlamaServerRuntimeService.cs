@@ -1072,10 +1072,11 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
         LocalAiResolvedInstall install,
         Uri endpoint)
     {
-        ImmutableArray<string> history = install.Manifest.PreviousEndpoints;
+        ImmutableArray<string> history = install.Manifest.PreviousEndpoints ?? [];
         string? previous = install.Endpoint?.AbsoluteUri;
         return install.Manifest.ReplacedManifest is not null && install.Endpoint != endpoint &&
-            previous is not null && !history.Contains(previous, StringComparer.Ordinal)
+            previous is not null &&
+            !history.Contains(previous, StringComparer.Ordinal)
                 ? history.Add(previous)
                 : history;
     }

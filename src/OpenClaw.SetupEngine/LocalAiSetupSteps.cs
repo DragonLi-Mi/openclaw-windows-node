@@ -924,12 +924,13 @@ public sealed class PersistLocalAiManifestStep : SetupStep
 
     private static ImmutableArray<string> ReplacementEndpointHistory(LocalAiResolvedInstall? pending)
     {
+        ImmutableArray<string> history = pending?.Manifest.PreviousEndpoints ?? [];
         if (pending?.Endpoint is null ||
-            pending.Manifest.PreviousEndpoints.Contains(pending.Endpoint.AbsoluteUri, StringComparer.Ordinal))
+            history.Contains(pending.Endpoint.AbsoluteUri, StringComparer.Ordinal))
         {
-            return pending?.Manifest.PreviousEndpoints ?? [];
+            return history;
         }
-        return pending.Manifest.PreviousEndpoints.Add(pending.Endpoint.AbsoluteUri);
+        return history.Add(pending.Endpoint.AbsoluteUri);
     }
 }
 
@@ -949,7 +950,7 @@ public sealed class FinalizeLocalAiModelReplacementStep : SetupStep
         LocalAiInstallManifest committed = install.Manifest with
         {
             ReplacedManifest = null,
-            PreviousEndpoints = [],
+            PreviousEndpoints = null,
         };
         try
         {
