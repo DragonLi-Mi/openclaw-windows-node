@@ -532,6 +532,30 @@ public sealed class LocalAiManifestStore
         return resolved;
     }
 
+    internal async Task<LocalAiResolvedInstall> FinalizeReplacementAsync(
+        LocalAiInstallManifest expectedManifest,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(expectedManifest);
+        await using FileStream writeLock = await AcquireManifestWriteLockAsync(cancellationToken)
+            .ConfigureAwait(false);
+        LocalAiInstallManifest current = await ReadManifestAsync(cancellationToken).ConfigureAwait(false);
+        if (!HasSameRuntimeAndModel(current, expectedManifest))
+        {
+            throw new InvalidDataException(
+                "The Local AI installation changed before its model replacement could be finalized.");
+        }
+
+        LocalAiInstallManifest finalized = current with
+        {
+            ReplacedManifest = null,
+            PreviousEndpoints = null,
+        };
+        LocalAiResolvedInstall resolved = ResolveAndValidate(finalized);
+        await SaveWithoutLockAsync(finalized, cancellationToken).ConfigureAwait(false);
+        return resolved;
+    }
+
     private static bool HasSameRuntimeAndModel(
         LocalAiInstallManifest current,
         LocalAiInstallManifest expected) =>

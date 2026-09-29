@@ -950,16 +950,12 @@ public sealed class FinalizeLocalAiModelReplacementStep : SetupStep
     public override async Task<StepResult> ExecuteAsync(SetupContext ctx, CancellationToken ct)
     {
         LocalAiResolvedInstall install = ctx.LocalAiResolvedInstall!;
-        LocalAiInstallManifest committed = install.Manifest with
-        {
-            ReplacedManifest = null,
-            PreviousEndpoints = null,
-        };
         try
         {
             var store = new LocalAiManifestStore(new LocalAiPaths(ctx.LocalDataDir));
-            await store.SaveAsync(committed, ct).ConfigureAwait(false);
-            ctx.LocalAiResolvedInstall = store.ResolveAndValidate(committed);
+            ctx.LocalAiResolvedInstall = await store
+                .FinalizeReplacementAsync(install.Manifest, ct)
+                .ConfigureAwait(false);
             ctx.LocalAiRecoveryProviderTransition = false;
             ctx.LocalAiRecoveryReceiptRollbackAllowed = false;
             return StepResult.Ok("Local AI model replacement is committed.");

@@ -286,6 +286,36 @@ public sealed partial class LocalAiPortLifecycleTests
     }
 
     [Fact]
+    public async Task Manifest_FinalizationPreservesConcurrentlyUpdatedEndpoint()
+    {
+        using var temp = new TempDirectory("local-ai-manifest-");
+        var paths = new LocalAiPaths(temp.Path);
+        var store = new LocalAiManifestStore(paths);
+        LocalAiInstallManifest original = ValidManifest() with
+        {
+            Endpoint = "http://127.0.0.1:28765/v1",
+        };
+        LocalAiInstallManifest pending = original with
+        {
+            ModelCatalogId = "replacement-model",
+            ModelAlias = "replacement-model",
+            Endpoint = "http://127.0.0.1:28766/v1",
+            ReplacedManifest = original,
+            PreviousEndpoints = [original.Endpoint!],
+        };
+        await store.SaveAsync(pending);
+        await store.UpdateVerifiedEndpointAsync(
+            pending,
+            new Uri("http://127.0.0.1:28767/v1"));
+
+        LocalAiResolvedInstall finalized = await store.FinalizeReplacementAsync(pending);
+
+        Assert.Equal("http://127.0.0.1:28767/v1", finalized.Manifest.Endpoint);
+        Assert.Null(finalized.Manifest.ReplacedManifest);
+        Assert.Null(finalized.Manifest.PreviousEndpoints);
+    }
+
+    [Fact]
     public async Task Manifest_RejectsNullPreviousEndpoint()
     {
         using var temp = new TempDirectory("local-ai-manifest-");
