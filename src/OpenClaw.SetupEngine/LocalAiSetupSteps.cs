@@ -922,10 +922,13 @@ public sealed class PersistLocalAiManifestStep : SetupStep
         return receipts.MoveToImmutable();
     }
 
-    private static ImmutableArray<string> ReplacementEndpointHistory(LocalAiResolvedInstall? pending)
+    private static ImmutableArray<string>? ReplacementEndpointHistory(LocalAiResolvedInstall? pending)
     {
-        ImmutableArray<string> history = pending?.Manifest.PreviousEndpoints ?? [];
-        if (pending?.Endpoint is null ||
+        if (pending is null)
+            return null;
+
+        ImmutableArray<string> history = pending.Manifest.PreviousEndpoints ?? [];
+        if (pending.Endpoint is null ||
             history.Contains(pending.Endpoint.AbsoluteUri, StringComparer.Ordinal))
         {
             return history;

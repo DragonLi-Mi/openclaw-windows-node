@@ -249,6 +249,70 @@ public sealed partial class LocalAiPortLifecycleTests
     }
 
     [Fact]
+    public async Task Manifest_EndpointUpdateDoesNotRestoreFinalizedReplacementState()
+    {
+        using var temp = new TempDirectory("local-ai-manifest-");
+        var paths = new LocalAiPaths(temp.Path);
+        var store = new LocalAiManifestStore(paths);
+        LocalAiInstallManifest original = ValidManifest() with
+        {
+            Endpoint = "http://127.0.0.1:28765/v1",
+        };
+        LocalAiInstallManifest pending = original with
+        {
+            ModelCatalogId = "replacement-model",
+            ModelAlias = "replacement-model",
+            Endpoint = "http://127.0.0.1:28766/v1",
+            ReplacedManifest = original,
+            PreviousEndpoints = [original.Endpoint!],
+        };
+        await store.SaveAsync(pending);
+        await store.SaveAsync(pending with
+        {
+            ReplacedManifest = null,
+            PreviousEndpoints = null,
+        });
+
+        LocalAiResolvedInstall updated = await store.UpdateVerifiedEndpointAsync(
+            pending,
+            new Uri("http://127.0.0.1:28767/v1"));
+
+        Assert.Equal("http://127.0.0.1:28767/v1", updated.Manifest.Endpoint);
+        Assert.Null(updated.Manifest.ReplacedManifest);
+        Assert.Null(updated.Manifest.PreviousEndpoints);
+        string json = await File.ReadAllTextAsync(paths.ManifestPath);
+        Assert.DoesNotContain("previousEndpoints", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("replacedManifest", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Manifest_RejectsNullPreviousEndpoint()
+    {
+        using var temp = new TempDirectory("local-ai-manifest-");
+        var paths = new LocalAiPaths(temp.Path);
+        var store = new LocalAiManifestStore(paths);
+        LocalAiInstallManifest original = ValidManifest() with
+        {
+            Endpoint = "http://127.0.0.1:28765/v1",
+        };
+        await store.SaveAsync(original with
+        {
+            ModelCatalogId = "replacement-model",
+            ModelAlias = "replacement-model",
+            Endpoint = "http://127.0.0.1:28766/v1",
+            ReplacedManifest = original,
+            PreviousEndpoints = [original.Endpoint!],
+        });
+        JsonObject json = (JsonNode.Parse(await File.ReadAllTextAsync(paths.ManifestPath)) as JsonObject)!;
+        json["previousEndpoints"] = new JsonArray { null };
+        await File.WriteAllTextAsync(paths.ManifestPath, json.ToJsonString());
+
+        InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(() => store.LoadAsync());
+
+        Assert.Contains("non-empty endpoint", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Router_RejectsRuntimeArchitectureMismatchWithoutHardwareProfile()
     {
         using var temp = new TempDirectory("local-ai-manifest-");

@@ -1756,6 +1756,12 @@ public sealed class LocalAiInstallRecoveryTests
         Assert.Equal(CacheRoot(temp.Path), repaired.Manifest.ModelCacheRoot);
         Assert.Equal(repaired.Manifest.CachedModelPath, repaired.ModelPath);
         Assert.False(context.LocalAiManifestCreatedThisRun);
+        if (!pendingReplacement)
+        {
+            Assert.Null(repaired.Manifest.PreviousEndpoints);
+            string json = await File.ReadAllTextAsync(new LocalAiPaths(temp.Path).ManifestPath);
+            Assert.DoesNotContain("previousEndpoints", json, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
