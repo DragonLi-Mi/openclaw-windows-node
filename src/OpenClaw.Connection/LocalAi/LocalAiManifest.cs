@@ -508,6 +508,11 @@ public sealed class LocalAiManifestStore
             throw new InvalidDataException(
                 "The Local AI installation changed before its verified endpoint could be recorded.");
         }
+        if (expectedManifest.ReplacedManifest is not null && current.ReplacedManifest is null)
+        {
+            throw new InvalidDataException(
+                "The Local AI model replacement was finalized before its verified endpoint could be recorded.");
+        }
 
         ImmutableArray<string>? history = current.PreviousEndpoints;
         if (current.ReplacedManifest is null)
@@ -545,6 +550,12 @@ public sealed class LocalAiManifestStore
             throw new InvalidDataException(
                 "The Local AI installation changed before its model replacement could be finalized.");
         }
+        if (expectedManifest.ReplacedManifest is null || current.ReplacedManifest is null ||
+            !string.Equals(current.Endpoint, expectedManifest.Endpoint, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException(
+                "The Local AI model replacement changed before it could be finalized.");
+        }
 
         LocalAiInstallManifest finalized = current with
         {
@@ -553,6 +564,26 @@ public sealed class LocalAiManifestStore
         };
         LocalAiResolvedInstall resolved = ResolveAndValidate(finalized);
         await SaveWithoutLockAsync(finalized, cancellationToken).ConfigureAwait(false);
+        return resolved;
+    }
+
+    internal async Task<LocalAiResolvedInstall> RestoreReplacedManifestAsync(
+        LocalAiInstallManifest expectedManifest,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(expectedManifest);
+        await using FileStream writeLock = await AcquireManifestWriteLockAsync(cancellationToken)
+            .ConfigureAwait(false);
+        LocalAiInstallManifest current = await ReadManifestAsync(cancellationToken).ConfigureAwait(false);
+        if (!HasSameRuntimeAndModel(current, expectedManifest) ||
+            current.ReplacedManifest is not { } replaced)
+        {
+            throw new InvalidDataException(
+                "The Local AI model replacement changed before its original receipt could be restored.");
+        }
+
+        LocalAiResolvedInstall resolved = ResolveAndValidate(replaced);
+        await SaveWithoutLockAsync(replaced, cancellationToken).ConfigureAwait(false);
         return resolved;
     }
 

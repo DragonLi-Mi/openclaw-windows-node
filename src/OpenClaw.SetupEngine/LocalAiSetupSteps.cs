@@ -864,7 +864,19 @@ public sealed class PersistLocalAiManifestStep : SetupStep
         }
 
         if (!ctx.LocalAiManifestCreatedThisRun)
+        {
+            if (ctx.LocalAiRecoveryReceiptRollbackAllowed &&
+                ctx.LocalAiResolvedInstall?.Manifest.ReplacedManifest is not null)
+            {
+                var recoveryStore = new LocalAiManifestStore(new LocalAiPaths(ctx.LocalDataDir));
+                ctx.LocalAiResolvedInstall = await recoveryStore
+                    .RestoreReplacedManifestAsync(ctx.LocalAiResolvedInstall.Manifest, ct)
+                    .ConfigureAwait(false);
+                ctx.LocalAiRecoveryProviderTransition = false;
+                ctx.LocalAiRecoveryReceiptRollbackAllowed = false;
+            }
             return;
+        }
 
         var paths = new LocalAiPaths(ctx.LocalDataDir);
         await new LocalAiManifestStore(paths).DeleteAsync(ct);

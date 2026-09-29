@@ -1659,6 +1659,35 @@ public sealed class LocalAiInstallRecoveryTests
     }
 
     [Fact]
+    public async Task PersistRollback_RestoresOriginalReceiptBeforeReplacementCleanup()
+    {
+        using var temp = new TempDirectory();
+        LocalAiInstallManifest original = CreateManifest(temp.Path, CatalogPlan(), "GPU-0");
+        LocalAiInstallManifest pending = original with
+        {
+            ModelCatalogId = "replacement-model",
+            ModelAlias = "replacement-model",
+            ReplacedManifest = original,
+            PreviousEndpoints = [original.Endpoint!],
+        };
+        var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
+        await store.SaveAsync(pending);
+        SetupContext context = CreateContext(temp.Path, confirmDestructive: false);
+        context.LocalAiResolvedInstall = store.ResolveAndValidate(pending);
+        context.LocalAiRecoveryProviderTransition = true;
+        context.LocalAiRecoveryReceiptRollbackAllowed = true;
+
+        await new PersistLocalAiManifestStep().RollbackAsync(context, CancellationToken.None);
+
+        LocalAiInstallManifest restored = (await store.LoadAsync())!.Manifest;
+        Assert.Equal(original.ModelCatalogId, restored.ModelCatalogId);
+        Assert.Null(restored.ReplacedManifest);
+        Assert.Null(restored.PreviousEndpoints);
+        Assert.False(context.LocalAiRecoveryProviderTransition);
+        Assert.False(context.LocalAiRecoveryReceiptRollbackAllowed);
+    }
+
+    [Fact]
     public async Task ReconcileStep_RecoveryPinsIncompleteReceiptAsRollbackBaseline()
     {
         using var temp = new TempDirectory();

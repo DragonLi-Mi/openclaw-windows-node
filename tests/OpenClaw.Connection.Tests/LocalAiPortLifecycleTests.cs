@@ -273,11 +273,14 @@ public sealed partial class LocalAiPortLifecycleTests
             PreviousEndpoints = null,
         });
 
-        LocalAiResolvedInstall updated = await store.UpdateVerifiedEndpointAsync(
-            pending,
-            new Uri("http://127.0.0.1:28767/v1"));
+        InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            store.UpdateVerifiedEndpointAsync(
+                pending,
+                new Uri("http://127.0.0.1:28767/v1")));
 
-        Assert.Equal("http://127.0.0.1:28767/v1", updated.Manifest.Endpoint);
+        Assert.Contains("finalized", error.Message, StringComparison.Ordinal);
+        LocalAiResolvedInstall updated = (await store.LoadAsync())!;
+        Assert.Equal("http://127.0.0.1:28766/v1", updated.Manifest.Endpoint);
         Assert.Null(updated.Manifest.ReplacedManifest);
         Assert.Null(updated.Manifest.PreviousEndpoints);
         string json = await File.ReadAllTextAsync(paths.ManifestPath);
@@ -286,7 +289,7 @@ public sealed partial class LocalAiPortLifecycleTests
     }
 
     [Fact]
-    public async Task Manifest_FinalizationPreservesConcurrentlyUpdatedEndpoint()
+    public async Task Manifest_FinalizationRejectsConcurrentlyUpdatedEndpoint()
     {
         using var temp = new TempDirectory("local-ai-manifest-");
         var paths = new LocalAiPaths(temp.Path);
@@ -308,11 +311,14 @@ public sealed partial class LocalAiPortLifecycleTests
             pending,
             new Uri("http://127.0.0.1:28767/v1"));
 
-        LocalAiResolvedInstall finalized = await store.FinalizeReplacementAsync(pending);
+        InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            store.FinalizeReplacementAsync(pending));
 
-        Assert.Equal("http://127.0.0.1:28767/v1", finalized.Manifest.Endpoint);
-        Assert.Null(finalized.Manifest.ReplacedManifest);
-        Assert.Null(finalized.Manifest.PreviousEndpoints);
+        Assert.Contains("changed", error.Message, StringComparison.Ordinal);
+        LocalAiResolvedInstall retained = (await store.LoadAsync())!;
+        Assert.Equal("http://127.0.0.1:28767/v1", retained.Manifest.Endpoint);
+        Assert.NotNull(retained.Manifest.ReplacedManifest);
+        Assert.NotNull(retained.Manifest.PreviousEndpoints);
     }
 
     [Fact]
