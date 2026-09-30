@@ -229,6 +229,7 @@ public sealed class PreserveLocalAiRecoveryGatewayStep : SetupStep
             }
             ctx.LocalAiRecoveryProviderTransition = false;
             ctx.LocalAiRecoveryReceiptRollbackAllowed = false;
+            ctx.LocalAiRecoveryRollbackUncertain = false;
             ctx.LocalAiGatewayPriorState = null;
         }
 

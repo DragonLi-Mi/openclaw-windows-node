@@ -86,7 +86,8 @@ public sealed class SetupInstallationProgress
         "configure-local-ai-gateway" or "install-service" => SetupInstallationPhase.Install,
         "start-gateway" or "restart-gateway" or "mint-token" or
         "finalize-tailscale-serve" or "pair-operator" or "pair-node" or "verify-e2e" or
-        "run-wizard" or "windows-node-context" or "start-keepalive" => SetupInstallationPhase.Connect,
+        "run-wizard" or "windows-node-context" or "start-keepalive" or
+        "finalize-local-ai-model-replacement" => SetupInstallationPhase.Connect,
         _ => throw new ArgumentOutOfRangeException(nameof(stepId), stepId, "Installation step needs an explicit presentation phase."),
     };
 }

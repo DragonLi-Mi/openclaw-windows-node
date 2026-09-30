@@ -577,7 +577,10 @@ public sealed class LocalAiManifestStore
         await using FileStream writeLock = await AcquireManifestWriteLockAsync(cancellationToken)
             .ConfigureAwait(false);
         LocalAiInstallManifest current = await ReadManifestAsync(cancellationToken).ConfigureAwait(false);
-        if (!HasSameRuntimeAndModel(current, expectedManifest) || current.ReplacedManifest is null)
+        if (!JsonElement.DeepEquals(
+                JsonSerializer.SerializeToElement(current),
+                JsonSerializer.SerializeToElement(expectedManifest)) ||
+            current.ReplacedManifest is null)
         {
             throw new InvalidDataException(
                 "The Local AI model replacement changed before its recovery receipt could be restored.");

@@ -803,7 +803,8 @@ public sealed class LocalAiOnboardingTests
     private static SetupLocalAiHost Host(GatewayRegistry registry, FakeRuntime runtime,
         Func<LocalAiResolvedInstall?> install, Func<LocalAiGatewayProviderCoordinator>? provider = null) =>
         new(() => Task.FromResult(new LocalAiSetupResolution(LocalAiSetupRoute.Recovery,
-                new("gateway", "Managed", 18789, install()?.Manifest.ModelCatalogId, install()?.Manifest.RequestedPort))),
+                new("gateway", "Managed", 18789, install()?.Manifest.ModelCatalogId,
+                    install()?.Manifest.RequestedPort, PinModelSelection: false))),
             () => registry, () => runtime, _ => Task.FromResult(install()), (_, _) => Task.FromResult(true),
             _ => Task.FromResult(Hardware), provider ?? (() => throw new InvalidOperationException("No route mutation expected.")));
 

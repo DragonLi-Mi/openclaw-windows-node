@@ -618,6 +618,9 @@ public sealed class SetupContext
     internal LocalAiResolvedInstall? LocalAiRecoveryPendingInstall { get; set; }
     internal bool LocalAiRecoveryProviderTransition { get; set; }
     internal bool LocalAiRecoveryReceiptRollbackAllowed { get; set; }
+    internal bool LocalAiRecoveryRollbackUncertain { get; set; }
+    internal bool LocalAiRecoveryCleanupAllowed =>
+        !LocalAiRecoveryRollbackUncertain || LocalAiRecoveryReceiptRollbackAllowed;
     internal bool LocalAiManifestCreatedThisRun { get; set; }
     internal ILocalAiRuntime? LocalAiRuntime { get; set; }
     internal HostHardwareInfo? LocalAiGpuBaseline { get; set; }

@@ -379,6 +379,7 @@ public class SetupPipelineTests
     {
         var context = CreateContext(LocalAiRecoveryConfig());
         context.LocalAiRecoveryProviderTransition = true;
+        context.LocalAiRecoveryRollbackUncertain = true;
         context.LocalAiRecoveryReceiptRollbackAllowed = false;
         var runtime = new DisposeTrackingRuntime();
         context.LocalAiRuntime = runtime;
@@ -395,6 +396,7 @@ public class SetupPipelineTests
     {
         var context = CreateContext(LocalAiRecoveryConfig());
         context.LocalAiRecoveryProviderTransition = true;
+        context.LocalAiRecoveryRollbackUncertain = true;
         context.LocalAiRecoveryReceiptRollbackAllowed = true;
         var runtime = new DisposeTrackingRuntime();
         context.LocalAiRuntime = runtime;

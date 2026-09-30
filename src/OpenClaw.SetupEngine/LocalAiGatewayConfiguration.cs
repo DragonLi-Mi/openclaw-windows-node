@@ -229,6 +229,11 @@ public sealed class ConfigureLocalAiGatewayStep : SetupStep
         }
 
         string batchJson = LocalAiGatewayConfigBuilder.BuildBatchJson(ctx);
+        if (ctx.LocalAiRecoveryProviderTransition)
+        {
+            ctx.LocalAiRecoveryRollbackUncertain = true;
+            ctx.LocalAiRecoveryReceiptRollbackAllowed = false;
+        }
         CommandResult result = await ApplyBatchAsync(ctx, batchJson, "LOCAL_AI_GATEWAY_CONFIGURED", ct);
         if (result.ExitCode != 0 || result.TimedOut ||
             !result.Stdout.Contains("LOCAL_AI_GATEWAY_CONFIGURED", StringComparison.Ordinal))
@@ -291,6 +296,7 @@ public sealed class ConfigureLocalAiGatewayStep : SetupStep
                 JsonEquals(current.PrimaryModelJson!, prior.PrimaryModelJson!)))
         {
             ctx.LocalAiRecoveryReceiptRollbackAllowed = true;
+            ctx.LocalAiRecoveryRollbackUncertain = false;
             return;
         }
 
@@ -362,7 +368,10 @@ public sealed class ConfigureLocalAiGatewayStep : SetupStep
             }
         }
         if (recoveryOriginal is not null)
+        {
             ctx.LocalAiRecoveryReceiptRollbackAllowed = true;
+            ctx.LocalAiRecoveryRollbackUncertain = false;
+        }
     }
 
     private static async Task ReconcileFailedRecoveryRestoreAsync(
@@ -405,6 +414,7 @@ public sealed class ConfigureLocalAiGatewayStep : SetupStep
         if (originalRestored)
         {
             ctx.LocalAiRecoveryReceiptRollbackAllowed = true;
+            ctx.LocalAiRecoveryRollbackUncertain = false;
             return;
         }
 
