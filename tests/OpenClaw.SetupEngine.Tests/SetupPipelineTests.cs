@@ -333,6 +333,42 @@ public class SetupPipelineTests
         Assert.True(context.LocalAiRecoveryStoppedWsl);
     }
 
+    [Fact]
+    public async Task FinalizationFailure_RestartsGatewayAfterConfigurationRollback()
+    {
+        SetupConfig config = LocalAiRecoveryConfig();
+        config.RollbackOnFailure = true;
+        var context = CreateContext(config);
+        bool configurationRestored = false;
+        bool restartedAfterRestore = false;
+        var pipeline = new SetupPipeline([
+            new PreserveLocalAiRecoveryGatewayStep((_, _) =>
+            {
+                restartedAfterRestore = configurationRestored;
+                return Task.FromResult(StepResult.Ok("restarted"));
+            }),
+            new MockStep(
+                "configure-local-ai-gateway",
+                (_, _) => Task.FromResult(StepResult.Ok("configured")),
+                (_, _) =>
+                {
+                    configurationRestored = true;
+                    return Task.CompletedTask;
+                }),
+            new RestartGatewayStep((_, _) => Task.FromResult(StepResult.Ok("restarted"))),
+            new MockStep(
+                "finalize-local-ai-model-replacement",
+                (_, _) => Task.FromResult(StepResult.Fail("finalization failed"))),
+        ]);
+
+        PipelineResult result = await pipeline.RunAsync(context);
+
+        Assert.Equal(PipelineOutcome.Failed, result.Outcome);
+        Assert.True(configurationRestored);
+        Assert.True(restartedAfterRestore);
+        Assert.False(context.LocalAiRecoveryStoppedWsl);
+    }
+
     /// <summary>
     /// Regression guard for a rollback race: if the Gateway could not be confirmed switched back
     /// to the original (A) endpoint, the replacement (B) runtime must be kept alive rather than
