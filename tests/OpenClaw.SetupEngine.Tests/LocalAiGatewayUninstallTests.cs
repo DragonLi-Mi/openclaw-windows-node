@@ -235,6 +235,32 @@ public sealed class LocalAiGatewayUninstallTests
     }
 
     [Fact]
+    public async Task FreshProcessUninstall_RemovesPendingReplacementOnFixedPort()
+    {
+        using var temp = new TempDirectory("local-ai-gateway-uninstall-");
+        LocalAiResolvedInstall original = await SaveManifestAsync(temp.Path, requestedPort: 28765);
+        LocalAiInstallManifest pendingManifest = original.Manifest with
+        {
+            ModelCatalogId = LocalModelCatalog.Qwen27BModelId,
+            ModelAlias = LocalModelCatalog.Qwen27BModelId,
+            ReplacedManifest = original.Manifest,
+        };
+        var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
+        await store.SaveAsync(pendingManifest);
+        LocalAiResolvedInstall pending = (await store.LoadAsync())!;
+        var commands = new GatewayStateCommandRunner(
+            LocalAiGatewayProviderDefinition.BuildProviderJson(pending),
+            JsonSerializer.Serialize(LocalAiGatewayProviderDefinition.BuildPrimaryModel(pending)));
+        SetupContext context = CreateContext(temp.Path, commands);
+        context.IsUninstalling = true;
+
+        await new ConfigureLocalAiGatewayStep().RollbackAsync(context, CancellationToken.None);
+
+        Assert.Null(commands.ProviderJson);
+        Assert.Null(commands.PrimaryJson);
+    }
+
+    [Fact]
     public async Task FreshProcessUninstall_AcceptsCliRedactedManagedApiKey()
     {
         using var temp = new TempDirectory("local-ai-gateway-uninstall-");
@@ -381,6 +407,52 @@ public sealed class LocalAiGatewayUninstallTests
         Assert.Equal(
             JsonSerializer.Serialize(
                 LocalAiGatewayProviderDefinition.BuildPrimaryModel(restored)),
+            commands.PrimaryJson);
+    }
+
+    [Fact]
+    public async Task Recovery_ReplacesAndRollsBackModelOnFixedPort()
+    {
+        using var temp = new TempDirectory("local-ai-gateway-recovery-");
+        LocalAiResolvedInstall original = await SaveManifestAsync(
+            temp.Path,
+            fallbackModel: "openai/gpt-5",
+            requestedPort: 28765);
+        var commands = new GatewayStateCommandRunner(
+            LocalAiGatewayProviderDefinition.BuildProviderJson(original),
+            JsonSerializer.Serialize(LocalAiGatewayProviderDefinition.BuildPrimaryModel(original)));
+        SetupContext context = CreateRecoveryContext(temp.Path, commands);
+        context.LocalAiRecoveryOriginalInstall = original;
+        context.LocalAiRecoveryReceiptRollbackAllowed = true;
+        LocalAiInstallManifest replacementManifest = original.Manifest with
+        {
+            ModelCatalogId = LocalModelCatalog.Qwen27BModelId,
+            ModelAlias = LocalModelCatalog.Qwen27BModelId,
+            ReplacedManifest = original.Manifest,
+        };
+        var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
+        await store.SaveAsync(replacementManifest);
+        LocalAiResolvedInstall replacement = (await store.LoadAsync())!;
+        context.LocalAiResolvedInstall = replacement;
+        var step = new ConfigureLocalAiGatewayStep();
+
+        StepResult result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Success, result.Outcome);
+        Assert.True(LocalAiGatewayProviderDefinition.MatchesProviderJson(
+            commands.ProviderJson!,
+            replacement));
+        Assert.Equal(
+            JsonSerializer.Serialize(LocalAiGatewayProviderDefinition.BuildPrimaryModel(replacement)),
+            commands.PrimaryJson);
+
+        await step.RollbackAsync(context, CancellationToken.None);
+
+        Assert.True(LocalAiGatewayProviderDefinition.MatchesProviderJson(
+            commands.ProviderJson!,
+            original));
+        Assert.Equal(
+            JsonSerializer.Serialize(LocalAiGatewayProviderDefinition.BuildPrimaryModel(original)),
             commands.PrimaryJson);
     }
 
@@ -870,7 +942,8 @@ public sealed class LocalAiGatewayUninstallTests
 
     private static async Task<LocalAiResolvedInstall> SaveManifestAsync(
         string localDataDirectory,
-        string? fallbackModel = null)
+        string? fallbackModel = null,
+        int requestedPort = 0)
     {
         var paths = new LocalAiPaths(localDataDirectory);
         const string revision = "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d";
@@ -903,7 +976,7 @@ public sealed class LocalAiGatewayUninstallTests
                 SizeBytes = 1,
                 Sha256 = new string('b', 64),
             },
-            RequestedPort = 0,
+            RequestedPort = requestedPort,
             Endpoint = "http://127.0.0.1:28765/v1",
             GatewayFallbackModel = fallbackModel,
             ContextLength = LocalModelCatalog.NativeContextTokens,
