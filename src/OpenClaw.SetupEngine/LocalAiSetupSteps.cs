@@ -763,6 +763,19 @@ public sealed class PersistLocalAiManifestStep : SetupStep
                 originalInstall.Manifest.ModelCatalogId,
                 manifest.ModelCatalogId,
                 StringComparison.Ordinal);
+            LocalAiInstallManifest replacedManifest = originalInstall.Manifest.ReplacedManifest ??
+                originalInstall.Manifest;
+            // A pending model replacement can outlive a catalog runtime bump. Both sides
+            // of the replacement receipt must describe the newly acquired shared runtime,
+            // while retaining the prior model as rollback provenance.
+            replacedManifest = replacedManifest with
+            {
+                EngineVersion = manifest.EngineVersion,
+                Architecture = manifest.Architecture,
+                RuntimeId = manifest.RuntimeId,
+                ExecutablePath = manifest.ExecutablePath,
+                RuntimeAssets = manifest.RuntimeAssets,
+            };
             manifest = originalInstall.Manifest with
             {
                 SchemaVersion = manifest.SchemaVersion,
@@ -794,7 +807,7 @@ public sealed class PersistLocalAiManifestStep : SetupStep
                 InstalledAtUtc = ctx.LocalAiRecoveryPendingInstall?.Manifest.InstalledAtUtc ??
                     originalInstall.Manifest.InstalledAtUtc,
                 ReplacedManifest = replacingModel
-                    ? originalInstall.Manifest.ReplacedManifest ?? originalInstall.Manifest
+                    ? replacedManifest
                     : null,
                 PreviousEndpoints = ReplacementEndpointHistory(ctx.LocalAiRecoveryPendingInstall),
             };
