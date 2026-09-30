@@ -1403,6 +1403,7 @@ public sealed class LocalAiInstallRecoveryTests
 
         var context = CreateContext(temp.Path, confirmDestructive: false);
         context.Config.LocalAi.Enabled = true;
+        context.Config.LocalAiRecoveryGatewayId = pendingReplacement ? "gateway-id" : null;
         context.Config.RollbackOnFailure = true;
         context.LocalAiPort = manifest.RequestedPort;
         context.LocalAiEligibility = new LocalInferenceEligibilityResult(
@@ -1440,12 +1441,8 @@ public sealed class LocalAiInstallRecoveryTests
             {
                 Assert.Equal(pendingReplacement, ctx.LocalAiRecoveryOriginalInstall is not null);
                 Assert.Equal(pendingReplacement, ctx.LocalAiRecoveryPendingInstall is not null);
-                Assert.Equal(
-                    pendingReplacement ? null : manifest.SchemaVersion,
-                    ctx.LocalAiUpgradeOriginalInstall?.Manifest.SchemaVersion);
-                Assert.Equal(
-                    pendingReplacement ? null : oldExecutable,
-                    ctx.LocalAiUpgradeOriginalInstall?.ExecutablePath);
+                Assert.Equal(manifest.SchemaVersion, ctx.LocalAiUpgradeOriginalInstall?.Manifest.SchemaVersion);
+                Assert.Equal(oldExecutable, ctx.LocalAiUpgradeOriginalInstall?.ExecutablePath);
                 Assert.Equal(cacheRoot, ctx.LocalAiModelInstall?.CacheRoot);
                 cachedModel = ctx.LocalAiModelInstall!.ModelPath;
                 return failureStage == "after-reconcile";

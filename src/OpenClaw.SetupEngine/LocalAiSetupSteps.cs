@@ -325,6 +325,9 @@ public sealed class ReconcileLocalAiInstallationStep : SetupStep
                 if (ctx.LocalAiRecoveryOriginalInstall is null &&
                     result.OriginalInstall is { } retainedReceipt)
                     ctx.LocalAiUpgradeOriginalInstall ??= retainedReceipt;
+                else if (result.PendingReplacement is { } pendingInstall &&
+                    result.RuntimeInstall is null)
+                    ctx.LocalAiUpgradeOriginalInstall ??= pendingInstall;
                 ctx.LocalAiRuntimeInstall = result.RuntimeInstall;
                 ctx.LocalAiModelInstall = result.ModelInstall;
                 ctx.LocalAiAdditionalModelInstalls = result.AdditionalModelInstalls
