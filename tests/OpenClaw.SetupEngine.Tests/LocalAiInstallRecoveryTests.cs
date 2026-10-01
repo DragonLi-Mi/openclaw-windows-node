@@ -1467,6 +1467,15 @@ public sealed class LocalAiInstallRecoveryTests
                     Assert.Equal("prior-model", upgraded.Manifest.ReplacedManifest!.ModelCatalogId);
                     Assert.Equal(upgraded.Manifest.RuntimeId, upgraded.Manifest.ReplacedManifest.RuntimeId);
                     Assert.Equal(upgraded.Manifest.RuntimeAssets, upgraded.Manifest.ReplacedManifest.RuntimeAssets);
+                    Assert.Equal(
+                        upgraded.Manifest.ReplacedManifest,
+                        ctx.LocalAiRecoveryOriginalInstall?.Manifest);
+                    LocalAiResolvedInstall pendingRoute = Assert.IsType<LocalAiResolvedInstall>(
+                        ctx.LocalAiRecoveryPendingInstall);
+                    Assert.Equal(manifest.Endpoint, pendingRoute.Manifest.Endpoint);
+                    Assert.Equal(upgraded.Manifest.RuntimeId, pendingRoute.Manifest.RuntimeId);
+                    Assert.Equal(upgraded.Manifest.RuntimeAssets, pendingRoute.Manifest.RuntimeAssets);
+                    Assert.Equal(upgraded.Manifest.ReplacedManifest, pendingRoute.Manifest.ReplacedManifest);
                 }
                 newExecutable = upgraded.ExecutablePath;
                 Assert.True(File.Exists(newExecutable));
@@ -2828,19 +2837,6 @@ public sealed class LocalAiInstallRecoveryTests
         }
     }
 
-    /// <summary>Accepts the runtime but cancels the install as inspection returns.</summary>
-    private sealed class CancellingRuntimeInspector(CancellationTokenSource cancellation) : ILlamaRuntimeInspector
-    {
-        public Task<LlamaRuntimeInspection> InspectAsync(
-            string installDirectory,
-            LlamaRuntimeVariant runtime,
-            CancellationToken cancellationToken)
-        {
-            cancellation.Cancel();
-            return Task.FromResult(new LlamaRuntimeInspection(true, null));
-        }
-    }
-
     private sealed class TrackingRuntimeAcquirer : ILlamaRuntimeAcquirer
     {
         public int RemoveCalls { get; private set; }
@@ -2855,6 +2851,19 @@ public sealed class LocalAiInstallRecoveryTests
         public void RemoveInstalledRuntime(
             string localDataDirectory,
             LlamaRuntimeInstallResult install) => RemoveCalls++;
+    }
+
+    /// <summary>Accepts the runtime but cancels the install as inspection returns.</summary>
+    private sealed class CancellingRuntimeInspector(CancellationTokenSource cancellation) : ILlamaRuntimeInspector
+    {
+        public Task<LlamaRuntimeInspection> InspectAsync(
+            string installDirectory,
+            LlamaRuntimeVariant runtime,
+            CancellationToken cancellationToken)
+        {
+            cancellation.Cancel();
+            return Task.FromResult(new LlamaRuntimeInspection(true, null));
+        }
     }
 
     private sealed class AcceptingModelVerifier : ILocalAiModelFileVerifier

@@ -2777,7 +2777,7 @@ public sealed partial class LocalAiPortLifecycleTests
         Assert.True(stillSetupOwned.GatewayRouteRequiresResolution);
         Assert.Equal(["stop", "start", "probe:28769"], events);
         await runtime.AcknowledgeSetupGatewayRouteAsync();
-        Assert.Equal([true, false, false, true], lifecycle.RecoveryIntents);
+        Assert.Equal([false, true, false, false, true], lifecycle.RecoveryIntents);
     }
 
     [Fact]
@@ -2831,7 +2831,7 @@ public sealed partial class LocalAiPortLifecycleTests
 
         Assert.True(released.GatewayRouteRequiresResolution);
         Assert.False(restarted.GatewayRouteRequiresResolution);
-        Assert.Equal([false, true, true], lifecycle.RecoveryIntents);
+        Assert.Equal([false, true, false, true], lifecycle.RecoveryIntents);
         Assert.Contains("quiesce:EndpointCycle", events);
         Assert.Contains("publish:28769", events);
     }

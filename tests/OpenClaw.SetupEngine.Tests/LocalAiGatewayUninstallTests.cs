@@ -996,6 +996,7 @@ public sealed class LocalAiGatewayUninstallTests
         Assert.False(context.LocalAiRecoveryRollbackUncertain);
         Assert.False(context.LocalAiRecoveryProviderTransition);
     }
+
     [Fact]
     public async Task Recovery_FailedProviderCompensationKeepsReplacementReceipt()
     {

@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using OpenClaw.Connection.LocalAi;
+using OpenClaw.Shared.Inference.Catalog;
 using OpenClaw.TestSupport;
 
 namespace OpenClaw.SetupEngine.Tests;
@@ -766,6 +767,71 @@ public class SetupPipelineTests
     }
 
     [Fact]
+    public async Task StartLocalAiRuntimeStep_CancellationAfterEndpointCommitAdoptsRollbackBaseline()
+    {
+        using var temp = new TempDirectory("local-ai-borrowed-runtime-cancel-after-endpoint-");
+        using var cancellation = new CancellationTokenSource();
+        SetupConfig config = LocalAiRecoveryConfig();
+        config.LocalAi.Enabled = true;
+        config.RollbackOnFailure = true;
+        var context = CreateContext(config, cancellation.Token, localDataDir: temp.Path);
+        LocalAiResolvedInstall original = CreateLocalAiResolvedInstall(temp.Path, port: 18801);
+        LocalAiInstallManifest pendingManifest = original.Manifest with
+        {
+            ModelCatalogId = "replacement-model",
+            ModelAlias = "replacement-model",
+            Endpoint = "http://127.0.0.1:18802/v1",
+            ReplacedManifest = original.Manifest,
+            PreviousEndpoints = [original.Manifest.Endpoint!],
+        };
+        LocalAiInstallManifest movedManifest = pendingManifest with
+        {
+            Endpoint = "http://127.0.0.1:18803/v1",
+            PreviousEndpoints = [original.Manifest.Endpoint!, pendingManifest.Endpoint!],
+        };
+        var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
+        await store.SaveAsync(pendingManifest);
+        LocalAiResolvedInstall pending = store.ResolveAndValidate(pendingManifest);
+        LocalAiResolvedInstall moved = store.ResolveAndValidate(movedManifest);
+        context.LocalAiResolvedInstall = pending;
+        context.LocalAiRecoveryOriginalInstall = original;
+        context.LocalAiRecoveryProviderTransition = true;
+        context.LocalAiRecoveryReceiptRollbackAllowed = true;
+        var runtime = new DisposeTrackingRuntime(HealthySnapshot(pending))
+        {
+            RestartForSetupHandler = async _ =>
+            {
+                await store.SaveAsync(movedManifest, CancellationToken.None);
+                cancellation.Cancel();
+                return HealthySnapshot(moved);
+            },
+            RestartHandler = async ct =>
+            {
+                LocalAiResolvedInstall restored = await store.LoadAsync(ct)
+                    ?? throw new InvalidDataException("restored receipt missing");
+                return HealthySnapshot(restored);
+            },
+        };
+        context.LocalAiRuntime = runtime;
+        context.LocalAiRuntimeBorrowed = true;
+        var pipeline = new SetupPipeline([
+            new PreserveLocalAiRecoveryGatewayStep(
+                (_, _) => Task.FromResult(StepResult.Ok("not needed")),
+                (_, _) => Task.FromResult(true)),
+            new StartLocalAiRuntimeStep(_ => runtime),
+        ]);
+
+        PipelineResult result = await pipeline.RunAsync(context);
+
+        Assert.Equal(PipelineOutcome.Cancelled, result.Outcome);
+        LocalAiResolvedInstall restored = (await store.LoadAsync())!;
+        Assert.Equal(original.Manifest.ModelCatalogId, restored.Manifest.ModelCatalogId);
+        Assert.Equal(1, runtime.RestartForSetupRollbackCalls);
+        Assert.True(context.LocalAiBorrowedRuntimeRestored);
+        Assert.False(context.LocalAiRecoveryRollbackUncertain);
+    }
+
+    [Fact]
     public async Task StartLocalAiRuntimeStep_RejectsBorrowedRuntimeOutsideRecovery()
     {
         using var temp = new TempDirectory("local-ai-borrowed-runtime-unarmed-");
@@ -1124,6 +1190,56 @@ public class SetupPipelineTests
         Assert.False(context.LocalAiRecoveryRollbackUncertain);
     }
 
+    [Fact]
+    public async Task RestoredBorrowedRuntimeTransfersExactAcquisitionCleanupOwnership()
+    {
+        using var temp = new TempDirectory("local-ai-restored-runtime-cleanup-ownership-");
+        SetupConfig config = LocalAiRecoveryConfig();
+        config.LocalAi.Enabled = true;
+        var context = CreateContext(config, localDataDir: temp.Path);
+        LocalAiResolvedInstall original = CreateLocalAiResolvedInstall(temp.Path, port: 18801);
+        LocalAiInstallManifest pendingManifest = original.Manifest with
+        {
+            ModelCatalogId = "replacement-model",
+            ModelAlias = "replacement-model",
+            Endpoint = "http://127.0.0.1:18802/v1",
+            ReplacedManifest = original.Manifest,
+            PreviousEndpoints = [original.Manifest.Endpoint!],
+        };
+        var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
+        await store.SaveAsync(pendingManifest);
+        context.LocalAiResolvedInstall = store.ResolveAndValidate(pendingManifest);
+        context.LocalAiRecoveryOriginalInstall = original;
+        context.LocalAiRecoveryProviderTransition = true;
+        context.LocalAiRuntimeInstall = new LlamaRuntimeInstallResult(
+            Path.GetDirectoryName(original.ExecutablePath)!,
+            original.ExecutablePath,
+            LlamaRuntimeInstallDisposition.Installed,
+            CreatedThisRun: true,
+            VerifiedArchives: [],
+            Rollback: null);
+        var runtime = new DisposeTrackingRuntime(HealthySnapshot(context.LocalAiResolvedInstall))
+        {
+            RestartHandler = async ct =>
+            {
+                LocalAiResolvedInstall restored = await store.LoadAsync(ct)
+                    ?? throw new InvalidDataException("restored receipt missing");
+                return HealthySnapshot(restored);
+            },
+        };
+        context.LocalAiRuntime = runtime;
+        context.LocalAiRuntimeBorrowed = true;
+        var acquirer = new TrackingRuntimeAcquirer();
+
+        await new PersistLocalAiManifestStep().RollbackAsync(context, CancellationToken.None);
+        await new AcquireLocalAiRuntimeStep(acquirer).RollbackAsync(context, CancellationToken.None);
+
+        Assert.Equal(original.Manifest.ModelCatalogId, (await store.LoadAsync())!.Manifest.ModelCatalogId);
+        Assert.Null(context.LocalAiRuntimeInstall);
+        Assert.Equal(0, acquirer.RemoveCalls);
+        Assert.Equal(1, runtime.RestartForSetupRollbackCalls);
+    }
+
     /// <summary>
     /// Regression guard: a stale manifest receipt is not enough to prove the original (A)
     /// endpoint is still alive. Rollback must probe it before pointing the Gateway back at it.
@@ -1366,6 +1482,22 @@ public class SetupPipelineTests
             DisposeCalls++;
             return ValueTask.CompletedTask;
         }
+    }
+
+    private sealed class TrackingRuntimeAcquirer : ILlamaRuntimeAcquirer
+    {
+        public int RemoveCalls { get; private set; }
+
+        public Task<LlamaRuntimeInstallResult> InstallAsync(
+            string localDataDirectory,
+            LlamaRuntimeVariant runtime,
+            IProgress<LocalAiArtifactInstallProgress>? progress,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public void RemoveInstalledRuntime(
+            string localDataDirectory,
+            LlamaRuntimeInstallResult install) => RemoveCalls++;
     }
 
     private static LocalAiRuntimeSnapshot HealthySnapshot(LocalAiResolvedInstall install) => new(

@@ -185,8 +185,10 @@ internal sealed class LocalAiInstallReconciler
             }
 
             ValidateReplacementSource(install, plan, selectedGpuId, localDataDirectory);
-            LlamaRuntimeInspection replacementRuntime = await _runtimeInspector
-                .InspectAsync(Path.GetDirectoryName(install.ExecutablePath)!, cancellationToken)
+            LlamaRuntimeInspection replacementRuntime = await StageAndInspectRuntimeAsync(
+                    Path.GetDirectoryName(install.ExecutablePath)!,
+                    plan.Runtime,
+                    cancellationToken)
                 .ConfigureAwait(false);
             return new LocalAiReconcileResult(
                 Reused: false,
@@ -207,22 +209,12 @@ internal sealed class LocalAiInstallReconciler
             GpuIdsMatch(install.Manifest.SelectedGpuId, selectedGpuId);
 
         string runtimeDirectory = Path.GetDirectoryName(install.ExecutablePath)!;
-        LlamaRuntimeInspection? stagingFailure = null;
-        try
-        {
-            if (!runtimeUpgradePending)
-                _vcRuntimeStager?.Stage(runtimeDirectory);
-        }
-        catch (Exception exception) when (
-            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
-        {
-            stagingFailure = new LlamaRuntimeInspection(
-                false,
-                $"The app-local Visual C++ runtime could not be staged for llama-server: {exception.Message}");
-        }
-        LlamaRuntimeInspection inspection = stagingFailure ?? await _runtimeInspector
-            .InspectAsync(runtimeDirectory, plan.Runtime, cancellationToken)
-            .ConfigureAwait(false);
+        LlamaRuntimeInspection inspection = runtimeUpgradePending
+            ? await _runtimeInspector
+                .InspectAsync(runtimeDirectory, plan.Runtime, cancellationToken)
+                .ConfigureAwait(false)
+            : await StageAndInspectRuntimeAsync(runtimeDirectory, plan.Runtime, cancellationToken)
+                .ConfigureAwait(false);
         bool activeModelIsValid = await _modelVerifier
             .VerifyActiveAsync(install, plan.Model.Weights, cancellationToken)
             .ConfigureAwait(false);
@@ -340,6 +332,28 @@ internal sealed class LocalAiInstallReconciler
             OriginalInstall: allowIncompleteInstallation ? originalInstall : null,
             AdditionalModelInstalls: CreateAdditionalModelInstalls(install),
             PendingReplacement: pendingReplacement);
+    }
+
+    private async Task<LlamaRuntimeInspection> StageAndInspectRuntimeAsync(
+        string runtimeDirectory,
+        LlamaRuntimeVariant runtime,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            _vcRuntimeStager?.Stage(runtimeDirectory);
+        }
+        catch (Exception exception) when (
+            exception is IOException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            return new LlamaRuntimeInspection(
+                false,
+                $"The app-local Visual C++ runtime could not be staged for llama-server: {exception.Message}");
+        }
+
+        return await _runtimeInspector
+            .InspectAsync(runtimeDirectory, runtime, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private static void ValidateReplacementSource(

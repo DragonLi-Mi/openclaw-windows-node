@@ -337,6 +337,9 @@ public sealed class PreserveLocalAiRecoveryGatewayStep : SetupStep
                             restored.Detail ?? "The previous Local AI runtime could not be restored.");
                     }
                     ctx.LocalAiResolvedInstall = restoredInstall;
+                    AcquireLocalAiRuntimeStep.TransferCleanupOwnershipToRestoredRuntime(
+                        ctx,
+                        restoredInstall);
                     if (ctx.LocalAiGatewayPriorState is { } prior &&
                         !await _restoreRecoveryRoute(
                                 ctx,
