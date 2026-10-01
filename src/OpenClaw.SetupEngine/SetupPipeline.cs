@@ -169,6 +169,20 @@ public static class SetupStepFactory
 
 public sealed class SetupPipeline
 {
+    internal static Task ReleaseBorrowedLocalAiRuntimeAfterFailureAsync(
+        SetupContext ctx,
+        PipelineResult? result)
+    {
+        if (result?.Outcome == PipelineOutcome.Success ||
+            !ctx.LocalAiRuntimeBorrowed ||
+            !ctx.LocalAiBorrowedRuntimeRestartedThisRun ||
+            ctx.LocalAiRuntime is not { } borrowedRuntime)
+        {
+            return Task.CompletedTask;
+        }
+        return borrowedRuntime.ReleaseSetupGatewayRouteAsync(CancellationToken.None);
+    }
+
     public static async Task<PipelineResult> RunWithSettlementAsync(
         Func<Task<PipelineResult>> run, Func<PipelineResult?, Task> settle)
     {

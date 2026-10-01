@@ -2747,6 +2747,131 @@ public sealed partial class LocalAiPortLifecycleTests
     }
 
     [Fact]
+    public async Task RestartForSetupAsync_RestartsProcessWithoutChangingGatewayLifecycle()
+    {
+        using var temp = new TempDirectory("local-ai-port-");
+        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        var events = new SynchronizedEventLog();
+        var platform = new FakePlatform();
+        var host = new FakeProcessHost(platform, events, selectedPort: 28_769);
+        var lifecycle = new FakeLifecycle(events);
+        await using var runtime = CreateRuntime(
+            paths,
+            host,
+            platform,
+            new FakeClient(events),
+            lifecycle);
+        LocalAiRuntimeSnapshot started = await runtime.EnsureStartedAsync();
+        Assert.Equal(LocalAiRuntimeState.Healthy, started.State);
+        events.Clear();
+
+        LocalAiRuntimeSnapshot restarted = await runtime.RestartForSetupAsync();
+
+        Assert.Equal(LocalAiRuntimeState.Healthy, restarted.State);
+        Assert.Equal(["stop", "start", "probe:28769"], events);
+        Assert.True(restarted.GatewayRouteRequiresResolution);
+
+        events.Clear();
+        LocalAiRuntimeSnapshot stillSetupOwned = await runtime.RestartAsync();
+
+        Assert.True(stillSetupOwned.GatewayRouteRequiresResolution);
+        Assert.Equal(["stop", "start", "probe:28769"], events);
+        await runtime.AcknowledgeSetupGatewayRouteAsync();
+        Assert.Equal([true, false, false, true], lifecycle.RecoveryIntents);
+    }
+
+    [Fact]
+    public async Task AcknowledgeSetupGatewayRouteAsync_ClearsResolutionWithoutLifecycleIo()
+    {
+        using var temp = new TempDirectory("local-ai-port-");
+        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        var events = new SynchronizedEventLog();
+        var platform = new FakePlatform();
+        var host = new FakeProcessHost(platform, events, selectedPort: 28_769);
+        var lifecycle = new FakeLifecycle(events);
+        await using var runtime = CreateRuntime(
+            paths,
+            host,
+            platform,
+            new FakeClient(events),
+            lifecycle);
+        LocalAiRuntimeSnapshot started = await runtime.RestartForSetupAsync();
+        Assert.Equal(LocalAiRuntimeState.Healthy, started.State);
+        Assert.True(started.GatewayRouteRequiresResolution);
+        events.Clear();
+
+        LocalAiRuntimeSnapshot acknowledged = await runtime.AcknowledgeSetupGatewayRouteAsync();
+
+        Assert.False(acknowledged.GatewayRouteRequiresResolution);
+        Assert.Empty(events);
+        Assert.Equal([false, true], lifecycle.RecoveryIntents);
+    }
+
+    [Fact]
+    public async Task ReleaseSetupGatewayRouteAsync_ReturnsLifecycleOwnershipWithoutAcknowledgingRoute()
+    {
+        using var temp = new TempDirectory("local-ai-port-");
+        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        var events = new SynchronizedEventLog();
+        var platform = new FakePlatform();
+        var host = new FakeProcessHost(platform, events, selectedPort: 28_769);
+        var lifecycle = new FakeLifecycle(events);
+        await using var runtime = CreateRuntime(
+            paths,
+            host,
+            platform,
+            new FakeClient(events),
+            lifecycle);
+        LocalAiRuntimeSnapshot started = await runtime.RestartForSetupAsync();
+        Assert.True(started.GatewayRouteRequiresResolution);
+
+        LocalAiRuntimeSnapshot released = await runtime.ReleaseSetupGatewayRouteAsync();
+        events.Clear();
+        LocalAiRuntimeSnapshot restarted = await runtime.RestartAsync();
+
+        Assert.True(released.GatewayRouteRequiresResolution);
+        Assert.False(restarted.GatewayRouteRequiresResolution);
+        Assert.Equal([false, true, true], lifecycle.RecoveryIntents);
+        Assert.Contains("quiesce:EndpointCycle", events);
+        Assert.Contains("publish:28769", events);
+    }
+
+    [Fact]
+    public async Task RestartForSetupRollbackAsync_AdoptsRestoredReceiptBeforeGatewayLifecycle()
+    {
+        using var temp = new TempDirectory("local-ai-port-");
+        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        var events = new SynchronizedEventLog();
+        var platform = new FakePlatform();
+        var lifecycle = new FakeLifecycle(events);
+        var host = new FakeProcessHost(platform, events, selectedPort: 28_769);
+        await using var runtime = CreateRuntime(
+            paths,
+            host,
+            platform,
+            new FakeClient(events),
+            lifecycle);
+        LocalAiRuntimeSnapshot started = await runtime.EnsureStartedAsync();
+        Assert.Equal(LocalAiRuntimeState.Healthy, started.State);
+        LocalAiResolvedInstall current = (await new LocalAiManifestStore(paths).LoadAsync())!;
+        LocalAiInstallManifest restoredManifest = current.Manifest with
+        {
+            Endpoint = "http://127.0.0.1:28768/v1",
+        };
+        await new LocalAiManifestStore(paths).SaveAsync(restoredManifest);
+        events.Clear();
+        lifecycle.QuiescedEndpoints.Clear();
+
+        LocalAiRuntimeSnapshot restarted = await runtime.RestartForSetupRollbackAsync();
+
+        Assert.Equal(LocalAiRuntimeState.Healthy, restarted.State);
+        Assert.Equal(new Uri("http://127.0.0.1:28768/v1"), lifecycle.QuiescedEndpoints[0]);
+        Assert.Equal(new Uri("http://127.0.0.1:28769/v1"), restarted.Endpoint);
+        Assert.False(restarted.GatewayRouteRequiresResolution);
+        Assert.Contains("publish:28769", events);
+    }
+
+    [Fact]
     public async Task RestartAsync_InitialEndpointCycleExceptionCompletesTeardownBeforeStopping()
     {
         using var temp = new TempDirectory("local-ai-port-");

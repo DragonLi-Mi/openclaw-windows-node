@@ -880,11 +880,14 @@ public sealed class PersistLocalAiManifestStep : SetupStep
         if (ctx.LocalAiUpgradeOriginalInstall is not null)
         {
             await RestoreUpgradeReceiptAsync(ctx, ct);
+            if (ctx.LocalAiUpgradeOriginalInstall is null)
+                await RestartBorrowedRuntimeAsync(ctx, ct);
             return;
         }
 
         if (!ctx.LocalAiManifestCreatedThisRun)
         {
+            bool restoredRecoveryReceipt = false;
             // Before Gateway configuration is enrolled, this step still owns restoring a fresh
             // replacement receipt. Once configuration starts, the recovery guard must settle the
             // route and endpoint-health decision before any receipt or resource cleanup occurs.
@@ -911,7 +914,10 @@ public sealed class PersistLocalAiManifestStep : SetupStep
                 }
                 ctx.LocalAiRecoveryProviderTransition = false;
                 ctx.LocalAiRecoveryReceiptRollbackAllowed = false;
+                restoredRecoveryReceipt = true;
             }
+            if (restoredRecoveryReceipt)
+                await RestartBorrowedRuntimeAsync(ctx, ct);
             return;
         }
 
@@ -921,6 +927,30 @@ public sealed class PersistLocalAiManifestStep : SetupStep
         File.Delete(paths.RouterPresetPath);
         ctx.LocalAiResolvedInstall = null;
         ctx.LocalAiManifestCreatedThisRun = false;
+    }
+
+    private static async Task RestartBorrowedRuntimeAsync(SetupContext ctx, CancellationToken ct)
+    {
+        if (!ctx.LocalAiRuntimeBorrowed || ctx.LocalAiRuntime is null)
+            return;
+        // Before ConfigureLocalAiGatewayStep begins, the tray runtime still owns Gateway
+        // publication. Use its ordinary lifecycle so an automatic-port move is published.
+        LocalAiRuntimeSnapshot restored = await ctx.LocalAiRuntime.RestartForSetupRollbackAsync(ct);
+        LocalAiResolvedInstall expected = await new LocalAiManifestStore(new LocalAiPaths(ctx.LocalDataDir))
+            .LoadAsync(ct)
+            .ConfigureAwait(false)
+            ?? throw new InvalidOperationException("The restored Local AI receipt is unavailable.");
+        ctx.LocalAiResolvedInstall = expected;
+        if (restored.State != LocalAiRuntimeState.Healthy ||
+            restored.Ownership != LocalAiOwnership.CompanionManaged ||
+            restored.ModelId != expected.Manifest.ModelCatalogId ||
+            restored.Endpoint != expected.Endpoint ||
+            restored.ModelEvidence.State is not
+                (LocalAiModelAvailabilityState.Verified or LocalAiModelAvailabilityState.Loaded))
+        {
+            throw new InvalidOperationException(
+                restored.Detail ?? "The previous Local AI runtime could not be restored.");
+        }
     }
 
     internal static async Task RestoreUpgradeReceiptAsync(SetupContext ctx, CancellationToken ct)
@@ -1049,20 +1079,37 @@ public sealed class StartLocalAiRuntimeStep : SetupStep
     {
         if (ctx.LocalAiResolvedInstall is null)
             return StepResult.Terminal("llama-server startup requires a verified installation receipt.");
-        if (ctx.LocalAiRuntime is not null)
+        if (ctx.LocalAiRuntime is not null && !ctx.LocalAiRuntimeBorrowed)
             return StepResult.Terminal("A Local AI runtime is already attached to this setup transaction.");
+        if (ctx.LocalAiRuntimeBorrowed &&
+            ctx.LocalAiUpgradeOriginalInstall is null &&
+            ctx.LocalAiResolvedInstall.Manifest.ReplacedManifest is null)
+        {
+            return StepResult.Terminal(
+                "Borrowing the tray Local AI runtime requires a recorded model replacement or runtime upgrade.");
+        }
 
-        ILocalAiRuntime runtime = _runtimeFactory(ctx);
+        ILocalAiRuntime runtime = ctx.LocalAiRuntime ?? _runtimeFactory(ctx);
         ctx.LocalAiRuntime = runtime;
         try
         {
-            LocalAiRuntimeSnapshot snapshot = await runtime.EnsureStartedAsync(ct);
+            LocalAiRuntimeSnapshot snapshot;
+            if (ctx.LocalAiRuntimeBorrowed)
+            {
+                ctx.LocalAiBorrowedRuntimeRestartedThisRun = true;
+                snapshot = await runtime.RestartForSetupAsync(ct);
+            }
+            else
+            {
+                snapshot = await runtime.EnsureStartedAsync(ct);
+            }
             if (snapshot.State != LocalAiRuntimeState.Healthy ||
                 snapshot.Ownership != LocalAiOwnership.CompanionManaged ||
                 snapshot.ProcessId is null ||
+                snapshot.ModelId != ctx.LocalAiResolvedInstall.Manifest.ModelCatalogId ||
                 snapshot.ModelEvidence.State != LocalAiModelAvailabilityState.Verified)
             {
-                await DisposeRuntimeAsync(ctx);
+                await CleanUpFailedRuntimeAsync(ctx);
                 return StepResult.Fail(
                     snapshot.Detail ?? "The managed llama-server router did not become healthy.");
             }
@@ -1072,7 +1119,7 @@ public sealed class StartLocalAiRuntimeStep : SetupStep
                 .LoadAsync(ct);
             if (verifiedInstall?.Endpoint is null || verifiedInstall.Endpoint != snapshot.Endpoint)
             {
-                await DisposeRuntimeAsync(ctx);
+                await CleanUpFailedRuntimeAsync(ctx);
                 return StepResult.Fail(
                     "llama-server became healthy without committing its verified endpoint receipt.");
             }
@@ -1083,18 +1130,23 @@ public sealed class StartLocalAiRuntimeStep : SetupStep
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            await DisposeRuntimeAsync(ctx);
+            await CleanUpFailedRuntimeAsync(ctx);
             throw;
         }
         catch (Exception ex)
         {
-            await DisposeRuntimeAsync(ctx);
+            await CleanUpFailedRuntimeAsync(ctx);
             return StepResult.Fail($"llama-server startup failed: {ex.Message}", ex);
         }
     }
 
     public override Task RollbackAsync(SetupContext ctx, CancellationToken ct)
     {
+        if (ctx.LocalAiRuntimeBorrowed && !ctx.LocalAiBorrowedRuntimeRestartedThisRun)
+            return Task.CompletedTask;
+        if (ctx.LocalAiBorrowedRuntimeRestored)
+            return Task.CompletedTask;
+
         // During a recovery provider transition, ConfigureLocalAiGatewayStep's rollback (which
         // runs before this step's rollback) sets LocalAiRecoveryReceiptRollbackAllowed only when
         // it confirmed the Gateway no longer routes to this runtime's endpoint. If that could not
@@ -1105,8 +1157,12 @@ public sealed class StartLocalAiRuntimeStep : SetupStep
             ctx.Logger.Warn(
                 "Keeping the replacement llama-server router running because the Gateway configuration " +
                 "rollback could not confirm it no longer routes to this endpoint.");
-            return Task.CompletedTask;
+            return ctx.LocalAiRuntimeBorrowed && ctx.LocalAiRuntime is { } borrowedRuntime
+                ? borrowedRuntime.ReleaseSetupGatewayRouteAsync(ct)
+                : Task.CompletedTask;
         }
+        if (ctx.LocalAiRuntimeBorrowed)
+            return StopBorrowedRuntimeAsync(ctx, ct);
         return DisposeRuntimeAsync(ctx).AsTask();
     }
 
@@ -1129,6 +1185,23 @@ public sealed class StartLocalAiRuntimeStep : SetupStep
         ILocalAiRuntime runtime = ctx.LocalAiRuntime;
         ctx.LocalAiRuntime = null;
         await runtime.DisposeAsync();
+    }
+
+    private static async Task CleanUpFailedRuntimeAsync(SetupContext ctx)
+    {
+        if (ctx.LocalAiRuntimeBorrowed)
+        {
+            if (ctx.LocalAiRuntime is not null)
+                await ctx.LocalAiRuntime.StopForSetupAsync(CancellationToken.None);
+            return;
+        }
+        await DisposeRuntimeAsync(ctx);
+    }
+
+    private static async Task StopBorrowedRuntimeAsync(SetupContext ctx, CancellationToken ct)
+    {
+        if (ctx.LocalAiRuntime is not null)
+            await ctx.LocalAiRuntime.StopForSetupAsync(ct);
     }
 }
 
@@ -1189,7 +1262,7 @@ public sealed class VerifyLocalAiInferenceStep : SetupStep
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            await ResetRouterAsync(runtime);
+            await ResetRouterAsync(runtime, ctx.LocalAiRuntimeBorrowed);
             throw;
         }
         catch (OperationCanceledException ex)
@@ -1233,7 +1306,7 @@ public sealed class VerifyLocalAiInferenceStep : SetupStep
         var paths = new LocalAiPaths(ctx.LocalDataDir);
         IReadOnlyList<string> diagnostics =
             await LocalAiLogTail.ReadDiagnosticLinesAsync(paths, CancellationToken.None);
-        await ResetRouterAsync(runtime);
+        await ResetRouterAsync(runtime, ctx.LocalAiRuntimeBorrowed);
         // Echo into the setup log the UI already links, so the root cause remains available if
         // the router restart rotates the managed llama-server logs.
         foreach (string line in diagnostics)
@@ -1241,11 +1314,15 @@ public sealed class VerifyLocalAiInferenceStep : SetupStep
         return new LocalAiFailureDetail(diagnostics, paths.LogsDirectory);
     }
 
-    internal static async Task<LocalAiRuntimeSnapshot> ResetRouterAsync(ILocalAiRuntime runtime)
+    internal static async Task<LocalAiRuntimeSnapshot> ResetRouterAsync(
+        ILocalAiRuntime runtime,
+        bool setupScoped = false)
     {
         try
         {
-            return await runtime.RestartAsync(CancellationToken.None);
+            return setupScoped
+                ? await runtime.RestartForSetupAsync(CancellationToken.None)
+                : await runtime.RestartAsync(CancellationToken.None);
         }
         catch
         {

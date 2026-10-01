@@ -427,6 +427,286 @@ public class SetupPipelineTests
         Assert.Null(context.LocalAiRuntime);
     }
 
+    [Fact]
+    public async Task StartLocalAiRuntimeStep_RestartsBorrowedTrayRuntimeForReplacement()
+    {
+        using var temp = new TempDirectory("local-ai-borrowed-runtime-");
+        var context = CreateContext(LocalAiRecoveryConfig(), localDataDir: temp.Path);
+        LocalAiResolvedInstall install = CreateLocalAiResolvedInstall(context.LocalDataDir, port: 18802);
+        await new LocalAiManifestStore(new LocalAiPaths(context.LocalDataDir)).SaveAsync(install.Manifest);
+        context.LocalAiResolvedInstall = install;
+        context.LocalAiUpgradeOriginalInstall = install;
+        var runtime = new DisposeTrackingRuntime(HealthySnapshot(install));
+        context.LocalAiRuntime = runtime;
+        context.LocalAiRuntimeBorrowed = true;
+
+        StepResult result = await new StartLocalAiRuntimeStep().ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Success, result.Outcome);
+        Assert.Equal(1, runtime.RestartForSetupCalls);
+        Assert.Equal(0, runtime.RestartCalls);
+        Assert.Equal(0, runtime.EnsureStartedCalls);
+        Assert.Equal(0, runtime.DisposeCalls);
+        Assert.Same(runtime, context.LocalAiRuntime);
+    }
+
+    [Fact]
+    public async Task StartLocalAiRuntimeStep_RejectsBorrowedRuntimeWithoutReplacementOrUpgrade()
+    {
+        using var temp = new TempDirectory("local-ai-borrowed-runtime-no-replacement-");
+        var context = CreateContext(LocalAiRecoveryConfig(), localDataDir: temp.Path);
+        LocalAiResolvedInstall install = CreateLocalAiResolvedInstall(context.LocalDataDir, port: 18802);
+        await new LocalAiManifestStore(new LocalAiPaths(context.LocalDataDir)).SaveAsync(install.Manifest);
+        context.LocalAiResolvedInstall = install;
+        var runtime = new DisposeTrackingRuntime(HealthySnapshot(install));
+        context.LocalAiRuntime = runtime;
+        context.LocalAiRuntimeBorrowed = true;
+        var step = new StartLocalAiRuntimeStep();
+
+        StepResult result = await step.ExecuteAsync(context, CancellationToken.None);
+        await step.RollbackAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.FailedTerminal, result.Outcome);
+        Assert.Equal(0, runtime.RestartForSetupCalls);
+        Assert.Equal(0, runtime.StopForSetupCalls);
+        Assert.False(context.LocalAiBorrowedRuntimeRestartedThisRun);
+    }
+
+    [Fact]
+    public async Task ResetRouterAsync_UsesSetupScopedRestartForBorrowedRuntime()
+    {
+        var runtime = new DisposeTrackingRuntime();
+
+        await VerifyLocalAiInferenceStep.ResetRouterAsync(runtime, setupScoped: true);
+
+        Assert.Equal(1, runtime.RestartForSetupCalls);
+        Assert.Equal(0, runtime.RestartCalls);
+    }
+
+    [Fact]
+    public async Task ReleaseBorrowedLocalAiRuntimeAfterFailureAsync_ReleasesNoRollbackOwnership()
+    {
+        var context = CreateContext(LocalAiRecoveryConfig());
+        var runtime = new DisposeTrackingRuntime();
+        context.LocalAiRuntime = runtime;
+        context.LocalAiRuntimeBorrowed = true;
+        context.LocalAiBorrowedRuntimeRestartedThisRun = true;
+
+        await SetupPipeline.ReleaseBorrowedLocalAiRuntimeAfterFailureAsync(
+            context,
+            new PipelineResult(PipelineOutcome.Failed));
+
+        Assert.Equal(1, runtime.ReleaseSetupGatewayRouteCalls);
+
+        context.LocalAiBorrowedRuntimeRestartedThisRun = false;
+        await SetupPipeline.ReleaseBorrowedLocalAiRuntimeAfterFailureAsync(
+            context,
+            new PipelineResult(PipelineOutcome.Failed));
+
+        Assert.Equal(1, runtime.ReleaseSetupGatewayRouteCalls);
+
+        await SetupPipeline.ReleaseBorrowedLocalAiRuntimeAfterFailureAsync(
+            context,
+            new PipelineResult(PipelineOutcome.Success));
+
+        Assert.Equal(1, runtime.ReleaseSetupGatewayRouteCalls);
+    }
+
+    [Fact]
+    public async Task BorrowedTrayRuntime_RollbackRestoresRuntimeBeforeReconcilingAutomaticPort()
+    {
+        using var temp = new TempDirectory("local-ai-borrowed-runtime-rollback-");
+        SetupConfig config = LocalAiRecoveryConfig();
+        config.RollbackOnFailure = true;
+        var context = CreateContext(config, localDataDir: temp.Path);
+        LocalAiResolvedInstall original = CreateLocalAiResolvedInstall(context.LocalDataDir, port: 18801);
+        original = original with
+        {
+            Manifest = original.Manifest with { RequestedPort = 0 },
+        };
+        LocalAiInstallManifest pendingManifest = original.Manifest with
+        {
+            ModelCatalogId = "replacement-model",
+            ModelAlias = "replacement-model",
+            Endpoint = "http://127.0.0.1:18802/v1",
+            ReplacedManifest = original.Manifest,
+            PreviousEndpoints = [original.Manifest.Endpoint!],
+        };
+        var store = new LocalAiManifestStore(new LocalAiPaths(context.LocalDataDir));
+        await store.SaveAsync(pendingManifest);
+        context.LocalAiResolvedInstall = store.ResolveAndValidate(pendingManifest);
+        context.LocalAiRecoveryOriginalInstall = original;
+        context.LocalAiRecoveryProviderTransition = true;
+        var runtime = new DisposeTrackingRuntime(HealthySnapshot(context.LocalAiResolvedInstall))
+        {
+            RestartForSetupHandler = async ct =>
+            {
+                LocalAiResolvedInstall restored = await store.LoadAsync(ct)
+                    ?? throw new InvalidDataException("restored receipt missing");
+                LocalAiInstallManifest movedManifest = restored.Manifest with
+                {
+                    Endpoint = "http://127.0.0.1:18803/v1",
+                };
+                await store.SaveAsync(movedManifest, ct);
+                return HealthySnapshot(store.ResolveAndValidate(movedManifest));
+            },
+        };
+        context.LocalAiRuntime = runtime;
+        context.LocalAiRuntimeBorrowed = true;
+        context.LocalAiBorrowedRuntimeRestartedThisRun = true;
+        var rollbackOrder = new List<string>();
+        Uri? restoredRoute = null;
+        Uri? probedEndpoint = null;
+        var persist = new PersistLocalAiManifestStep();
+        var start = new StartLocalAiRuntimeStep(_ => runtime);
+        var preserve = new PreserveLocalAiRecoveryGatewayStep(
+            (_, _) => Task.FromResult(StepResult.Ok("gateway restarted")),
+            (install, _) =>
+            {
+                rollbackOrder.Add("probe");
+                Assert.Equal(0, runtime.AcknowledgeSetupGatewayRouteCalls);
+                probedEndpoint = install.Endpoint;
+                return Task.FromResult(true);
+            },
+            (_, _, _, install, _) =>
+            {
+                rollbackOrder.Add("route");
+                restoredRoute = install.Endpoint;
+                return Task.FromResult(true);
+            });
+        var pipeline = new SetupPipeline([
+            new MockStep(
+                "persist-local-ai-manifest",
+                (_, _) => Task.FromResult(StepResult.Ok("persisted")),
+                persist.RollbackAsync),
+            new MockStep(
+                "start-local-ai-runtime",
+                (_, _) => Task.FromResult(StepResult.Ok("started")),
+                start.RollbackAsync),
+            preserve,
+            new MockStep(
+                "configure-local-ai-gateway",
+                (ctx, _) =>
+                {
+                    ctx.LocalAiGatewayPriorState = new LocalAiGatewayPriorState(
+                        ProviderExisted: true,
+                        ProviderJson: "{}",
+                        PrimaryModelExisted: true,
+                        PrimaryModelJson: "\"prior-model\"");
+                    ctx.LocalAiRecoveryGatewayConfigurationStartedThisRun = true;
+                    ctx.LocalAiRecoveryRollbackUncertain = true;
+                    return Task.FromResult(StepResult.Ok("configured"));
+                },
+                (ctx, _) =>
+                {
+                    rollbackOrder.Add("gateway");
+                    ctx.LocalAiRecoveryReceiptRollbackAllowed = true;
+                    ctx.LocalAiRecoveryRollbackUncertain = false;
+                    return Task.CompletedTask;
+                }),
+            new MockStep(
+                "failure",
+                (_, _) => Task.FromResult(StepResult.Fail("failed after gateway configuration"))),
+        ]);
+
+        PipelineResult result = await pipeline.RunAsync(context);
+
+        Assert.Equal(PipelineOutcome.Failed, result.Outcome);
+        Assert.Equal("failure", result.FailedStepId);
+        LocalAiResolvedInstall restored = (await store.LoadAsync())!;
+        Assert.Equal(new Uri("http://127.0.0.1:18803/v1"), probedEndpoint);
+        Assert.Equal(1, runtime.RestartForSetupCalls);
+        Assert.Equal(1, runtime.AcknowledgeSetupGatewayRouteCalls);
+        Assert.Equal(["gateway", "route", "probe"], rollbackOrder);
+        Assert.Equal(original.Manifest.ModelCatalogId, restored.Manifest.ModelCatalogId);
+        Assert.Equal(new Uri("http://127.0.0.1:18803/v1"), restored.Endpoint);
+        Assert.Equal(restored.Endpoint, restoredRoute);
+        Assert.Equal(restored.Endpoint, probedEndpoint);
+        Assert.Equal(0, runtime.RestartCalls);
+        Assert.Equal(0, runtime.StopForSetupCalls);
+        Assert.Equal(0, runtime.StopCalls);
+        Assert.Equal(0, runtime.DisposeCalls);
+        Assert.Same(runtime, context.LocalAiRuntime);
+        Assert.True(context.LocalAiBorrowedRuntimeRestored);
+        Assert.False(context.LocalAiRecoveryRollbackUncertain);
+    }
+
+    [Fact]
+    public async Task BorrowedTrayRuntime_PreGatewayRollbackPublishesRestoredAutomaticPort()
+    {
+        using var temp = new TempDirectory("local-ai-borrowed-runtime-pre-gateway-rollback-");
+        SetupConfig config = LocalAiRecoveryConfig();
+        config.RollbackOnFailure = true;
+        var context = CreateContext(config, localDataDir: temp.Path);
+        LocalAiResolvedInstall original = CreateLocalAiResolvedInstall(context.LocalDataDir, port: 18801);
+        original = original with
+        {
+            Manifest = original.Manifest with { RequestedPort = 0 },
+        };
+        LocalAiInstallManifest pendingManifest = original.Manifest with
+        {
+            ModelCatalogId = "replacement-model",
+            ModelAlias = "replacement-model",
+            Endpoint = "http://127.0.0.1:18802/v1",
+            ReplacedManifest = original.Manifest,
+            PreviousEndpoints = [original.Manifest.Endpoint!],
+        };
+        var store = new LocalAiManifestStore(new LocalAiPaths(context.LocalDataDir));
+        await store.SaveAsync(pendingManifest);
+        context.LocalAiResolvedInstall = store.ResolveAndValidate(pendingManifest);
+        context.LocalAiRecoveryOriginalInstall = original;
+        context.LocalAiRecoveryProviderTransition = true;
+        Uri? publishedEndpoint = null;
+        var runtime = new DisposeTrackingRuntime(HealthySnapshot(context.LocalAiResolvedInstall))
+        {
+            RestartHandler = async ct =>
+            {
+                LocalAiResolvedInstall restored = await store.LoadAsync(ct)
+                    ?? throw new InvalidDataException("restored receipt missing");
+                LocalAiInstallManifest movedManifest = restored.Manifest with
+                {
+                    Endpoint = "http://127.0.0.1:18803/v1",
+                };
+                await store.SaveAsync(movedManifest, ct);
+                LocalAiResolvedInstall moved = store.ResolveAndValidate(movedManifest);
+                publishedEndpoint = moved.Endpoint;
+                return HealthySnapshot(moved);
+            },
+        };
+        context.LocalAiRuntime = runtime;
+        context.LocalAiRuntimeBorrowed = true;
+        context.LocalAiBorrowedRuntimeRestartedThisRun = true;
+        var persist = new PersistLocalAiManifestStep();
+        var start = new StartLocalAiRuntimeStep(_ => runtime);
+        var pipeline = new SetupPipeline([
+            new MockStep(
+                "persist-local-ai-manifest",
+                (_, _) => Task.FromResult(StepResult.Ok("persisted")),
+                persist.RollbackAsync),
+            new MockStep(
+                "start-local-ai-runtime",
+                (_, _) => Task.FromResult(StepResult.Ok("started")),
+                start.RollbackAsync),
+            new MockStep(
+                "failure-before-gateway",
+                (_, _) => Task.FromResult(StepResult.Fail("failed before gateway configuration"))),
+        ]);
+
+        PipelineResult result = await pipeline.RunAsync(context);
+
+        Assert.Equal(PipelineOutcome.Failed, result.Outcome);
+        LocalAiResolvedInstall restored = (await store.LoadAsync())!;
+        Assert.Equal(original.Manifest.ModelCatalogId, restored.Manifest.ModelCatalogId);
+        Assert.Equal(new Uri("http://127.0.0.1:18803/v1"), restored.Endpoint);
+        Assert.Equal(restored.Endpoint, publishedEndpoint);
+        Assert.Equal(1, runtime.StopForSetupCalls);
+        Assert.Equal(1, runtime.RestartForSetupRollbackCalls);
+        Assert.Equal(0, runtime.RestartCalls);
+        Assert.Equal(0, runtime.RestartForSetupCalls);
+        Assert.Equal(0, runtime.DisposeCalls);
+        Assert.False(context.LocalAiRecoveryRollbackUncertain);
+    }
+
     /// <summary>
     /// Regression guard: a stale manifest receipt is not enough to prove the original (A)
     /// endpoint is still alive. Rollback must probe it before pointing the Gateway back at it.
@@ -561,22 +841,99 @@ public class SetupPipelineTests
         Assert.NotNull(retained.ReplacedManifest);
     }
 
-    private sealed class DisposeTrackingRuntime : ILocalAiRuntime
+    private sealed class DisposeTrackingRuntime(LocalAiRuntimeSnapshot? snapshot = null) : ILocalAiRuntime
     {
         public int DisposeCalls { get; private set; }
+        public int EnsureStartedCalls { get; private set; }
+        public int StopCalls { get; private set; }
+        public int RestartCalls { get; private set; }
+        public int StopForSetupCalls { get; private set; }
+        public int RestartForSetupCalls { get; private set; }
+        public int RestartForSetupRollbackCalls { get; private set; }
+        public int AcknowledgeSetupGatewayRouteCalls { get; private set; }
+        public int ReleaseSetupGatewayRouteCalls { get; private set; }
+        public Func<CancellationToken, Task<LocalAiRuntimeSnapshot>>? RestartHandler { get; init; }
+        public Func<CancellationToken, Task<LocalAiRuntimeSnapshot>>? RestartForSetupHandler { get; init; }
 
-        public LocalAiRuntimeSnapshot Snapshot => throw new NotSupportedException();
+        public LocalAiRuntimeSnapshot Snapshot { get; private set; } = snapshot ??
+            LocalAiRuntimeSnapshot.Initial(new Uri("http://127.0.0.1:18800/v1"), DateTimeOffset.UtcNow);
 
         public Task<LocalAiRuntimeSnapshot> ResumeAsync(CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
-        public Task<LocalAiRuntimeSnapshot> EnsureStartedAsync(CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
+            Task.FromResult(Snapshot);
 
-        public Task<LocalAiRuntimeSnapshot> StopAsync(CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
+        public Task<LocalAiRuntimeSnapshot> EnsureStartedAsync(CancellationToken cancellationToken = default)
+        {
+            EnsureStartedCalls++;
+            return Task.FromResult(Snapshot);
+        }
 
-        public Task<LocalAiRuntimeSnapshot> RestartAsync(CancellationToken cancellationToken = default) =>
-            throw new NotSupportedException();
+        public Task<LocalAiRuntimeSnapshot> StopAsync(CancellationToken cancellationToken = default)
+        {
+            StopCalls++;
+            Snapshot = Snapshot with
+            {
+                State = LocalAiRuntimeState.Stopped,
+                Ownership = LocalAiOwnership.None,
+                ProcessId = null,
+                ProcessStartedAtUtc = null,
+            };
+            return Task.FromResult(Snapshot);
+        }
+
+        public async Task<LocalAiRuntimeSnapshot> RestartAsync(CancellationToken cancellationToken = default)
+        {
+            RestartCalls++;
+            Snapshot = RestartHandler is null
+                ? snapshot ?? Snapshot
+                : await RestartHandler(cancellationToken);
+            return Snapshot;
+        }
+
+        public Task<LocalAiRuntimeSnapshot> StopForSetupAsync(CancellationToken cancellationToken = default)
+        {
+            StopForSetupCalls++;
+            Snapshot = Snapshot with
+            {
+                State = LocalAiRuntimeState.Stopped,
+                Ownership = LocalAiOwnership.None,
+                ProcessId = null,
+                ProcessStartedAtUtc = null,
+            };
+            return Task.FromResult(Snapshot);
+        }
+
+        public async Task<LocalAiRuntimeSnapshot> RestartForSetupAsync(CancellationToken cancellationToken = default)
+        {
+            RestartForSetupCalls++;
+            Snapshot = RestartForSetupHandler is null
+                ? snapshot ?? Snapshot
+                : await RestartForSetupHandler(cancellationToken);
+            return Snapshot;
+        }
+
+        public async Task<LocalAiRuntimeSnapshot> RestartForSetupRollbackAsync(
+            CancellationToken cancellationToken = default)
+        {
+            RestartForSetupRollbackCalls++;
+            Snapshot = RestartHandler is null
+                ? snapshot ?? Snapshot
+                : await RestartHandler(cancellationToken);
+            return Snapshot;
+        }
+
+        public Task<LocalAiRuntimeSnapshot> ReleaseSetupGatewayRouteAsync(
+            CancellationToken cancellationToken = default)
+        {
+            ReleaseSetupGatewayRouteCalls++;
+            return Task.FromResult(Snapshot);
+        }
+
+        public Task<LocalAiRuntimeSnapshot> AcknowledgeSetupGatewayRouteAsync(
+            CancellationToken cancellationToken = default)
+        {
+            AcknowledgeSetupGatewayRouteCalls++;
+            return Task.FromResult(Snapshot);
+        }
 
         public Task<LocalAiRuntimeSnapshot> RefreshAsync(CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
@@ -593,6 +950,25 @@ public class SetupPipelineTests
             return ValueTask.CompletedTask;
         }
     }
+
+    private static LocalAiRuntimeSnapshot HealthySnapshot(LocalAiResolvedInstall install) => new(
+        LocalAiRuntimeState.Healthy,
+        LocalAiOwnership.CompanionManaged,
+        install.Endpoint!,
+        install.Manifest.EngineVersion,
+        install.Manifest.ModelCatalogId,
+        new LocalAiModelEvidence(
+            LocalAiModelAvailabilityState.Verified,
+            DateTimeOffset.UtcNow,
+            install.Manifest.ModelAsset.Sha256,
+            install.Manifest.ModelAsset.SizeBytes),
+        42,
+        DateTimeOffset.UtcNow,
+        null,
+        DateTimeOffset.UtcNow)
+    {
+        GatewayRouteRequiresResolution = false,
+    };
 
     private static LocalAiResolvedInstall CreateLocalAiResolvedInstall(string localDataDirectory, int port)
     {
