@@ -885,7 +885,11 @@ public sealed class PersistLocalAiManifestStep : SetupStep
 
         if (!ctx.LocalAiManifestCreatedThisRun)
         {
-            if (ctx.LocalAiRecoveryCleanupAllowed &&
+            // Before Gateway configuration is enrolled, this step still owns restoring a fresh
+            // replacement receipt. Once configuration starts, the recovery guard must settle the
+            // route and endpoint-health decision before any receipt or resource cleanup occurs.
+            if (ctx.LocalAiGatewayPriorState is null &&
+                !ctx.LocalAiRecoveryRollbackUncertain &&
                 ctx.LocalAiResolvedInstall?.Manifest.ReplacedManifest is not null &&
                 ctx.LocalAiRecoveryOriginalInstall is { } recoveryInstall)
             {
@@ -907,7 +911,6 @@ public sealed class PersistLocalAiManifestStep : SetupStep
                 }
                 ctx.LocalAiRecoveryProviderTransition = false;
                 ctx.LocalAiRecoveryReceiptRollbackAllowed = false;
-                ctx.LocalAiRecoveryRollbackUncertain = false;
             }
             return;
         }

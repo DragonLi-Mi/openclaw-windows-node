@@ -215,7 +215,10 @@ public class SetupPipelineTests
             steps.FindIndex(step => step is AcquireLocalAiRuntimeStep));
         Assert.True(
             steps.FindIndex(step => step is PreserveLocalAiRecoveryGatewayStep) <
-            steps.FindIndex(step => step is ConfigureLocalAiWslNetworkingStep));
+            steps.FindIndex(step => step is ConfigureLocalAiGatewayStep));
+        Assert.True(
+            steps.FindIndex(step => step is VerifyLocalAiWslStep) <
+            steps.FindIndex(step => step is PreserveLocalAiRecoveryGatewayStep));
         Assert.IsType<ValidateLocalAiRecoveryGatewayStep>(
             steps[steps.FindIndex(step => step is ConfigureLocalAiWslNetworkingStep) - 1]);
     }
@@ -461,9 +464,19 @@ public class SetupPipelineTests
         using var temp = new TempDirectory("local-ai-recovery-rollback-");
         var context = CreateContext(LocalAiRecoveryConfig(), localDataDir: temp.Path);
         LocalAiResolvedInstall originalInstall = CreateLocalAiResolvedInstall(context.LocalDataDir, port: 18801);
+        LocalAiResolvedInstall replacementInstall = CreateLocalAiResolvedInstall(context.LocalDataDir, port: 18802);
+        LocalAiInstallManifest pendingManifest = replacementInstall.Manifest with
+        {
+            ModelCatalogId = "replacement-model",
+            ModelAlias = "replacement-model",
+            ReplacedManifest = originalInstall.Manifest,
+            PreviousEndpoints = [originalInstall.Manifest.Endpoint!],
+        };
+        replacementInstall = replacementInstall with { Manifest = pendingManifest };
+        await new LocalAiManifestStore(new LocalAiPaths(context.LocalDataDir)).SaveAsync(pendingManifest);
         context.LocalAiRecoveryOriginalInstall = originalInstall;
         context.LocalAiRecoveryReceiptRollbackAllowed = true;
-        context.LocalAiResolvedInstall = CreateLocalAiResolvedInstall(context.LocalDataDir, port: 18802);
+        context.LocalAiResolvedInstall = replacementInstall;
         var step = new PreserveLocalAiRecoveryGatewayStep(
             (_, _) => Task.FromResult(StepResult.Ok("restarted")),
             (_, _) => Task.FromResult(true));
@@ -473,6 +486,79 @@ public class SetupPipelineTests
         Assert.NotNull(context.LocalAiResolvedInstall);
         Assert.Equal(originalInstall.Manifest.ModelAlias, context.LocalAiResolvedInstall!.Manifest.ModelAlias);
         Assert.Equal(originalInstall.Endpoint, context.LocalAiResolvedInstall!.Endpoint);
+    }
+
+    [Fact]
+    public async Task RecoveryRollback_PreservesReplacementWhenCompensatedOriginalEndpointIsUnhealthy()
+    {
+        using var temp = new TempDirectory("local-ai-recovery-rollback-");
+        SetupConfig config = LocalAiRecoveryConfig();
+        config.RollbackOnFailure = true;
+        var context = CreateContext(config, localDataDir: temp.Path);
+        LocalAiResolvedInstall originalInstall = CreateLocalAiResolvedInstall(context.LocalDataDir, port: 18801);
+        LocalAiResolvedInstall replacementInstall = CreateLocalAiResolvedInstall(context.LocalDataDir, port: 18802);
+        LocalAiInstallManifest pendingManifest = replacementInstall.Manifest with
+        {
+            ModelCatalogId = "replacement-model",
+            ModelAlias = "replacement-model",
+            ReplacedManifest = originalInstall.Manifest,
+            PreviousEndpoints = [originalInstall.Manifest.Endpoint!],
+        };
+        replacementInstall = replacementInstall with { Manifest = pendingManifest };
+        await new LocalAiManifestStore(new LocalAiPaths(context.LocalDataDir)).SaveAsync(pendingManifest);
+        context.LocalAiRecoveryOriginalInstall = originalInstall;
+        context.LocalAiResolvedInstall = replacementInstall;
+        context.LocalAiRecoveryProviderTransition = true;
+        context.LocalAiGatewayPriorState = new LocalAiGatewayPriorState(
+            ProviderExisted: true,
+            ProviderJson: "{}",
+            PrimaryModelExisted: true,
+            PrimaryModelJson: "\"test-model\"");
+        var runtime = new DisposeTrackingRuntime();
+        context.LocalAiRuntime = runtime;
+        var probedEndpoints = new List<Uri?>();
+        var persist = new PersistLocalAiManifestStep();
+        var start = new StartLocalAiRuntimeStep(_ => runtime);
+        var pipeline = new SetupPipeline([
+            new MockStep(
+                "persist-local-ai-manifest",
+                (_, _) => Task.FromResult(StepResult.Ok("persisted")),
+                persist.RollbackAsync),
+            new MockStep(
+                "start-local-ai-runtime",
+                (_, _) => Task.FromResult(StepResult.Ok("started")),
+                start.RollbackAsync),
+            new PreserveLocalAiRecoveryGatewayStep(
+                (_, _) => Task.FromResult(StepResult.Ok("restarted")),
+                (install, _) =>
+                {
+                    probedEndpoints.Add(install.Endpoint);
+                    return Task.FromResult(false);
+                }),
+            new MockStep(
+                "configure-local-ai-gateway",
+                (_, _) => Task.FromResult(StepResult.Ok("configured")),
+                (ctx, _) =>
+                {
+                    ctx.LocalAiRecoveryReceiptRollbackAllowed = true;
+                    ctx.LocalAiRecoveryRollbackUncertain = false;
+                    return Task.CompletedTask;
+                }),
+            new MockStep(
+                "finalize-local-ai-model-replacement",
+                (_, _) => Task.FromResult(StepResult.Fail("finalization failed"))),
+        ]);
+
+        PipelineResult result = await pipeline.RunAsync(context);
+
+        Assert.Equal(PipelineOutcome.Failed, result.Outcome);
+        Assert.Equal([originalInstall.Endpoint], probedEndpoints);
+        Assert.Equal(0, runtime.DisposeCalls);
+        Assert.False(context.LocalAiRecoveryCleanupAllowed);
+        LocalAiInstallManifest retained = (await new LocalAiManifestStore(
+            new LocalAiPaths(context.LocalDataDir)).LoadAsync())!.Manifest;
+        Assert.Equal(pendingManifest.ModelCatalogId, retained.ModelCatalogId);
+        Assert.NotNull(retained.ReplacedManifest);
     }
 
     private sealed class DisposeTrackingRuntime : ILocalAiRuntime

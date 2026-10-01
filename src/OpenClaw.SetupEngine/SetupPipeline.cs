@@ -101,7 +101,6 @@ public static class SetupStepFactory
     [
         new PreflightOsStep(),
         new ValidateLocalAiRecoveryGatewayStep(),
-        new PreserveLocalAiRecoveryGatewayStep(),
         new PreflightLocalAiHardwareStep(),
         new PreflightWslStep(),
         new EnsureWslPlatformStep(reusePreflightResult: true),
@@ -116,6 +115,9 @@ public static class SetupStepFactory
         new ValidateLocalAiRecoveryGatewayStep(finalCheck: true),
         new ConfigureLocalAiWslNetworkingStep(),
         new VerifyLocalAiWslStep(),
+        // Roll this guard back immediately after Gateway compensation so it can settle the
+        // receipt and endpoint-health decision before runtime and asset cleanup begins.
+        new PreserveLocalAiRecoveryGatewayStep(),
         new ConfigureLocalAiGatewayStep(),
         new RestartGatewayStep(),
         new FinalizeLocalAiModelReplacementStep(),

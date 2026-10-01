@@ -1687,7 +1687,7 @@ public sealed class LocalAiInstallRecoveryTests
     }
 
     [Fact]
-    public async Task PersistRollback_RestoresOriginalReceiptBeforeReplacementCleanup()
+    public async Task PersistRollback_RestoresOriginalReceiptBeforeGatewayGuard()
     {
         using var temp = new TempDirectory();
         LocalAiInstallManifest original = CreateManifest(temp.Path, CatalogPlan(), "GPU-0");
@@ -1753,7 +1753,7 @@ public sealed class LocalAiInstallRecoveryTests
     }
 
     [Fact]
-    public async Task PersistRollback_RejectsStaleReplacementHistoryAndBlocksCleanup()
+    public async Task RecoveryGuard_RejectsStaleReplacementHistoryAndBlocksCleanup()
     {
         using var temp = new TempDirectory();
         LocalAiInstallManifest original = CreateManifest(temp.Path, CatalogPlan(), "GPU-0");
@@ -1777,8 +1777,12 @@ public sealed class LocalAiInstallRecoveryTests
         context.LocalAiRecoveryOriginalInstall = store.ResolveAndValidate(original);
         context.LocalAiRecoveryProviderTransition = true;
 
-        await Assert.ThrowsAsync<InvalidDataException>(() =>
-            new PersistLocalAiManifestStep().RollbackAsync(context, CancellationToken.None));
+        context.LocalAiRecoveryReceiptRollbackAllowed = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new PreserveLocalAiRecoveryGatewayStep(
+                    (_, _) => Task.FromResult(StepResult.Ok("restarted")),
+                    (_, _) => Task.FromResult(true))
+                .RollbackAsync(context, CancellationToken.None));
 
         LocalAiInstallManifest retained = (await store.LoadAsync())!.Manifest;
         Assert.Equal(newer.Endpoint, retained.Endpoint);

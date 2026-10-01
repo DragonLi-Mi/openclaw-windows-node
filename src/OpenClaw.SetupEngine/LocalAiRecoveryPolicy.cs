@@ -211,26 +211,34 @@ public sealed class PreserveLocalAiRecoveryGatewayStep : SetupStep
                 ctx.Logger.Warn(
                     "The previous Local AI endpoint could not be verified as healthy; preserving the replacement " +
                     "receipt instead of restoring a receipt for an endpoint that is not confirmed reachable.");
+                ctx.LocalAiRecoveryRollbackUncertain = true;
+                ctx.LocalAiRecoveryReceiptRollbackAllowed = false;
             }
             else
             {
                 try
                 {
                     var store = new LocalAiManifestStore(new LocalAiPaths(ctx.LocalDataDir));
-                    await store.SaveAsync(originalInstall.Manifest, ct).ConfigureAwait(false);
-                    ctx.LocalAiResolvedInstall = store.ResolveAndValidate(originalInstall.Manifest);
+                    ctx.LocalAiResolvedInstall = await store
+                        .RestoreRecoveryManifestAsync(
+                            ctx.LocalAiResolvedInstall!.Manifest,
+                            originalInstall.Manifest,
+                            ct)
+                        .ConfigureAwait(false);
+                    ctx.LocalAiRecoveryProviderTransition = false;
+                    ctx.LocalAiRecoveryReceiptRollbackAllowed = false;
+                    ctx.LocalAiRecoveryRollbackUncertain = false;
+                    ctx.LocalAiGatewayPriorState = null;
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
                 {
                     receiptError = ex;
+                    ctx.LocalAiRecoveryRollbackUncertain = true;
+                    ctx.LocalAiRecoveryReceiptRollbackAllowed = false;
                     ctx.Logger.Warn(
                         $"Restoring the previous Local AI endpoint receipt failed ({ex.GetType().Name}).");
                 }
             }
-            ctx.LocalAiRecoveryProviderTransition = false;
-            ctx.LocalAiRecoveryReceiptRollbackAllowed = false;
-            ctx.LocalAiRecoveryRollbackUncertain = false;
-            ctx.LocalAiGatewayPriorState = null;
         }
 
         if (ctx.LocalAiRecoveryStoppedWsl)
