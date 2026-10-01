@@ -74,6 +74,7 @@ public sealed class SetupInstallationProgress
     {
         "validate-distro-path" or "preflight-os" or "preflight-local-ai-hardware" or "preflight-wsl" or
         "preflight-windows-tailscale" or "ensure-wsl-platform" or "validate-local-ai-recovery-gateway" or
+        "validate-local-ai-recovery-gateway-compatibility" or
         "reconcile-local-ai-installation" or
         "cleanup-distro" or "cleanup-gateway" or "preflight-port" or "wsl-create" or "wsl-configure" or
         "validate-wsl-lockdown" => SetupInstallationPhase.Prepare,
