@@ -927,7 +927,10 @@ public sealed class PersistLocalAiManifestStep : SetupStep
     {
         if (ctx.LocalAiUpgradeOriginalInstall is not { } originalInstall)
             return;
-        if (!ctx.LocalAiRecoveryCleanupAllowed)
+        // A resumed pending replacement uses that pending receipt as the upgrade baseline, so
+        // restoring it before this process touches Gateway preserves any route published by an
+        // earlier process. After Gateway I/O begins, the recovery guard must settle authority.
+        if (!ctx.LocalAiRecoveryCleanupAllowed && ctx.LocalAiRecoveryGatewayConfigurationStartedThisRun)
             return;
 
         var paths = new LocalAiPaths(ctx.LocalDataDir);
@@ -1010,6 +1013,7 @@ public sealed class FinalizeLocalAiModelReplacementStep : SetupStep
             ctx.LocalAiRecoveryProviderTransition = false;
             ctx.LocalAiRecoveryReceiptRollbackAllowed = false;
             ctx.LocalAiRecoveryRollbackUncertain = false;
+            ctx.LocalAiRecoveryGatewayConfigurationStartedThisRun = false;
             return StepResult.Ok("Local AI model replacement is committed.");
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)

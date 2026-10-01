@@ -627,6 +627,7 @@ public sealed class SetupContext
     internal LlamaServerInferenceVerification? LocalAiInferenceVerification { get; set; }
     internal LocalAiGpuLoadEvidence? LocalAiGpuLoadEvidence { get; set; }
     internal LocalAiGatewayPriorState? LocalAiGatewayPriorState { get; set; }
+    internal bool LocalAiRecoveryGatewayConfigurationStartedThisRun { get; set; }
     internal bool IsUninstalling { get; set; }
     internal bool LocalAiRecoveryStoppedWsl { get; set; }
 

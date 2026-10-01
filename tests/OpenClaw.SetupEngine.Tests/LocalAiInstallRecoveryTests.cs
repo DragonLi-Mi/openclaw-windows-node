@@ -1742,6 +1742,7 @@ public sealed class LocalAiInstallRecoveryTests
         context.LocalAiRecoveryProviderTransition = true;
         context.LocalAiRecoveryRollbackUncertain = true;
         context.LocalAiRecoveryReceiptRollbackAllowed = false;
+        context.LocalAiRecoveryGatewayConfigurationStartedThisRun = true;
 
         await new PersistLocalAiManifestStep().RollbackAsync(context, CancellationToken.None);
         await new AcquireLocalAiRuntimeStep(acquirer).RollbackAsync(context, CancellationToken.None);

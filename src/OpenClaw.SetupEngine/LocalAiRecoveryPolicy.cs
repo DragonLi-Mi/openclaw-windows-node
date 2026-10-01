@@ -229,6 +229,7 @@ public sealed class PreserveLocalAiRecoveryGatewayStep : SetupStep
                     ctx.LocalAiRecoveryReceiptRollbackAllowed = false;
                     ctx.LocalAiRecoveryRollbackUncertain = false;
                     ctx.LocalAiGatewayPriorState = null;
+                    ctx.LocalAiRecoveryGatewayConfigurationStartedThisRun = false;
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
                 {

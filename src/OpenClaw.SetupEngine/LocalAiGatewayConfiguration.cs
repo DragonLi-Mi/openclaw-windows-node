@@ -154,7 +154,8 @@ public sealed class ConfigureLocalAiGatewayStep : SetupStep
                 return StepResult.Fail(
                     "The existing llamacpp gateway route is not the exact companion-managed configuration; preserving it.");
             }
-            if (matchesCurrentInstall && install.Manifest.ReplacedManifest is not null)
+            if (matchesCurrentInstall && install.Manifest.ReplacedManifest is not null &&
+                !ctx.LocalAiRecoveryGatewayConfigurationStartedThisRun)
             {
                 // A previous process already published the replacement. Rollback must
                 // preserve that live route instead of reconstructing the older one.
@@ -231,6 +232,7 @@ public sealed class ConfigureLocalAiGatewayStep : SetupStep
         string batchJson = LocalAiGatewayConfigBuilder.BuildBatchJson(ctx);
         if (ctx.LocalAiRecoveryProviderTransition)
         {
+            ctx.LocalAiRecoveryGatewayConfigurationStartedThisRun = true;
             ctx.LocalAiRecoveryRollbackUncertain = true;
             ctx.LocalAiRecoveryReceiptRollbackAllowed = false;
         }

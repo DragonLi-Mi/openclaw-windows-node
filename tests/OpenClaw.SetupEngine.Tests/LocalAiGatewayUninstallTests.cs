@@ -392,6 +392,10 @@ public sealed class LocalAiGatewayUninstallTests
 
         StepResult result = await step.ExecuteAsync(context, CancellationToken.None);
         await step.RollbackAsync(context, CancellationToken.None);
+        await new PreserveLocalAiRecoveryGatewayStep(
+                (_, _) => Task.FromResult(StepResult.Ok("not needed")),
+                (_, _) => Task.FromResult(true))
+            .RollbackAsync(context, CancellationToken.None);
         await new PersistLocalAiManifestStep().RollbackAsync(context, CancellationToken.None);
 
         Assert.Equal(StepOutcome.Success, result.Outcome);
@@ -506,10 +510,7 @@ public sealed class LocalAiGatewayUninstallTests
         SetupContext context = CreateRecoveryContext(temp.Path, commands);
         context.LocalAiRecoveryOriginalInstall = original;
         context.LocalAiRecoveryReceiptRollbackAllowed = true;
-        LocalAiInstallManifest replacementManifest = original.Manifest with
-        {
-            Endpoint = "http://127.0.0.1:39876/v1",
-        };
+        LocalAiInstallManifest replacementManifest = ReplacementManifest(original);
         context.LocalAiResolvedInstall = new LocalAiResolvedInstall(
             replacementManifest,
             original.ExecutablePath,
@@ -538,10 +539,7 @@ public sealed class LocalAiGatewayUninstallTests
         SetupContext context = CreateRecoveryContext(temp.Path, commands);
         context.LocalAiRecoveryOriginalInstall = original;
         context.LocalAiRecoveryReceiptRollbackAllowed = true;
-        LocalAiInstallManifest replacementManifest = original.Manifest with
-        {
-            Endpoint = "http://127.0.0.1:39876/v1",
-        };
+        LocalAiInstallManifest replacementManifest = ReplacementManifest(original);
         var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
         await store.SaveAsync(replacementManifest);
         context.LocalAiResolvedInstall = store.ResolveAndValidate(replacementManifest);
@@ -574,10 +572,7 @@ public sealed class LocalAiGatewayUninstallTests
         SetupContext context = CreateRecoveryContext(temp.Path, commands);
         context.LocalAiRecoveryOriginalInstall = original;
         context.LocalAiRecoveryReceiptRollbackAllowed = true;
-        LocalAiInstallManifest replacementManifest = original.Manifest with
-        {
-            Endpoint = "http://127.0.0.1:39876/v1",
-        };
+        LocalAiInstallManifest replacementManifest = ReplacementManifest(original);
         var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
         await store.SaveAsync(replacementManifest);
         context.LocalAiResolvedInstall = store.ResolveAndValidate(replacementManifest);
@@ -612,10 +607,7 @@ public sealed class LocalAiGatewayUninstallTests
         SetupContext context = CreateRecoveryContext(temp.Path, commands);
         context.LocalAiRecoveryOriginalInstall = original;
         context.LocalAiRecoveryReceiptRollbackAllowed = true;
-        LocalAiInstallManifest replacementManifest = original.Manifest with
-        {
-            Endpoint = "http://127.0.0.1:39876/v1",
-        };
+        LocalAiInstallManifest replacementManifest = ReplacementManifest(original);
         var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
         await store.SaveAsync(replacementManifest);
         context.LocalAiResolvedInstall = store.ResolveAndValidate(replacementManifest);
@@ -648,10 +640,7 @@ public sealed class LocalAiGatewayUninstallTests
         SetupContext context = CreateRecoveryContext(temp.Path, commands);
         context.LocalAiRecoveryOriginalInstall = original;
         context.LocalAiRecoveryReceiptRollbackAllowed = true;
-        LocalAiInstallManifest replacementManifest = original.Manifest with
-        {
-            Endpoint = "http://127.0.0.1:39876/v1",
-        };
+        LocalAiInstallManifest replacementManifest = ReplacementManifest(original);
         var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
         await store.SaveAsync(replacementManifest);
         context.LocalAiResolvedInstall = store.ResolveAndValidate(replacementManifest);
@@ -688,10 +677,7 @@ public sealed class LocalAiGatewayUninstallTests
         SetupContext context = CreateRecoveryContext(temp.Path, commands);
         context.LocalAiRecoveryOriginalInstall = original;
         context.LocalAiRecoveryReceiptRollbackAllowed = true;
-        LocalAiInstallManifest replacementManifest = original.Manifest with
-        {
-            Endpoint = "http://127.0.0.1:39876/v1",
-        };
+        LocalAiInstallManifest replacementManifest = ReplacementManifest(original);
         var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
         await store.SaveAsync(replacementManifest);
         context.LocalAiResolvedInstall = store.ResolveAndValidate(replacementManifest);
@@ -728,10 +714,7 @@ public sealed class LocalAiGatewayUninstallTests
         context.Config.RollbackOnFailure = true;
         context.LocalAiRecoveryOriginalInstall = original;
         context.LocalAiRecoveryReceiptRollbackAllowed = true;
-        LocalAiInstallManifest replacementManifest = original.Manifest with
-        {
-            Endpoint = "http://127.0.0.1:39876/v1",
-        };
+        LocalAiInstallManifest replacementManifest = ReplacementManifest(original);
         var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
         await store.SaveAsync(replacementManifest);
         context.LocalAiResolvedInstall = store.ResolveAndValidate(replacementManifest);
@@ -757,8 +740,10 @@ public sealed class LocalAiGatewayUninstallTests
             commands.ProviderJson!,
             context.LocalAiResolvedInstall));
         Assert.Equal(new Uri(replacementManifest.Endpoint!), (await store.LoadAsync())!.Endpoint);
-        Assert.False(context.LocalAiRecoveryProviderTransition);
+        Assert.True(context.LocalAiRecoveryProviderTransition);
         Assert.False(context.LocalAiRecoveryReceiptRollbackAllowed);
+        Assert.False(context.LocalAiRecoveryCleanupAllowed);
+        Assert.True(context.LocalAiRecoveryGatewayConfigurationStartedThisRun);
     }
 
     [Fact]
@@ -774,10 +759,7 @@ public sealed class LocalAiGatewayUninstallTests
         context.Config.RollbackOnFailure = true;
         context.LocalAiRecoveryOriginalInstall = original;
         context.LocalAiRecoveryReceiptRollbackAllowed = true;
-        LocalAiInstallManifest replacementManifest = original.Manifest with
-        {
-            Endpoint = "http://127.0.0.1:39876/v1",
-        };
+        LocalAiInstallManifest replacementManifest = ReplacementManifest(original);
         var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
         await store.SaveAsync(replacementManifest);
         context.LocalAiResolvedInstall = store.ResolveAndValidate(replacementManifest);
@@ -822,10 +804,7 @@ public sealed class LocalAiGatewayUninstallTests
         context.Config.RollbackOnFailure = true;
         context.LocalAiRecoveryOriginalInstall = original;
         context.LocalAiRecoveryReceiptRollbackAllowed = true;
-        LocalAiInstallManifest replacementManifest = original.Manifest with
-        {
-            Endpoint = "http://127.0.0.1:39876/v1",
-        };
+        LocalAiInstallManifest replacementManifest = ReplacementManifest(original);
         var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
         await store.SaveAsync(replacementManifest);
         context.LocalAiResolvedInstall = store.ResolveAndValidate(replacementManifest);
@@ -851,8 +830,9 @@ public sealed class LocalAiGatewayUninstallTests
             commands.ProviderJson!,
             context.LocalAiResolvedInstall));
         Assert.Equal(new Uri(replacementManifest.Endpoint!), (await store.LoadAsync())!.Endpoint);
-        Assert.False(context.LocalAiRecoveryProviderTransition);
+        Assert.True(context.LocalAiRecoveryProviderTransition);
         Assert.False(context.LocalAiRecoveryReceiptRollbackAllowed);
+        Assert.False(context.LocalAiRecoveryCleanupAllowed);
     }
 
     [Fact]
@@ -866,10 +846,7 @@ public sealed class LocalAiGatewayUninstallTests
         context.Config.RollbackOnFailure = true;
         context.LocalAiRecoveryOriginalInstall = original;
         context.LocalAiRecoveryReceiptRollbackAllowed = true;
-        LocalAiInstallManifest replacementManifest = original.Manifest with
-        {
-            Endpoint = "http://127.0.0.1:39876/v1",
-        };
+        LocalAiInstallManifest replacementManifest = ReplacementManifest(original);
         var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
         await store.SaveAsync(replacementManifest);
         context.LocalAiResolvedInstall = store.ResolveAndValidate(replacementManifest);
@@ -895,8 +872,9 @@ public sealed class LocalAiGatewayUninstallTests
             commands.ProviderJson!,
             context.LocalAiResolvedInstall));
         Assert.Equal(new Uri(replacementManifest.Endpoint!), (await store.LoadAsync())!.Endpoint);
-        Assert.False(context.LocalAiRecoveryProviderTransition);
+        Assert.True(context.LocalAiRecoveryProviderTransition);
         Assert.False(context.LocalAiRecoveryReceiptRollbackAllowed);
+        Assert.False(context.LocalAiRecoveryCleanupAllowed);
     }
 
     private static SetupContext CreateContext(string localDataDirectory, ICommandRunner commands)
@@ -911,6 +889,16 @@ public sealed class LocalAiGatewayUninstallTests
             CancellationToken.None,
             localDataDir: localDataDirectory);
     }
+
+    private static LocalAiInstallManifest ReplacementManifest(LocalAiResolvedInstall original) =>
+        original.Manifest with
+        {
+            ModelCatalogId = LocalModelCatalog.Qwen27BModelId,
+            ModelAlias = LocalModelCatalog.Qwen27BModelId,
+            Endpoint = "http://127.0.0.1:39876/v1",
+            ReplacedManifest = original.Manifest,
+            PreviousEndpoints = [original.Endpoint!.AbsoluteUri],
+        };
 
     private static SetupContext CreateRecoveryContext(
         string localDataDirectory,
