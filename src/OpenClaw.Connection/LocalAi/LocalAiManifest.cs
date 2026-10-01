@@ -613,6 +613,29 @@ public sealed class LocalAiManifestStore
         return resolved;
     }
 
+    internal async Task<LocalAiResolvedInstall> RestoreManifestIfUnchangedAsync(
+        LocalAiInstallManifest expectedManifest,
+        LocalAiInstallManifest recoveryManifest,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(expectedManifest);
+        ArgumentNullException.ThrowIfNull(recoveryManifest);
+        await using FileStream writeLock = await AcquireManifestWriteLockAsync(cancellationToken)
+            .ConfigureAwait(false);
+        LocalAiInstallManifest current = await ReadManifestAsync(cancellationToken).ConfigureAwait(false);
+        if (!JsonElement.DeepEquals(
+                JsonSerializer.SerializeToElement(current),
+                JsonSerializer.SerializeToElement(expectedManifest)))
+        {
+            throw new InvalidDataException(
+                "The Local AI installation changed before its recovery receipt could be restored.");
+        }
+
+        LocalAiResolvedInstall resolved = ResolveAndValidate(recoveryManifest);
+        await SaveWithoutLockAsync(recoveryManifest, cancellationToken).ConfigureAwait(false);
+        return resolved;
+    }
+
     private static bool HasSameRuntimeAndModel(
         LocalAiInstallManifest current,
         LocalAiInstallManifest expected) =>

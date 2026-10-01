@@ -1082,11 +1082,12 @@ public sealed class StartLocalAiRuntimeStep : SetupStep
         if (ctx.LocalAiRuntime is not null && !ctx.LocalAiRuntimeBorrowed)
             return StepResult.Terminal("A Local AI runtime is already attached to this setup transaction.");
         if (ctx.LocalAiRuntimeBorrowed &&
+            ctx.LocalAiRecoveryOriginalInstall is null &&
             ctx.LocalAiUpgradeOriginalInstall is null &&
             ctx.LocalAiResolvedInstall.Manifest.ReplacedManifest is null)
         {
             return StepResult.Terminal(
-                "Borrowing the tray Local AI runtime requires a recorded model replacement or runtime upgrade.");
+                "Borrowing the tray Local AI runtime requires an armed recovery or recorded upgrade.");
         }
 
         ILocalAiRuntime runtime = ctx.LocalAiRuntime ?? _runtimeFactory(ctx);
@@ -1262,7 +1263,7 @@ public sealed class VerifyLocalAiInferenceStep : SetupStep
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            await ResetRouterAsync(runtime, ctx.LocalAiRuntimeBorrowed);
+            await ResetRouterAsync(ctx, runtime);
             throw;
         }
         catch (OperationCanceledException ex)
@@ -1306,7 +1307,7 @@ public sealed class VerifyLocalAiInferenceStep : SetupStep
         var paths = new LocalAiPaths(ctx.LocalDataDir);
         IReadOnlyList<string> diagnostics =
             await LocalAiLogTail.ReadDiagnosticLinesAsync(paths, CancellationToken.None);
-        await ResetRouterAsync(runtime, ctx.LocalAiRuntimeBorrowed);
+        await ResetRouterAsync(ctx, runtime);
         // Echo into the setup log the UI already links, so the root cause remains available if
         // the router restart rotates the managed llama-server logs.
         foreach (string line in diagnostics)
@@ -1328,6 +1329,43 @@ public sealed class VerifyLocalAiInferenceStep : SetupStep
         {
             return runtime.Snapshot;
         }
+    }
+
+    internal static async Task<LocalAiRuntimeSnapshot> ResetRouterAsync(
+        SetupContext ctx,
+        ILocalAiRuntime runtime)
+    {
+        LocalAiRuntimeSnapshot reset = await ResetRouterAsync(runtime, ctx.LocalAiRuntimeBorrowed);
+        if (!ctx.LocalAiRuntimeBorrowed)
+            return reset;
+
+        try
+        {
+            LocalAiResolvedInstall? restartedInstall = await new LocalAiManifestStore(
+                    new LocalAiPaths(ctx.LocalDataDir))
+                .LoadAsync(CancellationToken.None)
+                .ConfigureAwait(false);
+            LocalAiInstallManifest expected = ctx.LocalAiResolvedInstall!.Manifest;
+            bool onlyEndpointStateChanged = restartedInstall is not null &&
+                JsonElement.DeepEquals(
+                    JsonSerializer.SerializeToElement(restartedInstall.Manifest),
+                    JsonSerializer.SerializeToElement(expected with
+                    {
+                        Endpoint = restartedInstall.Manifest.Endpoint,
+                        PreviousEndpoints = restartedInstall.Manifest.PreviousEndpoints,
+                    }));
+            if (restartedInstall?.Endpoint == reset.Endpoint && onlyEndpointStateChanged)
+            {
+                // This refresh updates only the rollback compare-and-swap baseline. The caller
+                // still decides whether the runtime restart itself was healthy and successful.
+                ctx.LocalAiResolvedInstall = restartedInstall;
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            // Keep the prior compare-and-swap baseline so rollback fails closed.
+        }
+        return reset;
     }
 }
 

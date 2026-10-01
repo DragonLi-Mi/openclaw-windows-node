@@ -316,7 +316,7 @@ public sealed class VerifyLocalAiGpuLoadStep : SetupStep
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            await VerifyLocalAiInferenceStep.ResetRouterAsync(runtime, ctx.LocalAiRuntimeBorrowed);
+            await VerifyLocalAiInferenceStep.ResetRouterAsync(ctx, runtime);
             throw;
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
@@ -324,9 +324,7 @@ public sealed class VerifyLocalAiGpuLoadStep : SetupStep
             failure = ex;
         }
 
-        LocalAiRuntimeSnapshot reset = await VerifyLocalAiInferenceStep.ResetRouterAsync(
-            runtime,
-            ctx.LocalAiRuntimeBorrowed);
+        LocalAiRuntimeSnapshot reset = await VerifyLocalAiInferenceStep.ResetRouterAsync(ctx, runtime);
         if (failure is not null)
             return StepResult.Fail($"Local AI GPU verification failed: {failure.Message}", failure);
         if (reset.State != LocalAiRuntimeState.Healthy ||

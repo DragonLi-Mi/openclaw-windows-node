@@ -166,6 +166,81 @@ public sealed class ValidateLocalAiRecoveryGatewayStep : SetupStep
     }
 }
 
+public sealed class ValidateLocalAiRecoveryGatewayCompatibilityStep : SetupStep
+{
+    internal const string SupportedMarker = "LOCAL_AI_CONDITIONAL_SET_SUPPORTED";
+    internal const string UnsupportedMarker = "LOCAL_AI_CONDITIONAL_SET_UNSUPPORTED";
+
+    private readonly Func<SetupContext, CancellationToken, Task<CommandResult>> _probe;
+
+    public ValidateLocalAiRecoveryGatewayCompatibilityStep()
+        : this(ProbeConditionalSetSupportAsync)
+    {
+    }
+
+    internal ValidateLocalAiRecoveryGatewayCompatibilityStep(
+        Func<SetupContext, CancellationToken, Task<CommandResult>> probe) =>
+        _probe = probe ?? throw new ArgumentNullException(nameof(probe));
+
+    public override string Id => "validate-local-ai-recovery-gateway-compatibility";
+    public override string DisplayName => "Check gateway recovery compatibility";
+    public override bool CanRetry => false;
+
+    public override async Task<StepResult> ExecuteAsync(SetupContext ctx, CancellationToken ct)
+    {
+        LocalAiResolvedInstall?[] recoveryInstalls =
+        [
+            ctx.LocalAiRecoveryPendingInstall,
+            ctx.LocalAiRecoveryOriginalInstall,
+            ctx.LocalAiResolvedInstall,
+        ];
+        if (recoveryInstalls.All(install => install is null))
+        {
+            return StepResult.Skip(
+                "No prior Local AI route requires conditional recovery support.");
+        }
+        if (recoveryInstalls.All(install => install is null || install.Manifest.RequestedPort != 0))
+            return StepResult.Skip("Fixed-port Local AI recovery does not require conditional route updates.");
+
+        CommandResult result = await _probe(ctx, ct).ConfigureAwait(false);
+        if (result.ExitCode == 0 &&
+            result.Stdout.Contains(SupportedMarker, StringComparison.Ordinal))
+        {
+            return StepResult.Ok("Gateway supports safe automatic-port recovery.");
+        }
+        if (result.ExitCode == 42 &&
+            result.Stdout.Contains(UnsupportedMarker, StringComparison.Ordinal))
+        {
+            return StepResult.Terminal(
+                "This Gateway version cannot safely recover Local AI with an automatic port. Update the Gateway, then retry recovery.");
+        }
+        return StepResult.Fail("OpenClaw could not verify Gateway support for safe automatic-port recovery.");
+    }
+
+    private static Task<CommandResult> ProbeConditionalSetSupportAsync(
+        SetupContext ctx,
+        CancellationToken ct)
+    {
+        string script = $$"""
+            set -eu
+            {{ctx.WslPathPrefix}}
+            if openclaw config set --help | grep -Fq -- '--expect-current-json'; then
+              echo {{SupportedMarker}}
+              exit 0
+            fi
+            echo {{UnsupportedMarker}}
+            exit 42
+            """;
+        return ctx.Commands.RunInWslAsync(
+            ctx.DistroName!,
+            script,
+            TimeSpan.FromMinutes(1),
+            ct: ct,
+            user: ctx.Config.Wsl.User,
+            inputViaStdin: true);
+    }
+}
+
 public sealed class PreserveLocalAiRecoveryGatewayStep : SetupStep
 {
     private readonly Func<SetupContext, CancellationToken, Task<StepResult>> _restart;
@@ -226,15 +301,28 @@ public sealed class PreserveLocalAiRecoveryGatewayStep : SetupStep
                 try
                 {
                     var store = new LocalAiManifestStore(new LocalAiPaths(ctx.LocalDataDir));
-                    ctx.LocalAiResolvedInstall = await store
-                        .RestoreRecoveryManifestAsync(
-                            ctx.LocalAiResolvedInstall!.Manifest,
-                            originalInstall.Manifest,
-                            ct)
-                        .ConfigureAwait(false);
-                    LocalAiRuntimeSnapshot restored = await borrowedRuntime
-                        .RestartForSetupAsync(ct)
-                        .ConfigureAwait(false);
+                    if (ctx.LocalAiResolvedInstall!.Manifest.ReplacedManifest is not null)
+                    {
+                        ctx.LocalAiResolvedInstall = await store
+                            .RestoreRecoveryManifestAsync(
+                                ctx.LocalAiResolvedInstall.Manifest,
+                                originalInstall.Manifest,
+                                ct)
+                            .ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        ctx.LocalAiResolvedInstall = await store
+                            .RestoreManifestIfUnchangedAsync(
+                                ctx.LocalAiResolvedInstall.Manifest,
+                                originalInstall.Manifest,
+                                ct)
+                            .ConfigureAwait(false);
+                    }
+                    bool runtimeOwnsGatewayRoute = ctx.LocalAiGatewayPriorState is null;
+                    LocalAiRuntimeSnapshot restored = runtimeOwnsGatewayRoute
+                        ? await borrowedRuntime.RestartForSetupRollbackAsync(ct).ConfigureAwait(false)
+                        : await borrowedRuntime.RestartForSetupAsync(ct).ConfigureAwait(false);
                     LocalAiResolvedInstall restoredInstall = await store.LoadAsync(ct).ConfigureAwait(false)
                         ?? throw new InvalidDataException(
                             "The previous Local AI receipt was unavailable after restarting its runtime.");
@@ -266,7 +354,8 @@ public sealed class PreserveLocalAiRecoveryGatewayStep : SetupStep
                         throw new InvalidDataException(
                             "The previous Local AI endpoint was not healthy after its runtime was restored.");
                     }
-                    if (!await ConfigureLocalAiGatewayStep
+                    if (!runtimeOwnsGatewayRoute &&
+                        !await ConfigureLocalAiGatewayStep
                             .AcknowledgeBorrowedRuntimeRouteAsync(ctx, ct)
                             .ConfigureAwait(false))
                     {

@@ -105,9 +105,13 @@ public static class SetupStepFactory
         new PreflightWslStep(),
         new EnsureWslPlatformStep(reusePreflightResult: true),
         new ReconcileLocalAiInstallationStep(),
+        new ValidateLocalAiRecoveryGatewayCompatibilityStep(),
         new AcquireLocalAiRuntimeStep(),
         new AcquireLocalAiModelStep(),
         new PersistLocalAiManifestStep(),
+        // Arm receipt, runtime, and final restart recovery before the borrowed runtime changes.
+        // Reverse rollback still restores WSL networking before this guard settles the Gateway.
+        new PreserveLocalAiRecoveryGatewayStep(),
         new StartLocalAiRuntimeStep(),
         new CaptureLocalAiGpuBaselineStep(),
         new VerifyLocalAiInferenceStep(),
@@ -115,9 +119,6 @@ public static class SetupStepFactory
         new ValidateLocalAiRecoveryGatewayStep(finalCheck: true),
         new ConfigureLocalAiWslNetworkingStep(),
         new VerifyLocalAiWslStep(),
-        // Roll this guard back immediately after Gateway compensation so it can settle the
-        // receipt and endpoint-health decision before runtime and asset cleanup begins.
-        new PreserveLocalAiRecoveryGatewayStep(),
         new ConfigureLocalAiGatewayStep(),
         new RestartGatewayStep(),
         new FinalizeLocalAiModelReplacementStep(),
