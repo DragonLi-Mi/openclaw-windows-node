@@ -1717,6 +1717,43 @@ public sealed class LocalAiInstallRecoveryTests
     }
 
     [Fact]
+    public async Task Rollback_RestoresUpgradeAndRemovesTaskOwnedRuntimeBeforeGatewayConfiguration()
+    {
+        using var temp = new TempDirectory();
+        LocalAiInstallManifest original = CreateManifest(temp.Path, CatalogPlan(), "GPU-0");
+        LocalAiInstallManifest replacement = original with
+        {
+            ModelCatalogId = "replacement-model",
+            ModelAlias = "replacement-model",
+        };
+        var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
+        await store.SaveAsync(replacement);
+        var acquirer = new TrackingRuntimeAcquirer();
+        SetupContext context = CreateContext(temp.Path, confirmDestructive: false);
+        context.LocalAiResolvedInstall = store.ResolveAndValidate(replacement);
+        context.LocalAiUpgradeOriginalInstall = store.ResolveAndValidate(original);
+        context.LocalAiRuntimeInstall = new LlamaRuntimeInstallResult(
+            temp.Path,
+            Path.Combine(temp.Path, "llama-server.exe"),
+            LlamaRuntimeInstallDisposition.Installed,
+            CreatedThisRun: true,
+            VerifiedArchives: [],
+            Rollback: null);
+        context.LocalAiRecoveryProviderTransition = true;
+        context.LocalAiRecoveryRollbackUncertain = true;
+        context.LocalAiRecoveryReceiptRollbackAllowed = false;
+
+        await new PersistLocalAiManifestStep().RollbackAsync(context, CancellationToken.None);
+        await new AcquireLocalAiRuntimeStep(acquirer).RollbackAsync(context, CancellationToken.None);
+
+        Assert.Equal(original.ModelCatalogId, (await store.LoadAsync())!.Manifest.ModelCatalogId);
+        Assert.Null(context.LocalAiUpgradeOriginalInstall);
+        Assert.Null(context.LocalAiRuntimeInstall);
+        Assert.False(context.LocalAiRecoveryRollbackUncertain);
+        Assert.Equal(1, acquirer.RemoveCalls);
+    }
+
+    [Fact]
     public async Task Rollback_PreservesPublishedUpgradeWhenGatewayCompensationIsUncertain()
     {
         using var temp = new TempDirectory();

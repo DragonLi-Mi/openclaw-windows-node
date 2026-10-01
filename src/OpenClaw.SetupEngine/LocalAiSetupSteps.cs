@@ -940,6 +940,8 @@ public sealed class PersistLocalAiManifestStep : SetupStep
         ctx.LocalAiResolvedInstall = store.ResolveAndValidate(originalInstall.Manifest);
         ctx.LocalAiManifestCreatedThisRun = false;
         ctx.LocalAiUpgradeOriginalInstall = null;
+        if (!ctx.LocalAiRecoveryGatewayConfigurationStartedThisRun)
+            ctx.LocalAiRecoveryRollbackUncertain = false;
     }
 
     private static ImmutableArray<LocalAiAssetReceipt> BuildRuntimeReceipts(
