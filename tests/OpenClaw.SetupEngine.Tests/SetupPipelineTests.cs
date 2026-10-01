@@ -745,6 +745,27 @@ public class SetupPipelineTests
     }
 
     [Fact]
+    public async Task StartLocalAiRuntimeStep_RestartsBorrowedTrayRuntimeForFirstRecoveryInstall()
+    {
+        using var temp = new TempDirectory("local-ai-borrowed-runtime-first-install-");
+        var context = CreateContext(LocalAiRecoveryConfig(), localDataDir: temp.Path);
+        LocalAiResolvedInstall install = CreateLocalAiResolvedInstall(context.LocalDataDir, port: 18802);
+        await new LocalAiManifestStore(new LocalAiPaths(context.LocalDataDir)).SaveAsync(install.Manifest);
+        context.LocalAiResolvedInstall = install;
+        var runtime = new DisposeTrackingRuntime(HealthySnapshot(install));
+        context.LocalAiRuntime = runtime;
+        context.LocalAiRuntimeBorrowed = true;
+
+        StepResult result = await new StartLocalAiRuntimeStep().ExecuteAsync(
+            context,
+            CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Success, result.Outcome);
+        Assert.Equal(1, runtime.RestartForSetupCalls);
+        Assert.True(context.LocalAiBorrowedRuntimeRestartedThisRun);
+    }
+
+    [Fact]
     public async Task StartLocalAiRuntimeStep_RejectsBorrowedRuntimeOutsideRecovery()
     {
         using var temp = new TempDirectory("local-ai-borrowed-runtime-unarmed-");

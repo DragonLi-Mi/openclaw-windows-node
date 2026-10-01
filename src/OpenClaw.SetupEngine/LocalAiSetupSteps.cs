@@ -1084,7 +1084,8 @@ public sealed class StartLocalAiRuntimeStep : SetupStep
         if (ctx.LocalAiRuntimeBorrowed &&
             ctx.LocalAiRecoveryOriginalInstall is null &&
             ctx.LocalAiUpgradeOriginalInstall is null &&
-            ctx.LocalAiResolvedInstall.Manifest.ReplacedManifest is null)
+            ctx.LocalAiResolvedInstall.Manifest.ReplacedManifest is null &&
+            string.IsNullOrWhiteSpace(ctx.Config.LocalAiRecoveryGatewayId))
         {
             return StepResult.Terminal(
                 "Borrowing the tray Local AI runtime requires an armed recovery or recorded upgrade.");
