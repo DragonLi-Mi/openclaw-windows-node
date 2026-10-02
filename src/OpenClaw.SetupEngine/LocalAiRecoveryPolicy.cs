@@ -426,6 +426,10 @@ public sealed class PreserveLocalAiRecoveryGatewayStep : SetupStep
 
     private static void CompleteReceiptRollback(SetupContext ctx)
     {
+        // The recovery guard now owns the settled receipt. Retire the earlier upgrade and
+        // recovery baselines so later reverse rollback steps cannot restore them again.
+        ctx.LocalAiUpgradeOriginalInstall = null;
+        ctx.LocalAiRecoveryOriginalInstall = null;
         ctx.LocalAiRecoveryProviderTransition = false;
         ctx.LocalAiRecoveryReceiptRollbackAllowed = false;
         ctx.LocalAiRecoveryRollbackUncertain = false;
