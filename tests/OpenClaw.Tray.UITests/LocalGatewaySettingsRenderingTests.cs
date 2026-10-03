@@ -65,6 +65,39 @@ public sealed class LocalGatewaySettingsRenderingTests(UIThreadFixture ui, ITest
             Assert.Equal(nativeBody, Find<TextBlock>(page, "GatewayBodyText").Text);
         });
 
+    [Fact]
+    public async Task MountedGatewaySection_IsolatesAndRestoresInheritedContainerSize()
+    {
+        var original = await ui.RunOnUIAsync(() =>
+        {
+            var dimensions = (ui.Container.Width, ui.Container.Height);
+            ui.Container.Width = 600;
+            ui.Container.Height = 400;
+            return Task.FromResult(dimensions);
+        });
+        try
+        {
+            await WithPageAsync(async page =>
+            {
+                ApplySection.Invoke(page, [Record("native"), true]);
+                await AssertAndCaptureAsync(page, "native", true, "inherited-container");
+            });
+            await ui.RunOnUIAsync(() =>
+            {
+                Assert.Equal(600, ui.Container.Width);
+                Assert.Equal(400, ui.Container.Height);
+            });
+        }
+        finally
+        {
+            await ui.RunOnUIAsync(() =>
+            {
+                ui.Container.Width = original.Width;
+                ui.Container.Height = original.Height;
+            });
+        }
+    }
+
     private async Task WithPageAsync(Func<SettingsPage, Task> test)
     {
         OnboardingNativeProof.AssertIsolatedRoots();
@@ -73,6 +106,8 @@ public sealed class LocalGatewaySettingsRenderingTests(UIThreadFixture ui, ITest
         {
             var position = ui.TestWindow.AppWindow.Position;
             var size = ui.TestWindow.AppWindow.Size;
+            var containerWidth = ui.Container.Width;
+            var containerHeight = ui.Container.Height;
             var scale = ui.Container.XamlRoot.RasterizationScale;
             var page = new SettingsPage
             {
@@ -80,6 +115,7 @@ public sealed class LocalGatewaySettingsRenderingTests(UIThreadFixture ui, ITest
             };
             var host = new Grid
             {
+                Name = "SettingsProofHost",
                 Width = 900,
                 Height = 1000,
                 Background = (Brush)Application.Current.Resources["SolidBackgroundFillColorBaseBrush"],
@@ -87,6 +123,8 @@ public sealed class LocalGatewaySettingsRenderingTests(UIThreadFixture ui, ITest
             host.Children.Add(page);
             try
             {
+                ui.Container.Width = double.NaN;
+                ui.Container.Height = double.NaN;
                 // The fixture starts at 1x1. Give only its off-screen HWND a full viewport,
                 // without activating it or capturing any desktop pixels.
                 ui.TestWindow.AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(
@@ -104,6 +142,8 @@ public sealed class LocalGatewaySettingsRenderingTests(UIThreadFixture ui, ITest
             finally
             {
                 ui.Container.Children.Clear();
+                ui.Container.Width = containerWidth;
+                ui.Container.Height = containerHeight;
                 ui.TestWindow.AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(
                     position.X, position.Y, size.Width, size.Height));
                 await ui.YieldToRenderAsync();
@@ -292,7 +332,9 @@ public sealed class LocalGatewaySettingsRenderingTests(UIThreadFixture ui, ITest
     {
         Assert.True(element.IsLoaded && element.ActualWidth > 0 && element.ActualHeight > 0,
             $"{element.Name} has no mounted layout.");
-        Assert.True(IsInside(element, viewport), $"{element.Name} is cropped by the Settings viewport.");
+        Assert.True(IsInside(element, viewport),
+            $"{element.GetType().Name} '{element.Name}' ({element.ActualWidth}x{element.ActualHeight}) " +
+            $"is cropped by the Settings viewport ({viewport.ActualWidth}x{viewport.ActualHeight}).");
     }
 
     private static GatewayRecord? Record(string scenario) => scenario switch
