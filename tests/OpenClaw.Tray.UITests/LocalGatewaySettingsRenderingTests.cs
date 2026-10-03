@@ -98,7 +98,17 @@ public sealed class LocalGatewaySettingsRenderingTests(UIThreadFixture ui, ITest
         }
     }
 
-    private async Task WithPageAsync(Func<SettingsPage, Task> test)
+    [Theory]
+    [InlineData("native")]
+    [InlineData("custom-wsl")]
+    public Task MountedGatewaySection_FitsHostedRunnerViewport(string scenario) =>
+        WithPageAsync(async page =>
+        {
+            ApplySection.Invoke(page, [Record(scenario), true]);
+            await AssertAndCaptureAsync(page, scenario, true, "hosted-viewport-" + scenario);
+        }, windowHeight: 800);
+
+    private async Task WithPageAsync(Func<SettingsPage, Task> test, double windowHeight = 1100)
     {
         OnboardingNativeProof.AssertIsolatedRoots();
         await ui.ResetContainerAsync();
@@ -128,12 +138,22 @@ public sealed class LocalGatewaySettingsRenderingTests(UIThreadFixture ui, ITest
                 // The fixture starts at 1x1. Give only its off-screen HWND a full viewport,
                 // without activating it or capturing any desktop pixels.
                 ui.TestWindow.AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(
-                    -32000, -32000, (int)Math.Ceiling(980 * scale), (int)Math.Ceiling(1100 * scale)));
+                    -32000, -32000, (int)Math.Ceiling(980 * scale), (int)Math.Ceiling(windowHeight * scale)));
                 // Do not call Initialize: this mounted page has no live App, registry, or gateway.
                 ui.Container.Children.Add(host);
                 await TestSupport.WaitForRenderedConditionAsync(() => page.IsLoaded, "Settings page Loaded");
+                await TestSupport.WaitForRenderedConditionAsync(
+                    () => ui.Container.ActualWidth > 100 && ui.Container.ActualHeight > 100,
+                    "resized fixture client area");
+                // Hosted desktops can clamp the requested HWND size. Fit its actual client
+                // area; the assertions below still require every gateway control to fit.
+                var padding = ui.Container.Padding;
+                host.Width = Math.Min(900, ui.Container.ActualWidth - padding.Left - padding.Right);
+                host.Height = Math.Min(windowHeight - 100, ui.Container.ActualHeight - padding.Top - padding.Bottom);
                 page.UpdateLayout();
                 await ui.YieldToRenderAsync();
+                output.WriteLine($"client={ui.Container.ActualWidth}x{ui.Container.ActualHeight}; " +
+                    $"host={host.ActualWidth}x{host.ActualHeight}; scale={host.XamlRoot.RasterizationScale}");
                 Assert.Same(ui.Container.XamlRoot, page.XamlRoot);
                 AssertFullyVisible(host, ui.Container);
                 AssertFullyVisible(page, host);
@@ -262,7 +282,9 @@ public sealed class LocalGatewaySettingsRenderingTests(UIThreadFixture ui, ITest
         var bitmap = new RenderTargetBitmap();
         var host = Assert.IsType<Grid>(VisualTreeHelper.GetParent(page));
         await bitmap.RenderAsync(host);
-        Assert.True(bitmap.PixelWidth >= 900 && bitmap.PixelHeight >= 1000, "The mounted page capture is cropped or empty.");
+        var scale = host.XamlRoot.RasterizationScale;
+        Assert.InRange(bitmap.PixelWidth, (int)Math.Floor(host.ActualWidth * scale), (int)Math.Ceiling(host.ActualWidth * scale));
+        Assert.InRange(bitmap.PixelHeight, (int)Math.Floor(host.ActualHeight * scale), (int)Math.Ceiling(host.ActualHeight * scale));
         var pixels = (await bitmap.GetPixelsAsync()).ToArray();
         var darkPixels = 0;
         var lightPixels = 0;
