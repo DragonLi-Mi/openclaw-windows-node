@@ -99,7 +99,7 @@ public interface IChatGatewayBridge : IDisposable
 
     event EventHandler<ConnectionStatus>? StatusChanged;
     event EventHandler<SessionInfo[]>? SessionsUpdated;
-    event EventHandler<SessionInfo[]>? SessionUsageSnapshotUpdated;
+    event EventHandler<SessionUsageSnapshot>? SessionUsageSnapshotUpdated;
     event EventHandler<SessionCommandResult>? SessionCommandCompleted;
     event EventHandler<ChatMessageInfo>? ChatMessageReceived;
     event EventHandler<AgentEventInfo>? AgentEventReceived;
@@ -114,7 +114,7 @@ public sealed class GatewayClientChatBridge : IChatGatewayBridge
     private readonly OpenClawGatewayClient _client;
     private readonly EventHandler<ConnectionStatus> _statusChangedHandler;
     private readonly EventHandler<SessionInfo[]> _sessionsUpdatedHandler;
-    private readonly EventHandler<SessionInfo[]> _sessionUsageSnapshotUpdatedHandler;
+    private readonly EventHandler<SessionUsageSnapshot> _sessionUsageSnapshotUpdatedHandler;
     private readonly EventHandler<SessionCommandResult> _sessionCommandCompletedHandler;
     private readonly EventHandler<ChatMessageInfo> _chatMessageReceivedHandler;
     private readonly EventHandler<AgentEventInfo> _agentEventReceivedHandler;
@@ -280,7 +280,7 @@ public sealed class GatewayClientChatBridge : IChatGatewayBridge
 
     public event EventHandler<ConnectionStatus>? StatusChanged;
     public event EventHandler<SessionInfo[]>? SessionsUpdated;
-    public event EventHandler<SessionInfo[]>? SessionUsageSnapshotUpdated;
+    public event EventHandler<SessionUsageSnapshot>? SessionUsageSnapshotUpdated;
     public event EventHandler<SessionCommandResult>? SessionCommandCompleted;
     public event EventHandler<ChatMessageInfo>? ChatMessageReceived;
     public event EventHandler<AgentEventInfo>? AgentEventReceived;

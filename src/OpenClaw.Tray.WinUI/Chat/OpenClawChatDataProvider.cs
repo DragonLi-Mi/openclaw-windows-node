@@ -1206,12 +1206,12 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         }
     }
 
-    private void OnSessionUsageSnapshotUpdated(object? sender, SessionInfo[] sessions)
+    private void OnSessionUsageSnapshotUpdated(object? sender, SessionUsageSnapshot usage)
     {
         if (_state.IsDisposed)
             return;
         if (_state.ApplyAuthoritativeSessionUsage(
-                sessions ?? [],
+                usage,
                 ProjectionContext()) is { } snapshot)
         {
             Publish(snapshot);
