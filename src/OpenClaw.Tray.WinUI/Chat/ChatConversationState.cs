@@ -586,11 +586,15 @@ internal sealed class ChatConversationState
                 contextPercent = null;
             }
             var usageContributionTokens = existing?.UsageContributionTokens;
+            var measurementTimestamp = authoritative
+                ? snapshotTimestamp
+                : existing?.ResponseTokens == usageTokens ? existing?.UsageMeasurementTimestamp : null;
             if (existing is not null &&
                 existing.ResponseTokens == usageTokens &&
                 existing.ContextTokens == contextTokens &&
                 existing.ContextPercent == contextPercent &&
                 existing.UsageContributionTokens == usageContributionTokens &&
+                existing.UsageMeasurementTimestamp == measurementTimestamp &&
                 existing.UsageSnapshotTimestamp == (snapshotTimestamp ?? existing.UsageSnapshotTimestamp) &&
                 existing.UsageSnapshotIsAuthoritative == (authoritative || existing.UsageSnapshotIsAuthoritative))
             {
@@ -605,6 +609,7 @@ internal sealed class ChatConversationState
                 ContextTokens = contextTokens,
                 ContextPercent = contextPercent,
                 UsageContributionTokens = usageContributionTokens,
+                UsageMeasurementTimestamp = measurementTimestamp,
                 UsageSnapshotTimestamp = snapshotTimestamp ?? existing?.UsageSnapshotTimestamp,
                 UsageSnapshotIsAuthoritative = authoritative || existing?.UsageSnapshotIsAuthoritative == true,
             };
@@ -2342,7 +2347,8 @@ internal sealed class ChatConversationState
             if (existing?.ResponseTokens == usageSnapshot &&
                 existing.UsageContributionTokens == currentUsage &&
                 existing.ContextTokens == contextTokens &&
-                existing.UsageSnapshotTimestamp == usageTimestamp)
+                existing.UsageSnapshotTimestamp == usageTimestamp &&
+                existing.UsageMeasurementTimestamp == usageTimestamp)
             {
                 return false;
             }
@@ -2354,6 +2360,7 @@ internal sealed class ChatConversationState
                 ContextPercent = contextPercent,
                 ContextTokens = contextTokens ?? existing?.ContextTokens,
                 UsageContributionTokens = currentUsage,
+                UsageMeasurementTimestamp = usageTimestamp,
                 UsageSnapshotTimestamp = usageTimestamp ?? existing?.UsageSnapshotTimestamp,
                 UsageSnapshotIsAuthoritative = false,
             };
