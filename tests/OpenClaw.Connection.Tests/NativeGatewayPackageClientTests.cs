@@ -6,6 +6,32 @@ namespace OpenClaw.Connection.Tests;
 
 public sealed class NativeGatewayPackageClientTests
 {
+    [Theory]
+    [InlineData("removed")]
+    [InlineData("not-configured")]
+    public async Task TeardownUsesPinnedPackageWithoutStandardInput(string sessionState)
+    {
+        using var cancellation = new CancellationTokenSource();
+        var client = new NativeGatewayPackageClient((package, arguments, input, token) =>
+        {
+            Assert.Equal(s_package, package);
+            Assert.Equal(["teardown", "--force", "--json"], arguments);
+            Assert.Null(input);
+            Assert.Equal(cancellation.Token, token);
+            return Task.FromResult(new NativeGatewayCommandResult(0, JsonSerializer.Serialize(new
+            {
+                ok = true,
+                schemaVersion = 1,
+                command = "teardown",
+                integration = new { kind = "isolated-session", version = 1 },
+                session = new { state = sessionState },
+                gateway = new { state = "records-removed" },
+            })));
+        });
+
+        await client.TeardownAsync(s_package, cancellation.Token);
+    }
+
     [Fact]
     public async Task TeardownPreservesPreDispatchErrorWithoutIntegration()
     {

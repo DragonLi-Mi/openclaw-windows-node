@@ -294,6 +294,20 @@ public sealed class ProgramArgumentTests : IDisposable
         Assert.Equal(2, exitCode);
     }
 
+    [Theory]
+    [InlineData("--gateway-binding", "binding")]
+    [InlineData("--gateway-id", "selected-gateway")]
+    public async Task Main_RejectsPartialRemovalTargetBeforeCreatingProfile(string option, string value)
+    {
+        var dataDir = Path.Combine(_tempDir, "must-not-create");
+
+        var exitCode = await Program.Main(
+            ["--uninstall", "--confirm-destructive", option, value, "--data-dir", dataDir]);
+
+        Assert.Equal(2, exitCode);
+        Assert.False(Directory.Exists(dataDir));
+    }
+
     [Fact]
     public async Task Main_RejectsMissingEqualsConfigBeforeLoadingBundledDefault()
     {

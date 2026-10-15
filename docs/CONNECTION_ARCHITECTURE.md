@@ -67,7 +67,19 @@ Before unregister, a per-target removal receipt pins the registration and manage
 path so residual disk cleanup can resume even when the older profile-wide marker
 belongs to another distro. Registration identity is rechecked immediately before
 each terminate/unregister dispatch; changed or unavailable registrations fail
-closed without a name-only fallback. Settings reconciles the child process's
+closed without a name-only fallback. The complete confirmed saved record and
+active selection are also refreshed before keepalive shutdown, every destructive
+WSL dispatch, residual deletion attempt, and receipt/profile cleanup. Changed
+credentials or ownership fields revoke removal even if the endpoint binding and
+WSL registration still match. Connection timestamps and unrelated saved-record
+edits do not revoke an unchanged target. Residual deletion retries require fresh
+registration absence and matching path-bound ownership or removal-receipt evidence
+on every attempt; a replacement registration or unavailable inspection preserves
+the remaining files and saved target.
+Both target options (`--gateway-id` and `--gateway-binding`) must be present with
+valid values together at the tray forwarding boundary. Incomplete targeted input
+is rejected before SetupEngine invocation, never widened to full-profile uninstall.
+Settings reconciles the child process's
 saved registry on both successful and failed exits without overwriting concurrent
 in-memory edits.
 Invalid or mismatched WSL removal receipts return a structured failure with the

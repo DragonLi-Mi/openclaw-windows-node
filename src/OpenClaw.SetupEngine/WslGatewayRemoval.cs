@@ -10,6 +10,7 @@ public sealed class WslGatewayRemoval
     private readonly IWslRegistrationInspector _registrations;
     private readonly Func<SetupContext, CancellationToken, Task> _stopKeepalive;
     private readonly Func<SetupContext, CancellationToken, Task>? _removeDistro;
+    private readonly Func<TimeSpan, CancellationToken, Task> _deletionDelay;
     private sealed record RemovalReceipt(string GatewayId, string Binding, string DistroName, string InstallPath, string RegistrationId);
 
     public WslGatewayRemoval() : this(new WindowsWslRegistrationInspector(),
@@ -17,11 +18,13 @@ public sealed class WslGatewayRemoval
 
     internal WslGatewayRemoval(IWslRegistrationInspector registrations,
         Func<SetupContext, CancellationToken, Task> stopKeepalive,
-        Func<SetupContext, CancellationToken, Task>? removeDistro = null)
+        Func<SetupContext, CancellationToken, Task>? removeDistro = null,
+        Func<TimeSpan, CancellationToken, Task>? deletionDelay = null)
     {
         _registrations = registrations;
         _stopKeepalive = stopKeepalive;
         _removeDistro = removeDistro;
+        _deletionDelay = deletionDelay ?? Task.Delay;
     }
 
     public async Task<PipelineResult> RunAsync(SetupContext ctx, string gatewayId, string binding)
@@ -32,8 +35,8 @@ public sealed class WslGatewayRemoval
             if (!ctx.Config.ConfirmDestructive && !ctx.Config.DryRun)
                 throw new InvalidOperationException("Gateway removal requires explicit destructive confirmation.");
             var registry = new GatewayRegistry(ctx.DataDir);
-            registry.Load();
-            var expected = registry.GetActive();
+            var snapshot = registry.AdoptPersistedSnapshot(registry.GetSnapshot());
+            var expected = snapshot.Records.SingleOrDefault(record => record.Id == snapshot.ActiveId);
             if (expected?.Id != gatewayId || LocalGatewaySettings.Classify(expected) != LocalGatewayKind.Wsl ||
                 GatewayDashboardBinding.Capture(expected) != binding)
                 throw new InvalidOperationException("The selected WSL Gateway changed. Review removal again.");
@@ -48,14 +51,20 @@ public sealed class WslGatewayRemoval
                 await AtomicFile.WriteAllTextAsync(ReceiptPath(ctx, expected),
                     JsonSerializer.Serialize(new RemovalReceipt(expected.Id, binding, ctx.DistroName!,
                         ManagedPath(ctx), inspection.RegistrationId!)), ct).ConfigureAwait(false);
+                if (RequireOwnedRegistration(ctx, expected) != inspection)
+                    throw new InvalidOperationException("The WSL registration changed during removal. No keepalive was stopped.");
+                RequireCurrentTarget(registry, expected);
+                ct.ThrowIfCancellationRequested();
                 await _stopKeepalive(ctx, ct).ConfigureAwait(false);
                 var fresh = RequireOwnedRegistration(ctx, expected);
                 if (fresh != inspection)
                     throw new InvalidOperationException("The WSL registration changed during removal. No distro was unregistered.");
+                RequireCurrentTarget(registry, expected);
+                ct.ThrowIfCancellationRequested();
                 if (_removeDistro is not null)
                     await _removeDistro(ctx, ct).ConfigureAwait(false);
                 else
-                    await RemoveRegisteredDistroAsync(ctx, inspection, ct).ConfigureAwait(false);
+                    await RemoveRegisteredDistroAsync(ctx, registry, expected, inspection, ct).ConfigureAwait(false);
             }
 
             var after = _registrations.Inspect(ctx.DistroName!);
@@ -65,11 +74,15 @@ public sealed class WslGatewayRemoval
             if (Directory.Exists(installPath) || File.Exists(installPath))
             {
                 var deletion = await CleanupStaleDistroStep.DeleteDistroDirectoryWithRetries(
-                    ctx, ctx.DistroName!, installPath, ct).ConfigureAwait(false);
+                    ctx, ctx.DistroName!, installPath, ct,
+                    () => RequireResidualDeletionAuthority(ctx, registry, expected),
+                    _deletionDelay).ConfigureAwait(false);
                 if (!deletion.IsSuccess) throw new IOException(deletion.Message);
             }
             ct.ThrowIfCancellationRequested();
+            RequireResidualDeletionAuthority(ctx, registry, expected);
             await WindowsNodeBootstrapContextStep.ForgetRemovedDistroAsync(ctx, ct).ConfigureAwait(false);
+            RequireResidualDeletionAuthority(ctx, registry, expected);
             RemoveMatchingSetupState(ctx);
             // Retain the target and its identity until every installation cleanup step succeeds.
             GatewayIdentityRemoval.Remove(registry, expected);
@@ -108,7 +121,23 @@ public sealed class WslGatewayRemoval
         return inspection;
     }
 
-    private async Task RemoveRegisteredDistroAsync(SetupContext ctx, WslRegistrationInspection expected, CancellationToken ct)
+    private static void RequireCurrentTarget(GatewayRegistry registry, GatewayRecord expected)
+    {
+        var snapshot = registry.AdoptPersistedSnapshot(registry.GetSnapshot());
+        if (snapshot.ActiveId != expected.Id ||
+            !LocalGatewaySettings.IsSameTarget(expected, snapshot.Records.SingleOrDefault(record => record.Id == expected.Id)))
+            throw new InvalidOperationException("The selected WSL Gateway changed. No further removal was performed.");
+    }
+
+    private void RequireResidualDeletionAuthority(SetupContext ctx, GatewayRegistry registry, GatewayRecord expected)
+    {
+        if (RequireOwnedRegistration(ctx, expected).Status != WslRegistrationInspectionStatus.NotFound)
+            throw new InvalidOperationException("The WSL distro is registered again. Its files and saved Gateway were retained.");
+        RequireCurrentTarget(registry, expected);
+    }
+
+    private async Task RemoveRegisteredDistroAsync(SetupContext ctx, GatewayRegistry registry,
+        GatewayRecord target, WslRegistrationInspection expected, CancellationToken ct)
     {
         foreach (var operation in new[] { "--terminate", "--unregister" })
         {
@@ -117,6 +146,7 @@ public sealed class WslGatewayRemoval
             if (current.Status == WslRegistrationInspectionStatus.NotFound) return;
             if (current != expected)
                 throw new InvalidOperationException("The WSL registration changed. No command was sent to the replacement.");
+            RequireCurrentTarget(registry, target);
             var result = await ctx.Commands.RunAsync(WslConstants.WslExePath,
                 [operation, ctx.DistroName!], TimeSpan.FromSeconds(60), ct: ct).ConfigureAwait(false);
             if (result.TimedOut)

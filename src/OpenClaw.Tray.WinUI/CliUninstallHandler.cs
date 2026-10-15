@@ -42,17 +42,20 @@ internal static class CliUninstallHandler
 
         var distroName = AppIdentity.SetupDistroName;
         var gatewayPort = AppIdentity.SetupGatewayPort;
-        var targetIndex = Array.FindIndex(args, arg => string.Equals(arg, "--gateway-id", StringComparison.OrdinalIgnoreCase));
-        if (targetIndex >= 0)
+        if (!CliUninstallTarget.TryParse(args, out var uninstallTarget, out var argumentError))
+        {
+            Console.Error.WriteLine($"ERROR: {argumentError}");
+            Environment.Exit(2);
+            return;
+        }
+
+        string[] targetSetupArguments = [];
+        if (uninstallTarget is not null)
         {
             var registry = new GatewayRegistry(AppIdentity.ResolveRoamingDataDirectory());
             registry.Load();
             var target = registry.GetActive();
-            var bindingIndex = Array.FindIndex(args, arg => string.Equals(arg, "--gateway-binding", StringComparison.OrdinalIgnoreCase));
-            if (targetIndex + 1 >= args.Length || target?.Id != args[targetIndex + 1] ||
-                LocalGatewaySettings.Classify(target) != LocalGatewayKind.Wsl ||
-                bindingIndex < 0 || bindingIndex + 1 >= args.Length ||
-                GatewayDashboardBinding.Capture(target!) != args[bindingIndex + 1])
+            if (!uninstallTarget.TryGetSetupArguments(target, out targetSetupArguments))
             {
                 Console.Error.WriteLine("ERROR: The selected WSL Gateway changed. No uninstall was started.");
                 Environment.Exit(2);
@@ -76,12 +79,7 @@ internal static class CliUninstallHandler
         ]);
         if (confirmDestructive) setupArgs.Add("--confirm-destructive");
         if (dryRun) setupArgs.Add("--dry-run");
-        if (targetIndex >= 0)
-        {
-            setupArgs.AddRange(["--gateway-id", args[targetIndex + 1]]);
-            var bindingIndex = Array.FindIndex(args, arg => string.Equals(arg, "--gateway-binding", StringComparison.OrdinalIgnoreCase));
-            setupArgs.AddRange(["--gateway-binding", args[bindingIndex + 1]]);
-        }
+        setupArgs.AddRange(targetSetupArguments);
         if (jsonOutputPath != null)
         {
             setupArgs.Add("--json-output");

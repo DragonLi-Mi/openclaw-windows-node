@@ -193,7 +193,7 @@ public sealed class NativeGatewayPackageClient
         NativeGatewayCommandResult result;
         try
         {
-            result = await _invoke(package, ["teardown", "--force", "--json"], cancellationToken).ConfigureAwait(false);
+            result = await _invoke(package, ["teardown", "--force", "--json"], null, cancellationToken).ConfigureAwait(false);
         }
         catch (TimeoutException exception)
         {

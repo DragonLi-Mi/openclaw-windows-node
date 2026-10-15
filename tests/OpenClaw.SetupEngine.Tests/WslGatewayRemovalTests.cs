@@ -213,6 +213,282 @@ public sealed class WslGatewayRemovalTests : IDisposable
         AssertRetryTarget();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MismatchedRemovalRequestDoesNotReachLifecycle(bool wrongBinding)
+    {
+        var remover = new WslGatewayRemoval(_inspector,
+            (_, _) => throw new InvalidOperationException("Must not stop an unconfirmed target"),
+            (_, _) => throw new InvalidOperationException("Must not remove an unconfirmed target"));
+
+        var result = await remover.RunAsync(_ctx,
+            wrongBinding ? _target.Id : "other-gateway",
+            wrongBinding ? "wrong-binding" : GatewayDashboardBinding.Capture(_target));
+
+        Assert.Equal(PipelineOutcome.Failed, result.Outcome);
+        Assert.Empty(_commands.Operations);
+        AssertRetryTarget();
+    }
+
+    [Fact]
+    public async Task ResidualDeletionRetriesSucceedWhenAuthorityIsUnchanged()
+    {
+        var installPath = _inspector.Current.BasePath!;
+        var sentinel = Path.Combine(installPath, "ext4.vhdx");
+        File.WriteAllText(sentinel, "owned disk");
+        using var lockedFile = new FileStream(sentinel, FileMode.Open, FileAccess.Read, FileShare.None);
+        var delays = 0;
+        _commands.Invoke = arguments =>
+        {
+            if (arguments[0] == "--unregister")
+                _inspector.Current = new(WslRegistrationInspectionStatus.NotFound);
+            return new(0, "", "", TimeSpan.Zero, false);
+        };
+        var remover = new WslGatewayRemoval(_inspector, (_, _) => Task.CompletedTask,
+            deletionDelay: (_, _) =>
+            {
+                delays++;
+                lockedFile.Dispose();
+                return Task.CompletedTask;
+            });
+
+        var result = await remover.RunAsync(_ctx, _target.Id, GatewayDashboardBinding.Capture(_target));
+
+        Assert.Equal(PipelineOutcome.Success, result.Outcome);
+        Assert.Equal(1, delays);
+        Assert.False(Directory.Exists(installPath));
+        _registry.Load();
+        Assert.Null(_registry.GetById(_target.Id));
+        Assert.NotNull(_registry.GetById("wsl-a"));
+    }
+
+    [Theory]
+    [InlineData("removed")]
+    [InlineData("credentials")]
+    public async Task SavedTargetRevokedAfterReceiptPreventsKeepaliveShutdown(string change)
+    {
+        GatewayRegistrySnapshot? changed = null;
+        var inspections = 0;
+        _inspector.BeforeInspect = () =>
+        {
+            if (++inspections != 2) return;
+            Assert.True(File.Exists(Path.Combine(_ctx.LocalDataDir,
+                $"wsl-removal-{GatewayDashboardBinding.Capture(_target)}.json")));
+            changed = ChangeSavedTarget(change);
+        };
+        var remover = new WslGatewayRemoval(_inspector, (_, _) =>
+            throw new InvalidOperationException("Revoked target must not stop keepalive"));
+
+        var result = await remover.RunAsync(_ctx, _target.Id, GatewayDashboardBinding.Capture(_target));
+
+        Assert.Equal(PipelineOutcome.Failed, result.Outcome);
+        Assert.Contains("Gateway changed", result.Message);
+        Assert.Empty(_commands.Operations);
+        Assert.True(Directory.Exists(_inspector.Current.BasePath!));
+        AssertSavedSnapshotAndIdentities(changed!);
+    }
+
+    [Theory]
+    [InlineData("removed")]
+    [InlineData("rebound")]
+    [InlineData("credentials")]
+    [InlineData("ownership")]
+    [InlineData("selected")]
+    [InlineData("browser-port")]
+    public async Task SavedTargetChangeDuringKeepalivePreventsRemoval(string change)
+    {
+        GatewayRegistrySnapshot? changed = null;
+        var installPath = _inspector.Current.BasePath!;
+        var remover = new WslGatewayRemoval(_inspector,
+            (_, _) =>
+            {
+                changed = ChangeSavedTarget(change);
+                return Task.CompletedTask;
+            },
+            (_, _) => throw new InvalidOperationException("Changed target must not reach removal"));
+
+        var result = await remover.RunAsync(_ctx, _target.Id, GatewayDashboardBinding.Capture(_target));
+
+        Assert.Equal(PipelineOutcome.Failed, result.Outcome);
+        Assert.Contains("Gateway changed", result.Message);
+        Assert.Empty(_commands.Operations);
+        Assert.True(Directory.Exists(installPath));
+        AssertSavedSnapshotAndIdentities(changed!);
+    }
+
+    [Theory]
+    [InlineData("removed")]
+    [InlineData("rebound")]
+    [InlineData("credentials")]
+    [InlineData("ownership")]
+    [InlineData("selected")]
+    [InlineData("browser-port")]
+    public async Task SavedTargetChangeDuringTerminationPreventsUnregister(string change)
+    {
+        GatewayRegistrySnapshot? changed = null;
+        var installPath = _inspector.Current.BasePath!;
+        _commands.Invoke = arguments =>
+        {
+            Assert.Equal("--terminate", arguments[0]);
+            changed = ChangeSavedTarget(change);
+            return new(0, "", "", TimeSpan.Zero, false);
+        };
+        var remover = new WslGatewayRemoval(_inspector, (_, _) => Task.CompletedTask);
+
+        var result = await remover.RunAsync(_ctx, _target.Id, GatewayDashboardBinding.Capture(_target));
+
+        Assert.Equal(PipelineOutcome.Failed, result.Outcome);
+        Assert.Equal(["--terminate"], _commands.Operations);
+        Assert.True(Directory.Exists(installPath));
+        AssertSavedSnapshotAndIdentities(changed!);
+    }
+
+    [Fact]
+    public async Task UnrelatedRecordEditsAndConnectionTimestampDoNotRevokeRemoval()
+    {
+        _commands.Invoke = arguments =>
+        {
+            if (arguments[0] == "--unregister")
+                _inspector.Current = new(WslRegistrationInspectionStatus.NotFound);
+            return new(0, "", "", TimeSpan.Zero, false);
+        };
+        var remover = new WslGatewayRemoval(_inspector, (_, _) =>
+        {
+            var writer = new GatewayRegistry(_ctx.DataDir);
+            writer.Load();
+            writer.AddOrUpdate(_target with { LastConnected = DateTime.UtcNow });
+            writer.AddOrUpdate(writer.GetById("wsl-a")! with { FriendlyName = "Updated unrelated Gateway" });
+            writer.Save();
+            return Task.CompletedTask;
+        });
+
+        var result = await remover.RunAsync(_ctx, _target.Id, GatewayDashboardBinding.Capture(_target));
+
+        Assert.Equal(PipelineOutcome.Success, result.Outcome);
+        Assert.Equal(["--terminate", "--unregister"], _commands.Operations);
+        _registry.Load();
+        Assert.Null(_registry.GetById(_target.Id));
+        Assert.Equal("Updated unrelated Gateway", _registry.GetById("wsl-a")!.FriendlyName);
+    }
+
+    [Fact]
+    public async Task SavedTargetChangeAfterUnregisterPreventsResidualDeletion()
+    {
+        var installPath = _inspector.Current.BasePath!;
+        var sentinel = Path.Combine(installPath, "ext4.vhdx");
+        File.WriteAllText(sentinel, "preserve residual disk");
+        GatewayRegistrySnapshot? changed = null;
+        _commands.Invoke = arguments =>
+        {
+            if (arguments[0] == "--unregister")
+            {
+                _inspector.Current = new(WslRegistrationInspectionStatus.NotFound);
+                changed = ChangeSavedTarget("credentials");
+            }
+            return new(0, "", "", TimeSpan.Zero, false);
+        };
+        var remover = new WslGatewayRemoval(_inspector, (_, _) => Task.CompletedTask);
+
+        var result = await remover.RunAsync(_ctx, _target.Id, GatewayDashboardBinding.Capture(_target));
+
+        Assert.Equal(PipelineOutcome.Failed, result.Outcome);
+        Assert.Equal("preserve residual disk", File.ReadAllText(sentinel));
+        AssertSavedSnapshotAndIdentities(changed!);
+    }
+
+    [Theory]
+    [InlineData("replacement")]
+    [InlineData("same-registration")]
+    [InlineData("unavailable")]
+    [InlineData("saved-target")]
+    [InlineData("invalid-registry")]
+    public async Task ResidualDeletionRevalidatesAuthorityBetweenAttempts(string change)
+    {
+        var registration = _inspector.Current;
+        var installPath = registration.BasePath!;
+        var sentinel = Path.Combine(installPath, "ext4.vhdx");
+        File.WriteAllText(sentinel, "replacement disk");
+        using var lockedFile = new FileStream(sentinel, FileMode.Open, FileAccess.Read, FileShare.None);
+        var delays = 0;
+        GatewayRegistrySnapshot? changed = null;
+        _commands.Invoke = arguments =>
+        {
+            if (arguments[0] == "--unregister")
+                _inspector.Current = new(WslRegistrationInspectionStatus.NotFound);
+            return new(0, "", "", TimeSpan.Zero, false);
+        };
+        var remover = new WslGatewayRemoval(_inspector, (_, _) => Task.CompletedTask,
+            deletionDelay: (delay, _) =>
+            {
+                Assert.Equal(TimeSpan.FromSeconds(2), delay);
+                delays++;
+                lockedFile.Dispose();
+                switch (change)
+                {
+                    case "replacement":
+                        _inspector.Current = registration with { RegistrationId = "replacement" };
+                        break;
+                    case "same-registration":
+                        _inspector.Current = registration;
+                        break;
+                    case "unavailable":
+                        _inspector.Current = new(WslRegistrationInspectionStatus.Unavailable);
+                        break;
+                    case "saved-target":
+                        changed = ChangeSavedTarget("rebound");
+                        break;
+                    case "invalid-registry":
+                        File.WriteAllText(Path.Combine(_ctx.DataDir, "gateways.json"), "{invalid");
+                        break;
+                }
+                return Task.CompletedTask;
+            });
+
+        var result = await remover.RunAsync(_ctx, _target.Id, GatewayDashboardBinding.Capture(_target));
+
+        Assert.Equal(PipelineOutcome.Failed, result.Outcome);
+        Assert.Equal(1, delays);
+        Assert.Equal(["--terminate", "--unregister"], _commands.Operations);
+        Assert.Equal("replacement disk", File.ReadAllText(sentinel));
+        if (change == "invalid-registry")
+        {
+            Assert.Equal("{invalid", File.ReadAllText(Path.Combine(_ctx.DataDir, "gateways.json")));
+            Assert.Equal("key-b", File.ReadAllText(Path.Combine(_registry.GetIdentityDirectory(_target.Id), "device-key-ed25519.json")));
+        }
+        else if (changed is not null)
+            AssertSavedSnapshotAndIdentities(changed);
+        else
+            AssertRetryTarget();
+    }
+
+    private GatewayRegistrySnapshot ChangeSavedTarget(string change)
+    {
+        var writer = new GatewayRegistry(_ctx.DataDir);
+        writer.Load();
+        switch (change)
+        {
+            case "removed": writer.Remove(_target.Id); break;
+            case "rebound": writer.AddOrUpdate(_target with { SetupManagedDistroName = "GatewayC" }); break;
+            case "credentials": writer.AddOrUpdate(_target with { SharedGatewayToken = "replacement-fixture-token" }); break;
+            case "ownership": writer.AddOrUpdate(_target with { IsLocal = false }); break;
+            case "selected": writer.SetActive("wsl-a"); break;
+            case "browser-port": writer.AddOrUpdate(_target with { BrowserControlPort = 18800 }); break;
+            default: throw new ArgumentException("Unknown test target change.", nameof(change));
+        }
+        writer.Save();
+        return writer.GetSnapshot();
+    }
+
+    private void AssertSavedSnapshotAndIdentities(GatewayRegistrySnapshot expected)
+    {
+        _registry.Load();
+        Assert.Equal(expected.ActiveId, _registry.ActiveGatewayId);
+        Assert.Equal(expected.Records, _registry.GetAll());
+        Assert.NotNull(_registry.GetById("wsl-a"));
+        Assert.Equal("key-b", File.ReadAllText(Path.Combine(_registry.GetIdentityDirectory(_target.Id), "device-key-ed25519.json")));
+    }
+
     [Fact]
     public async Task DryRunDoesNotInvokeLifecycleOrRemoveMetadata()
     {
@@ -240,7 +516,12 @@ public sealed class WslGatewayRemovalTests : IDisposable
     private sealed class Inspector : IWslRegistrationInspector
     {
         public WslRegistrationInspection Current { get; set; } = new(WslRegistrationInspectionStatus.NotFound);
-        public WslRegistrationInspection Inspect(string distroName) => Current;
+        public Action? BeforeInspect { get; set; }
+        public WslRegistrationInspection Inspect(string distroName)
+        {
+            BeforeInspect?.Invoke();
+            return Current;
+        }
     }
 
     private sealed class Commands : ICommandRunner

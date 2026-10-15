@@ -34,7 +34,10 @@ public sealed class LocalGatewaySettingsContractTests
         Assert.Contains("LocalGatewaySettings.DisplayedGatewayUrl(", diagnostics);
         Assert.Contains("_registry.Changed += OnGatewayRegistryChanged", diagnostics);
         var cli = File.ReadAllText(Path.Combine(tray, "CliUninstallHandler.cs"));
-        Assert.Contains("setupArgs.AddRange([\"--gateway-id\"", cli);
+        Assert.Contains("setupArgs.AddRange(targetSetupArguments)", cli);
+        Assert.Contains("uninstallTarget.TryGetSetupArguments(target", cli);
+        Assert.True(cli.IndexOf("CliUninstallTarget.TryParse(", StringComparison.Ordinal) <
+            cli.IndexOf("OpenClaw.SetupEngine.Program.Main(", StringComparison.Ordinal));
         var engine = File.ReadAllText(Path.Combine(TestRepositoryPaths.GetRepositoryRoot(),
             "src", "OpenClaw.SetupEngine", "Program.cs"));
         Assert.Contains("result = await new WslGatewayRemoval().RunAsync", engine);
