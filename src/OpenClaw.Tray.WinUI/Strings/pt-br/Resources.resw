@@ -4974,10 +4974,10 @@ Os controles de arquivo, rede, área de transferência, tempo limite e aprovaç�
     <value>Abrir configuração inicial</value>
   </data>
   <data name="SettingsPage_MSIXInstallationDetected.Title" xml:space="preserve">
-    <value>Instalação MSIX detectada</value>
+    <value>Limpeza do Gateway</value>
   </data>
   <data name="SettingsPage_MSIXInstallationDetected.Message" xml:space="preserve">
-    <value>Remover o OpenClaw pelas Configurações do Windows → Aplicativos NÃO removerá o Gateway local (distro WSL, imagem de disco). Use Remover Gateway local abaixo PRIMEIRO e só depois desinstale o OpenClaw.</value>
+    <value>Desinstalar o OpenClaw nas Configurações do Windows remove automaticamente os Gateways gerenciados. Use Remover Gateway Local abaixo para remover um Gateway e manter o aplicativo.</value>
   </data>
   <data name="SettingsPage_RemovesTheWSLDistro.Text" xml:space="preserve">
     <value>Remove a distro WSL (OpenClawGateway), sua imagem de disco, a entrada de inicialização automática, e apaga as credenciais do Gateway. Seu token MCP é preservado. A integração será reiniciada.</value>
