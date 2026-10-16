@@ -22,7 +22,7 @@ public sealed class NativeGatewaySetupConnectionTests
     public async Task RejectedOperatorDeviceToken_IsRetiredSoSetupReconnectsWithTheSharedCredential()
     {
         await using var server = await FixtureGatewayServer.StartAsync(GatewayScenario.CreateNativeSetup(Reply), Token);
-        using var fixture = CreateFixture(server, isolated: true);
+        using var fixture = CreateFixture(server);
         await using var owner = await fixture.PrepareAsync();
         var identity = new DeviceIdentity(owner.IdentityDirectory);
         identity.Initialize();
@@ -46,7 +46,7 @@ public sealed class NativeGatewaySetupConnectionTests
     {
         await using var server = await FixtureGatewayServer.StartAsync(GatewayScenario.CreateNativeSetup(Reply), Token);
         server.AcceptedDeviceToken = StaleDeviceToken;
-        using var fixture = CreateFixture(server, isolated: true);
+        using var fixture = CreateFixture(server);
         await using var owner = await fixture.PrepareAsync();
         var identity = new DeviceIdentity(owner.IdentityDirectory);
         identity.Initialize();
@@ -68,7 +68,7 @@ public sealed class NativeGatewaySetupConnectionTests
     public async Task Recovery_IsRefusedThroughConnectWhenGatewayOwnershipFailsVerification()
     {
         await using var server = await FixtureGatewayServer.StartAsync(GatewayScenario.CreateNativeSetup(Reply), Token);
-        using var fixture = CreateFixture(server, isolated: true);
+        using var fixture = CreateFixture(server);
         await using var owner = await fixture.PrepareAsync();
         var identity = new DeviceIdentity(owner.IdentityDirectory);
         identity.Initialize();
@@ -98,7 +98,7 @@ public sealed class NativeGatewaySetupConnectionTests
     public async Task Recovery_IsRefusedThroughConnectWhenSetupCredentialChanged()
     {
         await using var server = await FixtureGatewayServer.StartAsync(GatewayScenario.CreateNativeSetup(Reply), Token);
-        using var fixture = CreateFixture(server, isolated: true);
+        using var fixture = CreateFixture(server);
         await using var owner = await fixture.PrepareAsync();
         var identity = new DeviceIdentity(owner.IdentityDirectory);
         identity.Initialize();
@@ -125,7 +125,7 @@ public sealed class NativeGatewaySetupConnectionTests
     public async Task Recovery_IsBudgetedOncePerStagedSession()
     {
         await using var server = await FixtureGatewayServer.StartAsync(GatewayScenario.CreateNativeSetup(Reply), Token);
-        using var fixture = CreateFixture(server, isolated: true);
+        using var fixture = CreateFixture(server);
         await using var owner = await fixture.PrepareAsync();
         var identity = new DeviceIdentity(owner.IdentityDirectory);
         identity.Initialize();
@@ -153,7 +153,7 @@ public sealed class NativeGatewaySetupConnectionTests
             return Reply(method, parameters);
         }
         await using var server = await FixtureGatewayServer.StartAsync(GatewayScenario.CreateNativeSetup(Respond), Token);
-        using var fixture = CreateFixture(server, isolated: true);
+        using var fixture = CreateFixture(server);
         await using var owner = await fixture.PrepareAsync();
         await using var connection = await NativeGatewaySetupConnection.ConnectAsync(owner);
         IGatewayAiSetupTransport transport = staged ? connection :
@@ -189,36 +189,22 @@ public sealed class NativeGatewaySetupConnectionTests
         _ => throw new InvalidOperationException("Unexpected fixture setup method: " + method),
     };
 
-    private static NativeGatewaySetupTests.Fixture CreateFixture(FixtureGatewayServer server, bool isolated = false)
+    private static NativeGatewaySetupTests.Fixture CreateFixture(FixtureGatewayServer server)
     {
-        var fixture = new NativeGatewaySetupTests.Fixture(server.Endpoint.Port,
-            isolated ? NativeGatewayContract.IsolatedSessionV1 : NativeGatewayContract.Legacy);
+        var fixture = new NativeGatewaySetupTests.Fixture(server.Endpoint.Port);
         fixture.Host.IsolatedConfiguration = new(server.Endpoint.Port, Token);
-        if (!isolated)
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(fixture.ConfigPath)!);
-            File.WriteAllText(fixture.ConfigPath, JsonSerializer.Serialize(new
-            {
-                gateway = new { mode = "local", bind = "loopback", port = server.Endpoint.Port,
-                    auth = new { mode = "token", token = Token }, reload = new { mode = "hybrid" } },
-                models = new { sentinel = "preserved" },
-            }));
-        }
         fixture.Runtime.StopConnections = () => server.CloseConnectionsAsync();
         return fixture;
     }
 
     [Theory]
-    [InlineData(SetupNativeDestination.Chat, false)]
-    [InlineData(SetupNativeDestination.Channels, false)]
-    [InlineData(SetupNativeDestination.Skills, false)]
-    [InlineData(SetupNativeDestination.Chat, true)]
-    [InlineData(SetupNativeDestination.Channels, true)]
-    [InlineData(SetupNativeDestination.Skills, true)]
-    public async Task FocusedAi_AllDestinationsReverifyAfterNativeRestartBeforePublication(SetupNativeDestination destination, bool isolated)
+    [InlineData(SetupNativeDestination.Chat)]
+    [InlineData(SetupNativeDestination.Channels)]
+    [InlineData(SetupNativeDestination.Skills)]
+    public async Task FocusedAi_AllDestinationsReverifyAfterNativeRestartBeforePublication(SetupNativeDestination destination)
     {
         await using var server = await FixtureGatewayServer.StartAsync(GatewayScenario.CreateNativeSetup(Reply), Token);
-        using var fixture = CreateFixture(server, isolated);
+        using var fixture = CreateFixture(server);
         await using var owner = await fixture.PrepareAsync();
         var connection = await NativeGatewaySetupConnection.ConnectAsync(owner);
         var client = new GatewayAiSetupClient(connection);
@@ -235,20 +221,11 @@ public sealed class NativeGatewaySetupConnectionTests
             (completion, _) =>
             {
                 Assert.Equal(owner.Record.Id, fixture.Registry.ActiveGatewayId);
-                if (isolated)
-                {
-                    Assert.False(File.Exists(fixture.ConfigPath));
-                    Assert.Equal(NativeGatewayPackageClient.IsolatedContract, owner.Record.NativeRuntimeContract);
-                    Assert.Contains("restart", fixture.Events);
-                    Assert.True(fixture.Events.IndexOf("restart") < fixture.Events.IndexOf("stop"),
-                        "An isolated verified restart must retain its original detach/stop ownership.");
-                    Assert.Equal(new CapabilitiesConfig { Camera = false }.GetEnabledCommandIds(), fixture.Host.AppliedCommands);
-                }
-                else
-                {
-                    Assert.Equal("hybrid", fixture.Config()["gateway"]!["reload"]!["mode"]!.GetValue<string>());
-                    Assert.Equal("preserved", fixture.Config()["models"]!["sentinel"]!.GetValue<string>());
-                }
+                Assert.Equal(NativeGatewayPackageClient.IsolatedContract, owner.Record.NativeRuntimeContract);
+                Assert.Contains("restart", fixture.Events);
+                Assert.True(fixture.Events.IndexOf("restart") < fixture.Events.IndexOf("stop"),
+                    "An isolated verified restart must retain its original detach/stop ownership.");
+                Assert.Equal(new CapabilitiesConfig { Camera = false }.GetEnabledCommandIds(), fixture.Host.AppliedCommands);
                 Assert.True(server.Requests.Count(request => request.Method == "openclaw.setup.verify") >= 3);
                 published = completion;
                 return Task.CompletedTask;
@@ -259,7 +236,6 @@ public sealed class NativeGatewaySetupConnectionTests
         Assert.Equal(proof.IdentityBinding, published!.Verification.IdentityBinding);
         Assert.Equal(proof.SessionKey, published.Verification.SessionKey);
         Assert.DoesNotContain(server.Requests, request => request.Method == "wizard.start");
-        Assert.False(File.Exists(fixture.ConfigPath + ".setup-reload.json"));
     }
 
     [Theory]
@@ -282,13 +258,11 @@ public sealed class NativeGatewaySetupConnectionTests
         Assert.Empty(server.Requests);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task EveryRequestAndReconnect_RechecksNativeOwnership(bool isolated)
+    [Fact]
+    public async Task EveryRequestAndReconnect_RechecksNativeOwnership()
     {
         await using var server = await FixtureGatewayServer.StartAsync(GatewayScenario.CreateNativeSetup(Reply), Token);
-        using var fixture = CreateFixture(server, isolated);
+        using var fixture = CreateFixture(server);
         await using var owner = await fixture.PrepareAsync();
         await using var connection = await NativeGatewaySetupConnection.ConnectAsync(owner);
         var count = server.Requests.Count;
@@ -308,7 +282,7 @@ public sealed class NativeGatewaySetupConnectionTests
     public async Task IsolatedConfigurationDriftRejectsRequestsAndReconnectsWithoutHostConfig(bool changedPort)
     {
         await using var server = await FixtureGatewayServer.StartAsync(GatewayScenario.CreateNativeSetup(Reply), Token);
-        using var fixture = CreateFixture(server, isolated: true);
+        using var fixture = CreateFixture(server);
         await using var owner = await fixture.PrepareAsync();
         await using var connection = await NativeGatewaySetupConnection.ConnectAsync(owner);
         var count = server.Requests.Count;
@@ -320,7 +294,6 @@ public sealed class NativeGatewaySetupConnectionTests
         await Assert.ThrowsAsync<InvalidOperationException>(() => connection.Client.HandshakeAuthorizationAsync!(default));
         await Assert.ThrowsAsync<InvalidOperationException>(() => connection.Client.ReconnectAuthorizationAsync!(default));
         Assert.Equal(count, server.Requests.Count);
-        Assert.False(File.Exists(fixture.ConfigPath));
         Assert.Empty(fixture.Registry.GetAll());
     }
 
@@ -379,7 +352,6 @@ public sealed class NativeGatewaySetupConnectionTests
         await Assert.ThrowsAnyAsync<InvalidOperationException>(() =>
             owner.CompleteVerifiedAsync(proof, new CapabilitiesConfig(), default));
         Assert.Empty(fixture.Registry.GetAll());
-        Assert.Equal("preserved", fixture.Config()["models"]!["sentinel"]!.GetValue<string>());
     }
 
     [Fact]
@@ -411,16 +383,13 @@ public sealed class NativeGatewaySetupConnectionTests
         Assert.True(connection.Generation > generation);
         Assert.Equal(route, connection.Route);
         Assert.Empty(fixture.Registry.GetAll());
-        Assert.Equal("preserved", fixture.Config()["models"]!["sentinel"]!.GetValue<string>());
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task PostRestartVerification_BorrowsNormalOwnerAndRejectsUnownedOrReplacedAuthority(bool isolated)
+    [Fact]
+    public async Task PostRestartVerification_BorrowsNormalOwnerAndRejectsUnownedOrReplacedAuthority()
     {
         await using var server = await FixtureGatewayServer.StartAsync(GatewayScenario.CreateNativeSetup(Reply), Token);
-        using var fixture = CreateFixture(server, isolated);
+        using var fixture = CreateFixture(server);
         GatewayAiSetupCompletion proof;
         await using (var owner = await fixture.PrepareAsync())
         {
@@ -479,7 +448,7 @@ public sealed class NativeGatewaySetupConnectionTests
             return Reply(method, parameters);
         }
         await using var server = await FixtureGatewayServer.StartAsync(GatewayScenario.CreateNativeSetup(Respond), Token);
-        using var fixture = CreateFixture(server, isolated: true);
+        using var fixture = CreateFixture(server);
         GatewayAiSetupCompletion proof;
         await using (var owner = await fixture.PrepareAsync())
         {
