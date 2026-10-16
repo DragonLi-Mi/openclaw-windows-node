@@ -541,7 +541,7 @@ public sealed partial class SettingsPage : Page
             psi.ArgumentList.Add("--gateway-id");
             psi.ArgumentList.Add(target.Id);
             psi.ArgumentList.Add("--gateway-binding");
-            psi.ArgumentList.Add(GatewayDashboardBinding.Capture(target));
+            psi.ArgumentList.Add(LocalGatewaySettings.CaptureRemovalAuthority(target));
             psi.ArgumentList.Add("--json-output");
             psi.ArgumentList.Add(jsonOutput);
 

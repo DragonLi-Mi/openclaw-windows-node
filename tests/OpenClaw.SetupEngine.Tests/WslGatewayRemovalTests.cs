@@ -47,13 +47,70 @@ public sealed class WslGatewayRemovalTests : IDisposable
             if (_remove is not null) _remove();
             else FinishDistroRemoval();
             return Task.CompletedTask;
-        }).RunAsync(_ctx, _target.Id, GatewayDashboardBinding.Capture(_target));
+        }).RunAsync(_ctx, _target.Id, LocalGatewaySettings.CaptureRemovalAuthority(_target));
 
     private void FinishDistroRemoval()
     {
         var path = _inspector.Current.BasePath!;
         _inspector.Current = new(WslRegistrationInspectionStatus.NotFound);
         Directory.Delete(path, recursive: true);
+    }
+
+    [Theory]
+    [InlineData("shared-token")]
+    [InlineData("bootstrap-token")]
+    [InlineData("signature")]
+    [InlineData("browser-port")]
+    [InlineData("label")]
+    public async Task ParentConsentCannotBeRebasedToChangedRecordAtChildAdmission(string change)
+    {
+        var changed = change switch
+        {
+            "shared-token" => _target with { SharedGatewayToken = "new-fixture-token" },
+            "bootstrap-token" => _target with { BootstrapToken = "new-fixture-bootstrap" },
+            "signature" => _target with { RequiresV2Signature = true },
+            "browser-port" => _target with { BrowserControlPort = 19999 },
+            "label" => _target with { FriendlyName = "Changed" },
+            _ => throw new ArgumentOutOfRangeException(nameof(change)),
+        };
+        Assert.Equal(GatewayDashboardBinding.Capture(_target), GatewayDashboardBinding.Capture(changed));
+        var confirmed = LocalGatewaySettings.CaptureRemovalAuthority(_target);
+        _registry.AddOrUpdate(changed);
+        _registry.Save();
+        var remover = new WslGatewayRemoval(_inspector, (_, _) =>
+            throw new InvalidOperationException("No keepalive may stop for stale consent."));
+
+        var result = await remover.RunAsync(_ctx, _target.Id, confirmed);
+
+        Assert.Equal(PipelineOutcome.Failed, result.Outcome);
+        Assert.Contains("changed", result.Message);
+        Assert.Empty(_commands.Operations);
+        Assert.True(Directory.Exists(_inspector.Current.BasePath!));
+        _registry.Load();
+        Assert.Equal(changed, _registry.GetActive());
+        Assert.Equal("key-b", File.ReadAllText(Path.Combine(_registry.GetIdentityDirectory(_target.Id), "device-key-ed25519.json")));
+    }
+
+    [Fact]
+    public async Task TimestampOnlyDriftDoesNotInvalidateParentConsent()
+    {
+        _registry.AddOrUpdate(_target with { LastConnected = DateTime.UtcNow });
+        _registry.Save();
+
+        Assert.Equal(PipelineOutcome.Success, (await Run()).Outcome);
+        Assert.Equal(["stop", "remove"], _calls);
+    }
+
+    [Fact]
+    public async Task EndpointOnlyConsentIsRejectedBeforeAnyDestructiveWork()
+    {
+        var remover = new WslGatewayRemoval(_inspector, (_, _) =>
+            throw new InvalidOperationException("Endpoint-only consent cannot stop keepalive."));
+        var result = await remover.RunAsync(_ctx, _target.Id, GatewayDashboardBinding.Capture(_target));
+
+        Assert.Equal(PipelineOutcome.Failed, result.Outcome);
+        Assert.Empty(_commands.Operations);
+        AssertRetryTarget();
     }
 
     [Fact]
@@ -109,7 +166,7 @@ public sealed class WslGatewayRemovalTests : IDisposable
             return new(0, "", "", TimeSpan.Zero, false);
         };
         var remover = new WslGatewayRemoval(_inspector, (_, _) => Task.CompletedTask);
-        var result = await remover.RunAsync(_ctx, _target.Id, GatewayDashboardBinding.Capture(_target));
+        var result = await remover.RunAsync(_ctx, _target.Id, LocalGatewaySettings.CaptureRemovalAuthority(_target));
         Assert.Equal(PipelineOutcome.Failed, result.Outcome);
         Assert.Equal(["--terminate"], _commands.Operations);
         AssertRetryTarget();
@@ -126,7 +183,7 @@ public sealed class WslGatewayRemovalTests : IDisposable
         };
         var remover = new WslGatewayRemoval(_inspector, (_, _) => Task.CompletedTask);
         Assert.Equal(PipelineOutcome.Success,
-            (await remover.RunAsync(_ctx, _target.Id, GatewayDashboardBinding.Capture(_target))).Outcome);
+            (await remover.RunAsync(_ctx, _target.Id, LocalGatewaySettings.CaptureRemovalAuthority(_target))).Outcome);
         Assert.Equal(["--terminate", "--unregister"], _commands.Operations);
     }
 
@@ -194,7 +251,7 @@ public sealed class WslGatewayRemovalTests : IDisposable
         var remover = new WslGatewayRemoval(_inspector,
             (_, _) => throw new Exception("Must not stop"),
             (_, _) => throw new Exception("Must not unregister"));
-        var result = await remover.RunAsync(_ctx, legacy.Id, GatewayDashboardBinding.Capture(legacy));
+        var result = await remover.RunAsync(_ctx, legacy.Id, LocalGatewaySettings.CaptureRemovalAuthority(legacy));
         Assert.Equal(PipelineOutcome.Failed, result.Outcome);
     }
 
@@ -209,7 +266,7 @@ public sealed class WslGatewayRemovalTests : IDisposable
             },
             (_, _) => throw new Exception("Must not unregister replacement"));
         Assert.Equal(PipelineOutcome.Failed,
-            (await remover.RunAsync(_ctx, _target.Id, GatewayDashboardBinding.Capture(_target))).Outcome);
+            (await remover.RunAsync(_ctx, _target.Id, LocalGatewaySettings.CaptureRemovalAuthority(_target))).Outcome);
         AssertRetryTarget();
     }
 
@@ -224,7 +281,7 @@ public sealed class WslGatewayRemovalTests : IDisposable
 
         var result = await remover.RunAsync(_ctx,
             wrongBinding ? _target.Id : "other-gateway",
-            wrongBinding ? "wrong-binding" : GatewayDashboardBinding.Capture(_target));
+            wrongBinding ? "wrong-binding" : LocalGatewaySettings.CaptureRemovalAuthority(_target));
 
         Assert.Equal(PipelineOutcome.Failed, result.Outcome);
         Assert.Empty(_commands.Operations);
@@ -253,7 +310,7 @@ public sealed class WslGatewayRemovalTests : IDisposable
                 return Task.CompletedTask;
             });
 
-        var result = await remover.RunAsync(_ctx, _target.Id, GatewayDashboardBinding.Capture(_target));
+        var result = await remover.RunAsync(_ctx, _target.Id, LocalGatewaySettings.CaptureRemovalAuthority(_target));
 
         Assert.Equal(PipelineOutcome.Success, result.Outcome);
         Assert.Equal(1, delays);
@@ -280,7 +337,7 @@ public sealed class WslGatewayRemovalTests : IDisposable
         var remover = new WslGatewayRemoval(_inspector, (_, _) =>
             throw new InvalidOperationException("Revoked target must not stop keepalive"));
 
-        var result = await remover.RunAsync(_ctx, _target.Id, GatewayDashboardBinding.Capture(_target));
+        var result = await remover.RunAsync(_ctx, _target.Id, LocalGatewaySettings.CaptureRemovalAuthority(_target));
 
         Assert.Equal(PipelineOutcome.Failed, result.Outcome);
         Assert.Contains("Gateway changed", result.Message);
@@ -308,7 +365,7 @@ public sealed class WslGatewayRemovalTests : IDisposable
             },
             (_, _) => throw new InvalidOperationException("Changed target must not reach removal"));
 
-        var result = await remover.RunAsync(_ctx, _target.Id, GatewayDashboardBinding.Capture(_target));
+        var result = await remover.RunAsync(_ctx, _target.Id, LocalGatewaySettings.CaptureRemovalAuthority(_target));
 
         Assert.Equal(PipelineOutcome.Failed, result.Outcome);
         Assert.Contains("Gateway changed", result.Message);
@@ -336,7 +393,7 @@ public sealed class WslGatewayRemovalTests : IDisposable
         };
         var remover = new WslGatewayRemoval(_inspector, (_, _) => Task.CompletedTask);
 
-        var result = await remover.RunAsync(_ctx, _target.Id, GatewayDashboardBinding.Capture(_target));
+        var result = await remover.RunAsync(_ctx, _target.Id, LocalGatewaySettings.CaptureRemovalAuthority(_target));
 
         Assert.Equal(PipelineOutcome.Failed, result.Outcome);
         Assert.Equal(["--terminate"], _commands.Operations);
@@ -363,7 +420,7 @@ public sealed class WslGatewayRemovalTests : IDisposable
             return Task.CompletedTask;
         });
 
-        var result = await remover.RunAsync(_ctx, _target.Id, GatewayDashboardBinding.Capture(_target));
+        var result = await remover.RunAsync(_ctx, _target.Id, LocalGatewaySettings.CaptureRemovalAuthority(_target));
 
         Assert.Equal(PipelineOutcome.Success, result.Outcome);
         Assert.Equal(["--terminate", "--unregister"], _commands.Operations);
@@ -390,7 +447,7 @@ public sealed class WslGatewayRemovalTests : IDisposable
         };
         var remover = new WslGatewayRemoval(_inspector, (_, _) => Task.CompletedTask);
 
-        var result = await remover.RunAsync(_ctx, _target.Id, GatewayDashboardBinding.Capture(_target));
+        var result = await remover.RunAsync(_ctx, _target.Id, LocalGatewaySettings.CaptureRemovalAuthority(_target));
 
         Assert.Equal(PipelineOutcome.Failed, result.Outcome);
         Assert.Equal("preserve residual disk", File.ReadAllText(sentinel));
@@ -445,7 +502,7 @@ public sealed class WslGatewayRemovalTests : IDisposable
                 return Task.CompletedTask;
             });
 
-        var result = await remover.RunAsync(_ctx, _target.Id, GatewayDashboardBinding.Capture(_target));
+        var result = await remover.RunAsync(_ctx, _target.Id, LocalGatewaySettings.CaptureRemovalAuthority(_target));
 
         Assert.Equal(PipelineOutcome.Failed, result.Outcome);
         Assert.Equal(1, delays);

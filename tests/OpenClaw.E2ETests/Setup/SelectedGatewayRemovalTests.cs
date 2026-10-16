@@ -41,7 +41,7 @@ public sealed class SelectedGatewayRemovalTests(E2ESetupFixture fixture)
         start.Environment["OPENCLAW_TRAY_APPDATA_DIR"] = fixture.RoamingAppDataRoot;
         start.Environment["OPENCLAW_TRAY_LOCALAPPDATA_DIR"] = fixture.LocalAppDataRoot;
         foreach (var argument in new[] { "--uninstall", "--confirm-destructive", "--gateway-id", target.Id,
-                     "--gateway-binding", GatewayDashboardBinding.Capture(target), "--json-output", report })
+                     "--gateway-binding", LocalGatewaySettings.CaptureRemovalAuthority(target), "--json-output", report })
             start.ArgumentList.Add(argument);
         using var process = Process.Start(start)!;
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(5));

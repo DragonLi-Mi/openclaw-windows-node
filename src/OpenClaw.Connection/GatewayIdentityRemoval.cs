@@ -37,7 +37,8 @@ public static class GatewayIdentityRemoval
         {
             registry.ReplaceSnapshotAndSave(snapshot, new(
                 snapshot.Records.Where(record => record.Id != expected.Id).ToArray(),
-                snapshot.ActiveId == expected.Id ? null : snapshot.ActiveId));
+                snapshot.ActiveId == expected.Id ? null : snapshot.ActiveId),
+                suppressLegacyGatewayUrl: expected.Url);
         }
         catch (Exception failure)
         {

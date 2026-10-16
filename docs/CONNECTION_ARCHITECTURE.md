@@ -38,6 +38,14 @@ registry removal, and restores the profile if that commit fails. A failure to
 delete committed staging data reports its exact remaining path rather than
 claiming complete cleanup. Read-only workspace files are cleared before deletion;
 link targets are not modified.
+The same registry commit records the removed endpoint in
+`suppressedLegacyGatewayUrls`. Startup migration, the settings-URL bridge, and
+operator/node root-identity backfill honor that decision, including equivalent
+loopback aliases. Legacy settings and the shared root identity remain intact for
+unrelated gateways. Explicitly adding a new connection to the endpoint remains
+supported, but it must use its new credentials, not the old root identity.
+Failed registry commits retain both the original record and legacy recovery
+eligibility. Ordinary saves and setup reconciliation preserve removal decisions.
 Retries also detect staging directories left by an interrupted process, before
 treating a missing profile as successfully removed. They retain the connection
 and report the exact recovery folder without automatically restoring or deleting
@@ -53,8 +61,15 @@ the setup lock and Local AI binding lock; an existing native Local AI receipt
 requires explicit Stop and Release Gateway ownership before native removal.
 An unrelated native binding does not block targeted WSL removal, which preserves
 Local AI files.
-WSL removal passes the confirmed gateway ID and endpoint binding to the headless
+WSL removal passes the confirmed gateway ID and a full-record authority digest to the headless
 engine's dedicated `WslGatewayRemoval` path, not its profile-wide uninstaller.
+`LocalGatewaySettings.CaptureRemovalAuthority` covers every saved record field
+except `LastConnected`. The existing `--gateway-binding` argument carries that
+opaque digest, never credentials. Both tray forwarding and engine admission
+reject same-ID credential or other field drift rather than accepting a fresh
+baseline after confirmation. Endpoint-only bindings cannot authorize removal.
+The on-disk retry receipt keeps its separate endpoint/registration binding so
+previous interrupted-removal receipts remain usable with fresh full-record consent.
 Before any lifecycle action, the current WSL registration must match the managed
 install path and explicit ownership metadata or a path-bound installation marker.
 A legacy display name alone never authorizes unregister. The owner stops only
@@ -92,6 +107,12 @@ The package command contract was checked against
 `1134c50cd589f60fcb2ed71c15229fef12275402`, `ClawCtlJson.cs` and
 `ClawCtlCommandLine.cs`. Automated fake-package tests do not constitute live
 destructive teardown proof.
+
+Reopened WSL onboarding passes its selected ID and endpoint binding to both the
+AI setup page and the classic wizard through `WizardPageArgs`. Initial connection
+and explicit classic-wizard retry use that original target. Switching the active
+gateway or changing its endpoint rejects connection before any wizard RPC;
+the fallback never adopts a different currently active gateway.
 
 ## Native Local AI ownership and configuration
 

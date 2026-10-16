@@ -25,6 +25,23 @@ public sealed class AppRefactorContractTests
     }
 
     [Fact]
+    public void ExplicitRemovalBlocksStartupMigrationBridgeAndLegacyCredentialFallbacks()
+    {
+        var source = ReadAppSources();
+        var startup = ExtractMethod(source, "InitializeGatewayClient");
+        AssertInOrder(startup,
+            "_gatewayRegistry.IsLegacyMigrationSuppressed(gatewayUrl)",
+            "TryMigrateLegacyGatewaySettings(gatewayUrl",
+            "_gatewayRegistry.FindByUrl(gatewayUrl)");
+        foreach (var method in new[] { "ResolveStartupOperatorCredential", "ResolveStartupNodeCredential" })
+        {
+            var body = ExtractMethod(source, method);
+            AssertInOrder(body, "IsLegacyMigrationSuppressed(record.Url)", "var effectiveUrl");
+            AssertInOrder(body, "resolver.Resolve", "IsLegacyMigrationSuppressed(record.Url)");
+        }
+    }
+
+    [Fact]
     public void E2ESetupTeardown_UsesFixtureOwnedUninstallArguments()
     {
         var root = TestRepositoryPaths.GetRepositoryRoot();

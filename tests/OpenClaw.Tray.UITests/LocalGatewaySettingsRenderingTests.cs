@@ -128,7 +128,6 @@ public sealed class LocalGatewaySettingsRenderingTests(UIThreadFixture ui, ITest
                 Name = "SettingsProofHost",
                 Width = 900,
                 Height = 1000,
-                Background = (Brush)Application.Current.Resources["SolidBackgroundFillColorBaseBrush"],
             };
             host.Children.Add(page);
             try
@@ -142,6 +141,7 @@ public sealed class LocalGatewaySettingsRenderingTests(UIThreadFixture ui, ITest
                 // Do not call Initialize: this mounted page has no live App, registry, or gateway.
                 ui.Container.Children.Add(host);
                 await TestSupport.WaitForRenderedConditionAsync(() => page.IsLoaded, "Settings page Loaded");
+                await OnboardingNativeProof.ApplyThemeSurfaceAsync(host, ElementTheme.Light);
                 await TestSupport.WaitForRenderedConditionAsync(
                     () => ui.Container.ActualWidth > 100 && ui.Container.ActualHeight > 100,
                     "resized fixture client area");
@@ -298,7 +298,9 @@ public sealed class LocalGatewaySettingsRenderingTests(UIThreadFixture ui, ITest
         }
         Assert.True(opaquePixels >= pixels.Length / 4 * 0.99,
             $"The mounted page background is clipped or transparent ({opaquePixels}/{pixels.Length / 4} opaque pixels).");
-        Assert.True(darkPixels > 500 && lightPixels > 10000, "The mounted page capture has no legible foreground/background.");
+        Assert.True(darkPixels > 500 && lightPixels > 10000,
+            $"The mounted page capture has no legible foreground/background " +
+            $"(dark={darkPixels}, light={lightPixels}, size={bitmap.PixelWidth}x{bitmap.PixelHeight}, scale={scale}).");
         var directory = Environment.GetEnvironmentVariable("OPENCLAW_UI_TEST_ARTIFACTS_DIR");
         if (string.IsNullOrWhiteSpace(directory)) return;
         Directory.CreateDirectory(directory);

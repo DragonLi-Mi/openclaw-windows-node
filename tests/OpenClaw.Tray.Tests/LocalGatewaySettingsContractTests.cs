@@ -25,6 +25,7 @@ public sealed class LocalGatewaySettingsContractTests
         Assert.Contains("SetupRunLock.TryAcquire", page);
         Assert.Contains("RemoveNativeGatewayAsync(target", page);
         Assert.Contains("psi.ArgumentList.Add(\"--gateway-binding\")", page);
+        Assert.Contains("LocalGatewaySettings.CaptureRemovalAuthority(target)", page);
         Assert.Contains("_localGatewayKind == LocalGatewayKind.Wsl", page);
         Assert.DoesNotContain("SettingsPage_RemovingDistro", page);
         var connection = File.ReadAllText(Path.Combine(tray, "Pages", "ConnectionPage.xaml.cs"));
@@ -52,6 +53,11 @@ public sealed class LocalGatewaySettingsContractTests
             "src", "OpenClaw.SetupEngine.UI", "SetupWindow.xaml.cs"));
         Assert.Contains("_existingWslSetup.RequireCurrent(registry.GetActive())", setup);
         Assert.Contains("ExpectedGatewayId: _existingWslSetup?.Record.Id", setup);
+        Assert.Contains("_config, _existingWslSetup?.Record.Id, _existingWslSetup?.Binding", setup);
+        var classic = File.ReadAllText(Path.Combine(TestRepositoryPaths.GetRepositoryRoot(),
+            "src", "OpenClaw.SetupEngine.UI", "Pages", "WizardPage.xaml.cs"));
+        Assert.Contains("e.Parameter as WizardPageArgs", classic);
+        Assert.Contains("expectedGatewayId: _expectedGatewayId, expectedEndpointBinding: _expectedEndpointBinding", classic);
         var welcome = setup[setup.IndexOf("public void NavigateToWelcome(", StringComparison.Ordinal)..
             setup.IndexOf("internal async Task<NativeGatewayEligibility>", StringComparison.Ordinal)];
         Assert.Contains("ClearExistingWslSetup()", welcome);

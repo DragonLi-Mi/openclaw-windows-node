@@ -776,7 +776,8 @@ public sealed partial class SetupWindow : Window
         if (_isClosed || _setupLock is null || RootFrame.Content is WizardPage)
             return false;
 
-        NavigateTo(typeof(WizardPage), _config);
+        NavigateTo(typeof(WizardPage), new WizardPageArgs(
+            _config, _existingWslSetup?.Record.Id, _existingWslSetup?.Binding));
         return true;
     }
 

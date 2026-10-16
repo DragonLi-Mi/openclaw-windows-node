@@ -6,6 +6,66 @@ namespace OpenClaw.Connection.Tests;
 public sealed class GatewayIdentityRemovalTests
 {
     [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void RemovalSurvivesLegacyMigrationOnRestartWithoutDeletingSharedFiles(bool native, bool keepOtherGateway)
+    {
+        using var temp = new TempDirectory();
+        const string url = "ws://localhost:18789";
+        const string legacyToken = "old-fixture-token";
+        var legacyIdentity = temp.Combine("device-key-ed25519.json");
+        File.WriteAllText(legacyIdentity, "original-shared-key");
+        var settings = temp.Combine("settings.json");
+        File.WriteAllText(settings, """{"GatewayUrl":"ws://localhost:18789","Token":"old-fixture-token"}""");
+        var originalSettings = File.ReadAllBytes(settings);
+        var registry = new GatewayRegistry(temp.Path);
+        Assert.True(registry.MigrateFromSettings(url, legacyToken, null, false, null, null, 0, 0, temp.Path));
+        var migrated = registry.GetActive()!;
+        var record = native
+            ? LocalGatewaySettingsTests.Native() with { Id = migrated.Id, Url = url, SharedGatewayToken = legacyToken }
+            : migrated with { IsLocal = true, SetupManagedDistroName = "RemovedGateway" };
+        registry.AddOrUpdate(record);
+        if (keepOtherGateway)
+            registry.AddOrUpdate(new() { Id = "other", Url = "wss://other.example.test", SharedGatewayToken = "keep-token" });
+        registry.Save();
+
+        GatewayIdentityRemoval.Remove(registry, record);
+
+        var reopened = new GatewayRegistry(temp.Path);
+        reopened.Load();
+        Assert.True(reopened.IsLegacyMigrationSuppressed("ws://127.0.0.1:18789"));
+        Assert.False(reopened.IsLegacyMigrationSuppressed("ws://localhost:18790"));
+        Assert.False(reopened.MigrateFromSettings(url, legacyToken, null, false, null, null, 0, 0, temp.Path));
+        Assert.Null(reopened.FindByUrl(url));
+        Assert.False(Directory.Exists(registry.GetIdentityDirectory(record.Id)));
+        Assert.Equal("original-shared-key", File.ReadAllText(legacyIdentity));
+        Assert.Equal(originalSettings, File.ReadAllBytes(settings));
+        Assert.Equal(keepOtherGateway ? 1 : 0, reopened.GetAll().Count);
+        if (keepOtherGateway)
+            Assert.Equal("keep-token", reopened.GetById("other")!.SharedGatewayToken);
+
+        // Ordinary writes and setup reconciliation must retain the durable removal decision.
+        reopened.AddOrUpdate(new() { Id = "later", Url = "wss://later.example.test" });
+        reopened.Save();
+        registry.AdoptPersistedSnapshot(registry.GetSnapshot());
+        Assert.True(registry.IsLegacyMigrationSuppressed(url));
+        registry.Load();
+        Assert.True(registry.IsLegacyMigrationSuppressed(url));
+        Assert.True(registry.MigrateFromSettings("wss://unrelated.example.test", "other-fixture-token",
+            null, false, null, null, 0, 0, temp.Path));
+
+        var explicitlyAdded = record with { Id = "explicit-reconnect", SharedGatewayToken = "new-fixture-token" };
+        registry.AddOrUpdate(explicitlyAdded);
+        registry.SetActive(explicitlyAdded.Id);
+        registry.Save();
+        registry.Load();
+        Assert.Equal(explicitlyAdded, registry.GetActive());
+        Assert.True(registry.IsLegacyMigrationSuppressed(url));
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void InterruptedStageIsReportedOnRetryEvenIfStartupRecreatedProfile(bool recreated)
@@ -90,6 +150,10 @@ public sealed class GatewayIdentityRemovalTests
         Assert.NotNull(registry.GetById(record.Id));
         Assert.Equal("original-key", File.ReadAllText(Path.Combine(profile, "device-key-ed25519.json")));
         Assert.Empty(Directory.GetDirectories(temp.Path, "gateway-removal-*"));
+        Assert.False(registry.IsLegacyMigrationSuppressed(record.Url));
+        var afterFailure = new GatewayRegistry(temp.Path);
+        afterFailure.Load();
+        Assert.False(afterFailure.IsLegacyMigrationSuppressed(record.Url));
         if (concurrentEdit)
         {
             registry.Load();

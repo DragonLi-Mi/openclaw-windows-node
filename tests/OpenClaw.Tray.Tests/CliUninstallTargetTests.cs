@@ -81,7 +81,7 @@ public sealed class CliUninstallTargetTests
     public void TryGetSetupArguments_ValidTargetForwardsCanonicalPair(bool inlineValues, bool mixedCase)
     {
         var saved = SavedTarget;
-        var binding = GatewayDashboardBinding.Capture(saved);
+        var binding = LocalGatewaySettings.CaptureRemovalAuthority(saved);
         var idFlag = mixedCase ? "--Gateway-Id" : "--gateway-id";
         var bindingFlag = mixedCase ? "--GATEWAY-BINDING" : "--gateway-binding";
         string[] targetArgs = inlineValues
@@ -100,7 +100,7 @@ public sealed class CliUninstallTargetTests
     public void TryGetSetupArguments_MixedEqualsAndSeparateValuesForwardCanonicalPair()
     {
         var saved = SavedTarget;
-        var binding = GatewayDashboardBinding.Capture(saved);
+        var binding = LocalGatewaySettings.CaptureRemovalAuthority(saved);
         string[] args = ["--uninstall", "--confirm-destructive",
             $"--gateway-binding={binding}", "--gateway-id", saved.Id];
 
@@ -118,10 +118,15 @@ public sealed class CliUninstallTargetTests
     [InlineData("remote")]
     [InlineData("native")]
     [InlineData("ssh")]
+    [InlineData("shared-token")]
+    [InlineData("bootstrap-token")]
+    [InlineData("signature")]
+    [InlineData("browser-port")]
+    [InlineData("label")]
     public void TryGetSetupArguments_ChangedOrNonWslTargetDoesNotForward(string change)
     {
         var saved = SavedTarget;
-        string[] args = ["--gateway-id", saved.Id, "--gateway-binding", GatewayDashboardBinding.Capture(saved)];
+        string[] args = ["--gateway-id", saved.Id, "--gateway-binding", LocalGatewaySettings.CaptureRemovalAuthority(saved)];
         GatewayRecord? current = change switch
         {
             "missing" => null,
@@ -131,6 +136,11 @@ public sealed class CliUninstallTargetTests
             "remote" => saved with { IsLocal = false, SetupManagedDistroName = null, Url = "wss://remote.example.test" },
             "native" => saved with { NativePackageFamilyName = "OpenClawGateway_test", SetupManagedDistroName = null },
             "ssh" => saved with { SshTunnel = new("user", "remote.example.test", 18789, 18789) },
+            "shared-token" => saved with { SharedGatewayToken = "changed-fixture-token" },
+            "bootstrap-token" => saved with { BootstrapToken = "changed-fixture-bootstrap" },
+            "signature" => saved with { RequiresV2Signature = true },
+            "browser-port" => saved with { BrowserControlPort = 19999 },
+            "label" => saved with { FriendlyName = "Changed" },
             _ => throw new ArgumentOutOfRangeException(nameof(change)),
         };
 
@@ -147,11 +157,26 @@ public sealed class CliUninstallTargetTests
     {
         var saved = SavedTarget;
         string[] args = ["--gateway-id", gatewayId,
-            "--gateway-binding", binding ?? GatewayDashboardBinding.Capture(saved)];
+            "--gateway-binding", binding ?? LocalGatewaySettings.CaptureRemovalAuthority(saved)];
 
         Assert.True(CliUninstallTarget.TryParse(args, out var target, out _));
         Assert.NotNull(target);
         Assert.False(target.TryGetSetupArguments(saved, out var forwarded));
         Assert.Empty(forwarded);
+    }
+
+    [Fact]
+    public void RemovalConsentIgnoresOnlyConnectionTimestampAndNeverForwardsCredentials()
+    {
+        var saved = SavedTarget with { SharedGatewayToken = "private-fixture-token", BootstrapToken = "private-fixture-bootstrap" };
+        var binding = LocalGatewaySettings.CaptureRemovalAuthority(saved);
+        var target = new CliUninstallTarget(saved.Id, binding);
+
+        Assert.True(target.TryGetSetupArguments(saved with { LastConnected = DateTime.UtcNow }, out var forwarded));
+        Assert.Equal(64, binding.Length);
+        Assert.DoesNotContain(saved.SharedGatewayToken, string.Join(" ", forwarded));
+        Assert.DoesNotContain(saved.BootstrapToken, string.Join(" ", forwarded));
+        Assert.False(new CliUninstallTarget(saved.Id, GatewayDashboardBinding.Capture(saved))
+            .TryGetSetupArguments(saved, out _));
     }
 }

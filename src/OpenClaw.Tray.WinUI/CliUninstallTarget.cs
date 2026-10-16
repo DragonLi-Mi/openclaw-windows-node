@@ -64,7 +64,7 @@ internal sealed record CliUninstallTarget(string GatewayId, string Binding)
         arguments = [];
         if (current is null || current.Id != GatewayId ||
             LocalGatewaySettings.Classify(current) != LocalGatewayKind.Wsl ||
-            GatewayDashboardBinding.Capture(current) != Binding)
+            LocalGatewaySettings.CaptureRemovalAuthority(current) != Binding)
         {
             return false;
         }

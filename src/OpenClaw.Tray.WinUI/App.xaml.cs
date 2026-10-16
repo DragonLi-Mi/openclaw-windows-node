@@ -1869,6 +1869,13 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
             return;
         }
 
+        if (_gatewayRegistry.IsLegacyMigrationSuppressed(gatewayUrl))
+        {
+            Logger.Info("Automatic legacy Gateway recovery was disabled by explicit removal.");
+            TryStartLocalMcpOnlyNode();
+            return;
+        }
+
         TryMigrateLegacyGatewaySettings(gatewayUrl, new AppLogger());
         activeRecord = _gatewayRegistry.GetActive();
         if (activeRecord != null)
@@ -2127,6 +2134,9 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
         if (credential != null)
             return credential;
 
+        if (_gatewayRegistry.IsLegacyMigrationSuppressed(record.Url))
+            return null;
+
         // Backfill for legacy installs that still have the identity file at the
         // root settings path while the active registry record points at that URL.
         var effectiveUrl = _settings?.GetEffectiveGatewayUrl();
@@ -2149,6 +2159,9 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
         var credential = ResolveStartupCredentialOrThrow(resolution, identityDir);
         if (credential != null)
             return credential;
+
+        if (_gatewayRegistry?.IsLegacyMigrationSuppressed(record.Url) == true)
+            return null;
 
         var effectiveUrl = _settings?.GetEffectiveGatewayUrl();
         if (string.IsNullOrWhiteSpace(effectiveUrl) ||

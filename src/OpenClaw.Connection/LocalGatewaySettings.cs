@@ -1,4 +1,6 @@
 using OpenClaw.Connection.NativeGateway;
+using System.Security.Cryptography;
+using System.Text.Json;
 
 namespace OpenClaw.Connection;
 
@@ -28,6 +30,11 @@ public static class LocalGatewaySettings
     public static bool IsSameTarget(GatewayRecord expected, GatewayRecord? current) =>
         current is not null && Classify(expected) != LocalGatewayKind.None &&
         (expected with { LastConnected = null }) == (current with { LastConnected = null });
+
+    /// <summary>Binds destructive consent to the full saved target without passing credentials to a child.</summary>
+    public static string CaptureRemovalAuthority(GatewayRecord record) =>
+        Convert.ToHexString(SHA256.HashData(
+            JsonSerializer.SerializeToUtf8Bytes(record with { LastConnected = null })));
 
     public static string? DisplayedGatewayUrl(
         GatewayRecord? active, GatewayConnectionSnapshot? snapshot, string? legacyUrl) =>

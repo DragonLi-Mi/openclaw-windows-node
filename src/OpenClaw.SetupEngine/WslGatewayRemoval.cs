@@ -38,7 +38,7 @@ public sealed class WslGatewayRemoval
             var snapshot = registry.AdoptPersistedSnapshot(registry.GetSnapshot());
             var expected = snapshot.Records.SingleOrDefault(record => record.Id == snapshot.ActiveId);
             if (expected?.Id != gatewayId || LocalGatewaySettings.Classify(expected) != LocalGatewayKind.Wsl ||
-                GatewayDashboardBinding.Capture(expected) != binding)
+                LocalGatewaySettings.CaptureRemovalAuthority(expected) != binding)
                 throw new InvalidOperationException("The selected WSL Gateway changed. Review removal again.");
             ctx.DistroName = ctx.Config.DistroName = GatewayRecordEditing.ResolveManagedDistroName(expected)!;
             var inspection = RequireOwnedRegistration(ctx, expected);
@@ -49,7 +49,7 @@ public sealed class WslGatewayRemoval
             if (inspection.Status == WslRegistrationInspectionStatus.Found)
             {
                 await AtomicFile.WriteAllTextAsync(ReceiptPath(ctx, expected),
-                    JsonSerializer.Serialize(new RemovalReceipt(expected.Id, binding, ctx.DistroName!,
+                    JsonSerializer.Serialize(new RemovalReceipt(expected.Id, GatewayDashboardBinding.Capture(expected), ctx.DistroName!,
                         ManagedPath(ctx), inspection.RegistrationId!)), ct).ConfigureAwait(false);
                 if (RequireOwnedRegistration(ctx, expected) != inspection)
                     throw new InvalidOperationException("The WSL registration changed during removal. No keepalive was stopped.");
