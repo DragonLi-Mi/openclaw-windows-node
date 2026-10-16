@@ -223,8 +223,11 @@ public sealed class LocalGatewaySettingsRenderingTests(UIThreadFixture ui, ITest
                 Assert.Contains("disk image", body.Text);
                 if (isPackaged)
                 {
-                    Assert.Equal("MSIX installation detected", warning.Title);
-                    Assert.Contains("WSL distro, disk image", warning.Message);
+                    Assert.Equal("Gateway cleanup", warning.Title);
+                    Assert.Equal(
+                        "Uninstalling OpenClaw in Windows Settings automatically removes managed Gateways. " +
+                        "Use Remove Local Gateway below to remove a Gateway while keeping the app.",
+                        warning.Message);
                 }
                 break;
             default:
