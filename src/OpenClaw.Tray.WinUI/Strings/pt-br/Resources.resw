@@ -7309,6 +7309,9 @@ O binário wxc-exec não pôde ser localizado. {1} Se esta for uma build de dese
   <data name="Onboarding_AiSetup_AdminRequired" xml:space="preserve"><value>A configuração exige um operador conectado com permissão de administrador. Conclua o emparelhamento e atualize.</value></data>
   <data name="Onboarding_AiSetup_Failed" xml:space="preserve"><value>Não foi possível continuar. Verifique a conexão com o Gateway e atualize.</value></data>
   <data name="Onboarding_AiSetup_VerificationFailed" xml:space="preserve"><value>O modelo não passou na verificação. A configuração não está concluída.</value></data>
+  <data name="Onboarding_AiSetup_NativeClassicUnavailable" xml:space="preserve">
+    <value>Este Gateway nativo não oferece suporte à configuração de IA. Atualize o Gateway e tente novamente. O assistente clássico não pode ser usado em uma instalação nativa existente.</value>
+  </data>
   <data name="Onboarding_AiSetup_NavigationFailed" xml:space="preserve"><value>Não foi possível abrir a configuração clássica. Mantenha esta janela aberta e tente novamente.</value></data>
   <data name="Onboarding_AiSetup_InvalidLink" xml:space="preserve"><value>Não foi possível abrir o link. Apenas links HTTP ou HTTPS são aceitos.</value></data>
   <data name="Onboarding_AiSetup_NoChoices" xml:space="preserve"><value>O Gateway não retornou opções compatíveis. Verifique a configuração dos provedores e atualize.</value></data>

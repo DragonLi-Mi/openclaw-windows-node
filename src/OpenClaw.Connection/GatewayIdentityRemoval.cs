@@ -47,9 +47,9 @@ public static class GatewayIdentityRemoval
                 try { Directory.Move(staged, directory); }
                 catch (Exception restoreFailure) when (restoreFailure is IOException or UnauthorizedAccessException)
                 {
-                    throw new AggregateException(
+                    throw new IOException(
                         $"The connection was retained, but its profile could not be restored from '{staged}'. Do not reconnect until the profile is restored.",
-                        failure, restoreFailure);
+                        new AggregateException(failure, restoreFailure));
                 }
             }
             throw;

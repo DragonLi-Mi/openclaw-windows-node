@@ -53,7 +53,8 @@ public sealed class LocalGatewaySettingsContractTests
             "src", "OpenClaw.SetupEngine.UI", "SetupWindow.xaml.cs"));
         Assert.Contains("_existingWslSetup.RequireCurrent(registry.GetActive())", setup);
         Assert.Contains("ExpectedGatewayId: _existingWslSetup?.Record.Id", setup);
-        Assert.Contains("_config, _existingWslSetup?.Record.Id, _existingWslSetup?.Binding", setup);
+        Assert.Contains("_config, _existingWslSetup?.Record.Id ?? AccessDraft.NativeGatewayId", setup);
+        Assert.Contains("_existingWslSetup?.Binding ?? AccessDraft.NativeEndpointBinding", setup);
         var classic = File.ReadAllText(Path.Combine(TestRepositoryPaths.GetRepositoryRoot(),
             "src", "OpenClaw.SetupEngine.UI", "Pages", "WizardPage.xaml.cs"));
         Assert.Contains("e.Parameter as WizardPageArgs", classic);

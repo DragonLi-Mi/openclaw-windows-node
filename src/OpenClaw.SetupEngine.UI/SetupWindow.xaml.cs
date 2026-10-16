@@ -769,15 +769,18 @@ public sealed partial class SetupWindow : Window
                 CancelNativeSetup: NativeSetupSession is null ? null : CancelNativeAiSetupAsync,
                 ConnectionManager: _connectionManager,
                 ExpectedEndpointBinding: _existingWslSetup?.Binding ??
-                    (_expectedConfiguredModelRef is null ? AccessDraft.NativeEndpointBinding : null));
+                    (_expectedConfiguredModelRef is null ? AccessDraft.NativeEndpointBinding : null),
+                AllowClassicWizardFallback: !AccessDraft.IsExistingNativeLocalAi);
 
     public bool TryNavigateToLegacyWizard()
     {
-        if (_isClosed || _setupLock is null || RootFrame.Content is WizardPage)
+        if (_isClosed || _setupLock is null || RootFrame.Content is WizardPage ||
+            AccessDraft.IsExistingNativeLocalAi)
             return false;
 
         NavigateTo(typeof(WizardPage), new WizardPageArgs(
-            _config, _existingWslSetup?.Record.Id, _existingWslSetup?.Binding));
+            _config, _existingWslSetup?.Record.Id ?? AccessDraft.NativeGatewayId,
+            _existingWslSetup?.Binding ?? AccessDraft.NativeEndpointBinding));
         return true;
     }
 
@@ -966,10 +969,18 @@ public sealed partial class SetupWindow : Window
             return StepResult.Skip("This setup route does not modify a WSL workspace.");
         if (_existingWslSetup is not null)
         {
-            var registry = new OpenClaw.Connection.GatewayRegistry(_dataDir);
-            registry.Load();
-            _existingWslSetup.RequireCurrent(registry.GetActive());
-            _existingWslSetup.Apply(_config);
+            try
+            {
+                var registry = new OpenClaw.Connection.GatewayRegistry(_dataDir);
+                registry.Load();
+                _existingWslSetup.RequireCurrent(registry.GetActive());
+                _existingWslSetup.Apply(_config);
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or IOException or
+                UnauthorizedAccessException or System.Text.Json.JsonException or InvalidDataException)
+            {
+                return StepResult.Fail(ex.Message);
+            }
         }
         if (!_config.WindowsNodeContext.Enabled)
             return StepResult.Skip("Windows node context injection disabled");

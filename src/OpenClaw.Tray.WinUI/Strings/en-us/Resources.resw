@@ -7319,6 +7319,9 @@ Make sure the gateway is running.</value>
   <data name="Onboarding_AiSetup_AdminRequired" xml:space="preserve"><value>AI setup requires a connected operator with administrator permission. Complete operator pairing, then refresh.</value></data>
   <data name="Onboarding_AiSetup_Failed" xml:space="preserve"><value>AI setup could not continue. Check the gateway connection, then refresh.</value></data>
   <data name="Onboarding_AiSetup_VerificationFailed" xml:space="preserve"><value>The selected model did not pass verification. Setup is not complete.</value></data>
+  <data name="Onboarding_AiSetup_NativeClassicUnavailable" xml:space="preserve">
+    <value>This native Gateway does not support AI setup. Update the Gateway and try again. The classic wizard cannot be used for an existing native installation.</value>
+  </data>
   <data name="Onboarding_AiSetup_NavigationFailed" xml:space="preserve"><value>Classic setup could not open. Keep this window open and try again.</value></data>
   <data name="Onboarding_AiSetup_InvalidLink" xml:space="preserve"><value>The provider link could not be opened. Only HTTP or HTTPS sign-in links are supported.</value></data>
   <data name="Onboarding_AiSetup_NoChoices" xml:space="preserve"><value>No supported AI setup options were returned by this gateway. Check its provider configuration and refresh.</value></data>

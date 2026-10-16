@@ -11,6 +11,7 @@ public sealed class WslGatewayRemoval
     private readonly Func<SetupContext, CancellationToken, Task> _stopKeepalive;
     private readonly Func<SetupContext, CancellationToken, Task>? _removeDistro;
     private readonly Func<TimeSpan, CancellationToken, Task> _deletionDelay;
+    private readonly IFileSystem? _registryFileSystem;
     private sealed record RemovalReceipt(string GatewayId, string Binding, string DistroName, string InstallPath, string RegistrationId);
 
     public WslGatewayRemoval() : this(new WindowsWslRegistrationInspector(),
@@ -19,12 +20,14 @@ public sealed class WslGatewayRemoval
     internal WslGatewayRemoval(IWslRegistrationInspector registrations,
         Func<SetupContext, CancellationToken, Task> stopKeepalive,
         Func<SetupContext, CancellationToken, Task>? removeDistro = null,
-        Func<TimeSpan, CancellationToken, Task>? deletionDelay = null)
+        Func<TimeSpan, CancellationToken, Task>? deletionDelay = null,
+        IFileSystem? registryFileSystem = null)
     {
         _registrations = registrations;
         _stopKeepalive = stopKeepalive;
         _removeDistro = removeDistro;
         _deletionDelay = deletionDelay ?? Task.Delay;
+        _registryFileSystem = registryFileSystem;
     }
 
     public async Task<PipelineResult> RunAsync(SetupContext ctx, string gatewayId, string binding)
@@ -34,7 +37,7 @@ public sealed class WslGatewayRemoval
         {
             if (!ctx.Config.ConfirmDestructive && !ctx.Config.DryRun)
                 throw new InvalidOperationException("Gateway removal requires explicit destructive confirmation.");
-            var registry = new GatewayRegistry(ctx.DataDir);
+            var registry = new GatewayRegistry(ctx.DataDir, _registryFileSystem);
             var snapshot = registry.AdoptPersistedSnapshot(registry.GetSnapshot());
             var expected = snapshot.Records.SingleOrDefault(record => record.Id == snapshot.ActiveId);
             if (expected?.Id != gatewayId || LocalGatewaySettings.Classify(expected) != LocalGatewayKind.Wsl ||

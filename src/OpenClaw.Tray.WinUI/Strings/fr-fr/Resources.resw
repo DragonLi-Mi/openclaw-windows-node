@@ -7255,6 +7255,9 @@ Le binaire wxc-exec est introuvable. {1} S'il s'agit d'une build développeur, c
   <data name="Onboarding_AiSetup_AdminRequired" xml:space="preserve"><value>Un opérateur connecté avec les droits administrateur est requis. Terminez l'association, puis actualisez.</value></data>
   <data name="Onboarding_AiSetup_Failed" xml:space="preserve"><value>La configuration IA ne peut pas continuer. Vérifiez la connexion au Gateway, puis actualisez.</value></data>
   <data name="Onboarding_AiSetup_VerificationFailed" xml:space="preserve"><value>La vérification du modèle a échoué. La configuration n'est pas terminée.</value></data>
+  <data name="Onboarding_AiSetup_NativeClassicUnavailable" xml:space="preserve">
+    <value>Ce Gateway natif ne prend pas en charge la configuration de l'IA. Mettez le Gateway à jour et réessayez. L'assistant classique ne peut pas être utilisé pour une installation native existante.</value>
+  </data>
   <data name="Onboarding_AiSetup_NavigationFailed" xml:space="preserve"><value>Impossible d'ouvrir la configuration classique. Gardez cette fenêtre ouverte et réessayez.</value></data>
   <data name="Onboarding_AiSetup_InvalidLink" xml:space="preserve"><value>Impossible d'ouvrir le lien. Seuls les liens HTTP ou HTTPS sont pris en charge.</value></data>
   <data name="Onboarding_AiSetup_NoChoices" xml:space="preserve"><value>Aucune option compatible reçue. Vérifiez les fournisseurs du Gateway et actualisez.</value></data>

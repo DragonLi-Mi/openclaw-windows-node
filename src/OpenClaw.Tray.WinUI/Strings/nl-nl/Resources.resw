@@ -7256,6 +7256,9 @@ Het binaire bestand wxc-exec is niet gevonden. {1} Als dit een ontwikkelaarsbuil
   <data name="Onboarding_AiSetup_AdminRequired" xml:space="preserve"><value>AI-installatie vereist een verbonden operator met beheerdersrechten. Voltooi de koppeling en vernieuw.</value></data>
   <data name="Onboarding_AiSetup_Failed" xml:space="preserve"><value>AI-installatie kan niet doorgaan. Controleer de Gateway-verbinding en vernieuw.</value></data>
   <data name="Onboarding_AiSetup_VerificationFailed" xml:space="preserve"><value>De controle van het geselecteerde model is mislukt. De installatie is niet voltooid.</value></data>
+  <data name="Onboarding_AiSetup_NativeClassicUnavailable" xml:space="preserve">
+    <value>Deze native Gateway ondersteunt geen AI-configuratie. Werk de Gateway bij en probeer het opnieuw. De klassieke wizard kan niet worden gebruikt voor een bestaande native installatie.</value>
+  </data>
   <data name="Onboarding_AiSetup_NavigationFailed" xml:space="preserve"><value>Klassieke installatie kon niet worden geopend. Houd dit venster open en probeer opnieuw.</value></data>
   <data name="Onboarding_AiSetup_InvalidLink" xml:space="preserve"><value>De providerlink kon niet worden geopend. Alleen HTTP- of HTTPS-links worden ondersteund.</value></data>
   <data name="Onboarding_AiSetup_NoChoices" xml:space="preserve"><value>De Gateway heeft geen ondersteunde opties geretourneerd. Controleer de providerconfiguratie en vernieuw.</value></data>

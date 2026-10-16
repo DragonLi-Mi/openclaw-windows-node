@@ -7255,6 +7255,9 @@
   <data name="Onboarding_AiSetup_AdminRequired" xml:space="preserve"><value>AI 设置需要具有管理员权限的已连接操作员。请完成配对后刷新。</value></data>
   <data name="Onboarding_AiSetup_Failed" xml:space="preserve"><value>AI 设置无法继续。请检查 Gateway 连接后刷新。</value></data>
   <data name="Onboarding_AiSetup_VerificationFailed" xml:space="preserve"><value>所选模型未通过验证。设置尚未完成。</value></data>
+  <data name="Onboarding_AiSetup_NativeClassicUnavailable" xml:space="preserve">
+    <value>此原生 Gateway 不支持 AI 设置。请更新 Gateway 后重试。现有原生安装无法使用经典向导。</value>
+  </data>
   <data name="Onboarding_AiSetup_NavigationFailed" xml:space="preserve"><value>无法打开经典设置。请保持此窗口打开并重试。</value></data>
   <data name="Onboarding_AiSetup_InvalidLink" xml:space="preserve"><value>无法打开提供商链接。仅支持 HTTP 或 HTTPS 登录链接。</value></data>
   <data name="Onboarding_AiSetup_NoChoices" xml:space="preserve"><value>Gateway 未返回支持的 AI 设置选项。请检查其提供商配置并刷新。</value></data>

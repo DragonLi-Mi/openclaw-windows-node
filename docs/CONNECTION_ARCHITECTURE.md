@@ -34,7 +34,11 @@ package. Upgraded or uninstalled legacy packages do not block profile cleanup.
 Workspace links are deleted as links, without traversing their targets.
 `GatewayIdentityRemoval` stages the profile outside the startup-scanned `gateways`
 directory, commits the
-registry removal, and restores the profile if that commit fails. A failure to
+registry removal, and restores the profile if that commit fails. If both commit
+and restore fail, the structured removal failure retains the staging path and
+the warning not to reconnect until the profile is restored. This recovery
+guidance must survive the WSL child process's JSON result, not only stderr.
+A failure to
 delete committed staging data reports its exact remaining path rather than
 claiming complete cleanup. Read-only workspace files are cleared before deletion;
 link targets are not modified.
@@ -113,6 +117,14 @@ AI setup page and the classic wizard through `WizardPageArgs`. Initial connectio
 and explicit classic-wizard retry use that original target. Switching the active
 gateway or changing its endpoint rejects connection before any wizard RPC;
 the fallback never adopts a different currently active gateway.
+Finalization revalidates the same target. A changed target returns a failed
+step so Skip and Retry show recovery actions rather than a permanent busy state.
+
+Reopening AI setup for an existing native Gateway never falls back to the WSL
+classic wizard. If that Gateway lacks focused AI setup methods, the page hides
+classic navigation and explains that the Gateway needs updating. The window
+also rejects stale classic-navigation callbacks after the active selection
+changes. New staged native installations retain their native classic wizard.
 
 ## Native Local AI ownership and configuration
 

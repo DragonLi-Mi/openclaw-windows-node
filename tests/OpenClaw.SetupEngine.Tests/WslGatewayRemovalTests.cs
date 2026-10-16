@@ -1,5 +1,7 @@
 using OpenClaw.Connection;
+using OpenClaw.Shared;
 using OpenClaw.TestSupport;
+using System.Text.Json;
 
 namespace OpenClaw.SetupEngine.Tests;
 
@@ -124,6 +126,31 @@ public sealed class WslGatewayRemovalTests : IDisposable
         _registry.Load();
         Assert.Null(_registry.GetById(_target.Id));
         Assert.Equal(["stop", "remove", "stop", "remove"], _calls);
+    }
+
+    [Fact]
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public async Task FailedIdentityCommitAndRestorePreservesRecoveryInstructionsInJsonResult()
+    {
+        var profile = _registry.GetIdentityDirectory(_target.Id);
+        var remover = new WslGatewayRemoval(_inspector, (_, _) => Task.CompletedTask,
+            (_, _) => { FinishDistroRemoval(); return Task.CompletedTask; },
+            registryFileSystem: new FailedIdentityCommitFileSystem(profile));
+
+        var result = await remover.RunAsync(_ctx, _target.Id, LocalGatewaySettings.CaptureRemovalAuthority(_target));
+
+        Assert.Equal(PipelineOutcome.Failed, result.Outcome);
+        var staged = Assert.Single(Directory.GetDirectories(_ctx.DataDir, $"gateway-removal-{_target.Id}-*"));
+        Assert.Contains(staged, result.Message);
+        Assert.Contains("Do not reconnect until the profile is restored", result.Message);
+        Assert.Equal("key-b", File.ReadAllText(Path.Combine(staged, "device-key-ed25519.json")));
+        _registry.Load();
+        Assert.Equal(_target, _registry.GetActive());
+        Assert.NotNull(_registry.GetById("wsl-a"));
+        using var json = JsonDocument.Parse(Program.SerializeJsonOutput(result, _ctx.Config, "journal.jsonl"));
+        Assert.Equal("Failed", json.RootElement.GetProperty("outcome").GetString());
+        Assert.Equal(result.Message, json.RootElement.GetProperty("message").GetString());
+        Assert.Equal(1, json.RootElement.GetProperty("exitCode").GetInt32());
     }
 
     [Fact]
@@ -578,6 +605,23 @@ public sealed class WslGatewayRemovalTests : IDisposable
         {
             BeforeInspect?.Invoke();
             return Current;
+        }
+    }
+
+    private sealed class FailedIdentityCommitFileSystem(string profile) : IFileSystem
+    {
+        public bool FileExists(string path) => File.Exists(path);
+        public string ReadAllText(string path) => File.ReadAllText(path);
+        public void WriteAllText(string path, string content) => File.WriteAllText(path, content);
+        public void CreateDirectory(string path) => Directory.CreateDirectory(path);
+        public bool DirectoryExists(string path) => Directory.Exists(path);
+        public void CopyFile(string source, string destination, bool overwrite) => File.Copy(source, destination, overwrite);
+        public void DeleteFile(string path) => File.Delete(path);
+        public void MoveFile(string source, string destination, bool overwrite)
+        {
+            Assert.False(Directory.Exists(profile));
+            Directory.CreateDirectory(profile);
+            throw new IOException("Injected registry commit failure after identity staging");
         }
     }
 
