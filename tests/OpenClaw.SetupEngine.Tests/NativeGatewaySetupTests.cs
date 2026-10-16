@@ -143,6 +143,33 @@ public sealed class NativeGatewaySetupTests
     }
 
     [Fact]
+    public void PortSelection_PrefersConventionalPortWhenAvailable()
+    {
+        Assert.Equal(18789, NativeGatewaySetupService.PreferredPort);
+        int free;
+        using (var probe = new TcpListener(IPAddress.Loopback, 0) { ExclusiveAddressUse = true })
+        {
+            probe.Start();
+            free = ((IPEndPoint)probe.LocalEndpoint).Port;
+        }
+
+        Assert.Equal(free, NativeGatewaySetupService.SelectAvailablePort(free));
+    }
+
+    [Fact]
+    public void PortSelection_FallsBackWhenConventionalPortIsOccupied()
+    {
+        using var occupant = new TcpListener(IPAddress.Loopback, 0) { ExclusiveAddressUse = true };
+        occupant.Start();
+        var occupied = ((IPEndPoint)occupant.LocalEndpoint).Port;
+
+        var selected = NativeGatewaySetupService.SelectAvailablePort(occupied);
+
+        Assert.NotEqual(occupied, selected);
+        Assert.InRange(selected, 1, 65535);
+    }
+
+    [Fact]
     public async Task Draft_OccupiedPortRotatesWithoutReplacingProfileOrCredentials()
     {
         using var fixture = new Fixture();
