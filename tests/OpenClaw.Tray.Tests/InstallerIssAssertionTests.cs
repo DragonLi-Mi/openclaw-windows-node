@@ -110,9 +110,11 @@ public sealed class InstallerIssAssertionTests
         Assert.DoesNotContain("DelTree(ExpandConstant('{app}'), True, True, True)", iss);
         Assert.Contains("Ownership uncertain: {app} is not the generated-data root", iss);
         Assert.Contains("ExpandConstant('{localappdata}\\{#MyInstallDir}')", iss);
-        Assert.Contains("-RemoveConfirmedDistroChild", iss);
-        Assert.Contains("Deleting only the confirmed {#MyDistroName} child under the generated-data root.", iss);
-        Assert.DoesNotContain("DeleteGeneratedChild('wsl');", iss);
+        Assert.DoesNotContain("-RemoveConfirmedDistroChild", iss);
+        Assert.DoesNotContain("DeleteGeneratedChild('wsl'", iss);
+        Assert.Contains("if not MigrationPathIsOrdinary(ChildPath) then", iss);
+        Assert.Contains("if IsDirectory and DirExists(ChildPath) then", iss);
+        Assert.Contains("else if (not IsDirectory) and FileExists(ChildPath) then", iss);
         foreach (var child in new[]
         {
             "Logs",
@@ -120,6 +122,12 @@ public sealed class InstallerIssAssertionTests
             "WebView2",
             "canvas",
             "native-cli",
+        })
+        {
+            Assert.Contains($"DeleteGeneratedChild('{child}', True);", iss);
+        }
+        foreach (var child in new[]
+        {
             "setup-state.json",
             "run.marker",
             "exec-approvals.json",
@@ -130,7 +138,15 @@ public sealed class InstallerIssAssertionTests
             "uninstall-gateway-wsl.log",
         })
         {
-            Assert.Contains($"DeleteGeneratedChild('{child}');", iss);
+            Assert.Contains($"DeleteGeneratedChild('{child}', False);", iss);
+        }
+        foreach (var preserved in new[]
+        {
+            "LocalAI", "LocalAICache", "windows-node-context.json", "setup-managed-distro.json",
+            "last-chat-state.json", "aborted-messages.json", "tool-metadata.json", "attachment-metadata.json",
+        })
+        {
+            Assert.DoesNotContain($"DeleteGeneratedChild('{preserved}'", iss);
         }
         Assert.DoesNotContain("Start-Sleep -Seconds 3", iss);
         Assert.DoesNotContain("--uninstall --confirm-destructive", iss);
@@ -168,148 +184,14 @@ public sealed class InstallerIssAssertionTests
     }
 
     [Fact]
-    public async Task Uninstall_DeletesOnlyConfirmedDistroChildAndKeepsUncertainPaths()
+    public void Uninstall_HasOnlyOneMigrationAndWslAdmittedDeletionPath()
     {
-        var root = TestRepositoryPaths.GetRepositoryRoot();
-        var script = Path.Combine(root, "scripts", "Uninstall-LocalGateway.ps1");
-        var temp = Directory.CreateTempSubdirectory("openclaw-uninstall-distro-");
-        try
-        {
-            var localAppData = Path.Combine(temp.FullName, "local");
-            var generatedRoot = Path.Combine(localAppData, "OpenClawTray");
-            var configured = Path.Combine(generatedRoot, "wsl", "OpenClawGateway");
-            var siblingVhdx = Path.Combine(generatedRoot, "wsl", "SiblingDistro", "ext4.vhdx");
-            var lookalike = Path.Combine(temp.FullName, "custom", "OpenClawTray");
-            var uncertainVhdx = Path.Combine(lookalike, "wsl", "OpenClawGateway", "ext4.vhdx");
-            Directory.CreateDirectory(configured);
-            Directory.CreateDirectory(Path.GetDirectoryName(siblingVhdx)!);
-            Directory.CreateDirectory(Path.GetDirectoryName(uncertainVhdx)!);
-            File.WriteAllText(Path.Combine(configured, "ext4.vhdx"), "configured");
-            File.WriteAllText(siblingVhdx, "sibling");
-            File.WriteAllText(uncertainVhdx, "uncertain");
-
-            var powershell = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.Windows),
-                "System32",
-                "WindowsPowerShell",
-                "v1.0",
-                "powershell.exe");
-            var startInfo = new ProcessStartInfo(powershell)
-            {
-                WorkingDirectory = root,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var argument in new[]
-            {
-                "-NoProfile",
-                "-ExecutionPolicy", "Bypass",
-                "-File", script,
-                "-RemoveConfirmedDistroChild",
-                "-AppRoot", lookalike,
-                "-DataDirectoryName", "OpenClawTray",
-                "-DistroName", "OpenClawGateway",
-            })
-            {
-                startInfo.ArgumentList.Add(argument);
-            }
-
-            startInfo.Environment["OPENCLAW_TRAY_LOCALAPPDATA_DIR"] = localAppData;
-            startInfo.Environment["OPENCLAW_TRAY_LOCAL_DATA_DIR"] = "";
-            startInfo.Environment["OPENCLAW_TRAY_DATA_DIR"] = "";
-
-            using var process = Process.Start(startInfo);
-            Assert.NotNull(process);
-            var standardOutput = process.StandardOutput.ReadToEndAsync();
-            var standardError = process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
-            var result = $"{await standardOutput}{Environment.NewLine}{await standardError}";
-            var logPath = Path.Combine(lookalike, "uninstall-gateway-wsl.log");
-            var log = File.Exists(logPath) ? File.ReadAllText(logPath) : "";
-
-            Assert.True(
-                process.ExitCode == 0,
-                $"Confirmed distro cleanup failed with exit code {process.ExitCode}.{Environment.NewLine}{result}{Environment.NewLine}{log}");
-            Assert.False(Directory.Exists(configured));
-            Assert.True(File.Exists(siblingVhdx));
-            Assert.True(File.Exists(uncertainVhdx));
-            Assert.Contains(Path.GetDirectoryName(siblingVhdx)!, log, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("Ownership uncertain", log, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains(lookalike, log, StringComparison.OrdinalIgnoreCase);
-
-            var redirectedLocalAppData = Path.Combine(temp.FullName, "redirected-local");
-            var redirectedRoot = Path.Combine(redirectedLocalAppData, "OpenClawTray");
-            var redirectedTarget = Path.Combine(temp.FullName, "redirected-target");
-            var redirectedVhdx = Path.Combine(redirectedTarget, "wsl", "OpenClawGateway", "ext4.vhdx");
-            Directory.CreateDirectory(Path.GetDirectoryName(redirectedVhdx)!);
-            Directory.CreateDirectory(redirectedLocalAppData);
-            File.WriteAllText(redirectedVhdx, "redirected");
-
-            var junctionScript = Path.Combine(temp.FullName, "create-junction.ps1");
-            File.WriteAllText(junctionScript, """
-                param([string]$Link, [string]$Target)
-                New-Item -ItemType Junction -Path $Link -Target $Target -ErrorAction Stop | Out-Null
-                """);
-            var junctionStartInfo = new ProcessStartInfo(powershell)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            foreach (var argument in new[]
-            {
-                "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", junctionScript,
-                "-Link", redirectedRoot, "-Target", redirectedTarget,
-            })
-            {
-                junctionStartInfo.ArgumentList.Add(argument);
-            }
-
-            using (var junctionProcess = Process.Start(junctionStartInfo))
-            {
-                Assert.NotNull(junctionProcess);
-                var junctionOutput = junctionProcess.StandardOutput.ReadToEndAsync();
-                var junctionError = junctionProcess.StandardError.ReadToEndAsync();
-                await junctionProcess.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
-                Assert.True(
-                    junctionProcess.ExitCode == 0,
-                    $"Junction setup failed with exit code {junctionProcess.ExitCode}.{Environment.NewLine}{await junctionOutput}{Environment.NewLine}{await junctionError}");
-            }
-
-            startInfo.Environment["OPENCLAW_TRAY_LOCALAPPDATA_DIR"] = redirectedLocalAppData;
-            using (var redirectedProcess = Process.Start(startInfo))
-            {
-                Assert.NotNull(redirectedProcess);
-                var redirectedOutput = redirectedProcess.StandardOutput.ReadToEndAsync();
-                var redirectedError = redirectedProcess.StandardError.ReadToEndAsync();
-                await redirectedProcess.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
-                Assert.True(
-                    redirectedProcess.ExitCode == 0,
-                    $"Redirected cleanup failed with exit code {redirectedProcess.ExitCode}.{Environment.NewLine}{await redirectedOutput}{Environment.NewLine}{await redirectedError}");
-            }
-
-            try
-            {
-                Assert.True(File.Exists(redirectedVhdx));
-                log = File.ReadAllText(logPath);
-                Assert.Contains("generated-data path traverses reparse point", log, StringComparison.OrdinalIgnoreCase);
-                Assert.Contains(redirectedRoot, log, StringComparison.OrdinalIgnoreCase);
-            }
-            finally
-            {
-                if (Directory.Exists(redirectedRoot))
-                {
-                    Directory.Delete(redirectedRoot);
-                }
-            }
-        }
-        finally
-        {
-            temp.Delete(recursive: true);
-        }
+        var script = File.ReadAllText(Path.Combine(
+            TestRepositoryPaths.GetRepositoryRoot(), "scripts", "Uninstall-LocalGateway.ps1"));
+        Assert.DoesNotContain("RemoveConfirmedDistroChild", script);
+        Assert.DoesNotContain("Remove-ConfirmedDistroChild", script);
+        Assert.Contains("$wslRoot = Join-Path $generatedRoot 'wsl'", script);
+        Assert.Contains("Get-ReparsePointInTree -Path $gatewayDirectory", script);
     }
 
     [Theory]
@@ -323,7 +205,7 @@ public sealed class InstallerIssAssertionTests
     [InlineData("lookalike", "unregistered", 0, false)]
     [InlineData("lookalike", "not-found", 0, false)]
     [InlineData("lookalike", "failed", 7, false)]
-    [InlineData("generated", "no-wsl", 0, true)]
+    [InlineData("generated", "no-wsl", 0, false)]
     [InlineData("generated", "absent", 0, true)]
     [InlineData("generated", "unregistered", 0, true)]
     [InlineData("generated", "not-found", 0, true)]
@@ -333,6 +215,11 @@ public sealed class InstallerIssAssertionTests
     [InlineData("wsl-junction", "unregistered", 1, false)]
     [InlineData("wsl-junction", "unregistered-empty", 1, false)]
     [InlineData("child-junction", "unregistered", 1, false)]
+    [InlineData("nested-junction", "unregistered", 1, false)]
+    [InlineData("nested-junction", "absent", 1, false)]
+    [InlineData("ancestor-junction", "unregistered", 1, false)]
+    [InlineData("generated", "unregistered-other-marker", 0, true)]
+    [InlineData("generated", "unregistered-invalid-marker", 0, true)]
     public async Task Uninstall_PrimaryPhase_BindsDeletionToGeneratedRoot_WithModeledTransport(
         string layout, string scenario, int expectedExitCode, bool deleted)
     {
@@ -352,6 +239,7 @@ public sealed class InstallerIssAssertionTests
         var junctionTarget = temp.Combine("junction-target");
         var junctionVhd = layout switch
         {
+            "ancestor-junction" => Path.Combine(junctionTarget, "OpenClawTray-Dev", "wsl", "ChosenGateway", "ext4.vhdx"),
             "root-junction" => Path.Combine(junctionTarget, "wsl", "ChosenGateway", "ext4.vhdx"),
             "wsl-junction" => Path.Combine(junctionTarget, "ChosenGateway", "ext4.vhdx"),
             _ => Path.Combine(junctionTarget, "ext4.vhdx"),
@@ -361,6 +249,14 @@ public sealed class InstallerIssAssertionTests
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             File.WriteAllText(path, "owned sentinel");
         }
+        var markerPath = Path.Combine(generatedRoot, "setup-managed-distro.json");
+        var preserveMarker = scenario is "unregistered-other-marker" or "unregistered-invalid-marker";
+        File.WriteAllText(markerPath, scenario == "unregistered-invalid-marker" ? "invalid JSON" : JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1,
+            distroName = preserveMarker ? "SiblingDistro" : "ChosenGateway",
+            installPath = Path.GetDirectoryName(generatedVhd),
+        }));
         var targetHasChild = scenario != "unregistered-empty";
         if (!targetHasChild)
         {
@@ -376,7 +272,6 @@ public sealed class InstallerIssAssertionTests
             $ErrorActionPreference = 'Stop'
             $DataDirectoryName = 'OpenClawTray-Dev'
             $DistroName = 'ChosenGateway'
-            $RemoveConfirmedDistroChild = $false
             $tokens = $null
             $parseErrors = $null
             $ast = [System.Management.Automation.Language.Parser]::ParseFile($SourceScript, [ref]$tokens, [ref]$parseErrors)
@@ -387,7 +282,8 @@ public sealed class InstallerIssAssertionTests
             }
             foreach ($name in @(
                 'Ensure-AppRoot', 'Write-GatewayLog', 'Add-CleanupWarning', 'Write-GatewayResult',
-                'Resolve-LocalDataDir', 'Test-SameFullPath', 'Get-ReparsePointInPath', 'Remove-GatewayDirectory',
+                'Resolve-LocalDataDir', 'Test-SameFullPath', 'Get-ReparsePointInPath', 'Get-ReparsePointInTree', 'Remove-GatewayDirectory',
+                'Read-JsonFile', 'Get-JsonPropertyValue', 'Remove-ConfirmedDistroMarker',
                 'Test-DistroListed', 'Test-DistroNotFound', 'Enter-DestructivePhase', 'Complete-GatewayCleanup'
             )) {
                 $definition = @($ast.EndBlock.Statements | Where-Object {
@@ -420,11 +316,15 @@ public sealed class InstallerIssAssertionTests
             }
             function Remove-WindowsGatewayArtifacts { Write-GatewayLog 'Modeled Windows artifact cleanup.' }
             function Start-Sleep { param([int]$Seconds) }
-            if ($Layout -in @('root-junction', 'wsl-junction', 'child-junction')) {
+            if ($Layout.EndsWith('-junction')) {
                 $link = Join-Path $AppRoot 'wsl'
+                if ($Layout -eq 'ancestor-junction') { $link = Split-Path -Parent $AppRoot }
                 if ($Layout -eq 'root-junction') { $link = $AppRoot }
                 if ($Layout -eq 'child-junction') { $link = Join-Path $link $DistroName }
-                Move-Item -LiteralPath $link -Destination ($link + '-before-junction') -ErrorAction Stop
+                if ($Layout -eq 'nested-junction') { $link = Join-Path $link "$DistroName\nested" }
+                if (Test-Path -LiteralPath $link) {
+                    Move-Item -LiteralPath $link -Destination ($link + '-before-junction') -ErrorAction Stop
+                }
                 New-Item -ItemType Junction -Path $link -Target $JunctionTarget -ErrorAction Stop | Out-Null
             }
             $entrypoint = @($ast.EndBlock.Statements | Where-Object {
@@ -475,6 +375,10 @@ public sealed class InstallerIssAssertionTests
         }
         var output = $"{await stdout}{Environment.NewLine}{await stderr}";
         Assert.True(process.ExitCode == expectedExitCode, $"Exit {process.ExitCode}: {output}");
+        if (!layout.EndsWith("-junction", StringComparison.Ordinal))
+        {
+            Assert.Equal(expectedExitCode != 0 || preserveMarker || scenario == "no-wsl", File.Exists(markerPath));
+        }
         Assert.Equal(!deleted && targetHasChild, File.Exists(configuredVhd));
         Assert.Equal(targetHasChild, File.Exists(junctionVhd));
         if (targetHasChild)
@@ -483,6 +387,7 @@ public sealed class InstallerIssAssertionTests
         }
         var preservedWslRoot = layout switch
         {
+            "ancestor-junction" => Path.Combine(localAppData + "-before-junction", "OpenClawTray-Dev", "wsl"),
             "root-junction" => Path.Combine(appRoot + "-before-junction", "wsl"),
             "wsl-junction" => Path.Combine(appRoot, "wsl-before-junction"),
             _ => Path.Combine(appRoot, "wsl"),
@@ -494,8 +399,8 @@ public sealed class InstallerIssAssertionTests
         var log = File.ReadAllText(Path.Combine(appRoot, "uninstall-gateway-wsl.log"));
         if (layout is "custom" or "lookalike")
         {
-            Assert.Equal("owned sentinel", File.ReadAllText(generatedVhd));
-            if (expectedExitCode == 0)
+            Assert.Equal(expectedExitCode != 0 || scenario == "no-wsl", File.Exists(generatedVhd));
+            if (expectedExitCode == 0 && scenario != "no-wsl")
             {
                 Assert.Contains("Ownership uncertain", log);
                 Assert.Contains("Ownership uncertain",

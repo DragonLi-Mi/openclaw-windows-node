@@ -478,12 +478,11 @@ public sealed class InnoMigrationContractTests
         Assert.True(deleteStart >= 0 && deleteEnd > deleteStart);
         var deleteGeneratedState = installer[deleteStart..deleteEnd];
         Assert.Contains("if not LocalGatewayCleanupSucceeded then", deleteGeneratedState);
-        Assert.True(deleteGeneratedState.IndexOf("DeleteConfirmedDistroChild;", StringComparison.Ordinal) <
-                    deleteGeneratedState.IndexOf("AppDir := RemoveBackslashUnlessRoot", StringComparison.Ordinal));
+        Assert.DoesNotContain("DeleteConfirmedDistroChild", installer);
         Assert.True(deleteGeneratedState.IndexOf("AppDir := RemoveBackslashUnlessRoot", StringComparison.Ordinal) <
                     deleteGeneratedState.IndexOf("if CompareText(AppDir, GeneratedRoot) <> 0 then", StringComparison.Ordinal));
         Assert.True(deleteGeneratedState.IndexOf("if CompareText(AppDir, GeneratedRoot) <> 0 then", StringComparison.Ordinal) <
-                    deleteGeneratedState.IndexOf("DeleteGeneratedChild('Logs');", StringComparison.Ordinal));
+                    deleteGeneratedState.IndexOf("DeleteGeneratedChild('Logs', True);", StringComparison.Ordinal));
         Assert.DoesNotContain("DelTree(ExpandConstant('{app}'), True, True, True)", deleteGeneratedState);
     }
 
@@ -578,8 +577,8 @@ public sealed class InnoMigrationContractTests
     {
         var script = Read("scripts", "Uninstall-LocalGateway.ps1").ReplaceLineEndings("\n");
         // Read-only discovery stays inside the admission phase. The primary cleanup's
-        // directory removal and unregister plus the post-cleanup child-only mode are
-        // the three destructive entry points. A deleted flag flip must fail here.
+        // directory removal, unregister and Windows artifact cleanup are the
+        // three destructive entry points. A deleted flag flip must fail here.
         Assert.Matches(
             @"function Enter-DestructivePhase \{\s+#[^\n]*\n\s+\$script:MigrationAdmissionPhase = \$false\s+\}",
             script);
@@ -598,10 +597,11 @@ public sealed class InnoMigrationContractTests
         // Locating wsl.exe and listing distros destroy nothing, so they must not
         // sit past the admission boundary in the main flow.
         var main = script[script.LastIndexOf("\ntry {", StringComparison.Ordinal)..];
+        Assert.DoesNotContain("RemoveConfirmedDistroChild", main);
         Assert.Matches(
-            @"if \(\$RemoveConfirmedDistroChild\) \{\s+" +
-            @"Enter-DestructivePhase[\s\S]*?Remove-ConfirmedDistroChild\s+exit 0\s+\}",
-            main);
+            @"function Complete-GatewayCleanup \{\s+param\(\[string\]\$Message\)\s+" +
+            @"Enter-DestructivePhase\s+Remove-WindowsGatewayArtifacts",
+            script);
         var primaryStart = main.IndexOf("if ($DataDirectoryName -eq 'OpenClawTray')", StringComparison.Ordinal);
         Assert.True(primaryStart >= 0);
         var primaryMain = main[primaryStart..];
