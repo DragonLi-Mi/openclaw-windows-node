@@ -169,6 +169,31 @@ public sealed class NativeGatewaySetupTests
         Assert.InRange(selected, 1, 65535);
     }
 
+    [Theory]
+    [InlineData(NativeGatewayContract.Legacy)]
+    [InlineData(NativeGatewayContract.IsolatedSessionV1)]
+    public async Task Draft_SavedAvailablePortSurvivesUpgradeInsteadOfMovingToPreferredPort(NativeGatewayContract contract)
+    {
+        using var fixture = new Fixture(contract: contract);
+        var draft = await fixture.Service.CreateDraftAsync(default);
+        int saved;
+        using (var probe = new TcpListener(IPAddress.Loopback, 0) { ExclusiveAddressUse = true })
+        {
+            probe.Start();
+            saved = ((IPEndPoint)probe.LocalEndpoint).Port;
+        }
+        Assert.NotEqual(NativeGatewaySetupService.PreferredPort, saved);
+        // A draft written by an earlier release that allocated an OS-assigned port.
+        var existing = draft with { Port = saved };
+        File.WriteAllText(NativeGatewaySetupService.GetDraftPath(fixture.Registry), JsonSerializer.Serialize(existing));
+
+        var resumed = await fixture.Service.CreateDraftAsync(default);
+
+        Assert.Equal(existing, resumed);
+        Assert.Equal(existing, JsonSerializer.Deserialize<NativeGatewaySetupDraft>(
+            File.ReadAllText(NativeGatewaySetupService.GetDraftPath(fixture.Registry))));
+    }
+
     [Fact]
     public async Task Draft_OccupiedPortRotatesWithoutReplacingProfileOrCredentials()
     {
