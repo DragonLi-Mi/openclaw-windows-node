@@ -292,7 +292,11 @@ public sealed class NativeGatewaySetupSession(
                 if (afterVerification is not null)
                     await afterVerification(connection, linked.Token);
             }
-            await runtime.StopAsync(linked.Token);
+            // A verified Gateway stays up through publication so the restarted
+            // Companion adopts it instead of waiting through another cold start.
+            bool handOff = proof is not null;
+            if (!handOff)
+                await runtime.StopAsync(linked.Token);
             linked.Token.ThrowIfCancellationRequested();
             registry.Load();
             var beforePublication = registry.GetSnapshot();
@@ -302,6 +306,8 @@ public sealed class NativeGatewaySetupSession(
             registry.SetActive(Record.Id);
             registry.Save(beforePublication);
             _published = true;
+            if (handOff)
+                await runtime.ReleaseAsync(CancellationToken.None);
             // Keep the credential-free draft descriptor. CreateDraftAsync recognizes
             // the published ID and replaces it instead of taking over an active gateway.
             return Record;

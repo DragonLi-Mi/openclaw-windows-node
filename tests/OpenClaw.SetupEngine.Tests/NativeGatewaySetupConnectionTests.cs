@@ -205,6 +205,8 @@ public sealed class NativeGatewaySetupConnectionTests
     {
         await using var server = await FixtureGatewayServer.StartAsync(GatewayScenario.CreateNativeSetup(Reply), Token);
         using var fixture = CreateFixture(server);
+        var released = false;
+        fixture.Runtime.Release = () => released = fixture.Registry.ActiveGatewayId is not null;
         await using var owner = await fixture.PrepareAsync();
         var connection = await NativeGatewaySetupConnection.ConnectAsync(owner);
         var client = new GatewayAiSetupClient(connection);
@@ -226,6 +228,9 @@ public sealed class NativeGatewaySetupConnectionTests
                 Assert.True(fixture.Events.IndexOf("restart") < fixture.Events.IndexOf("stop"),
                     "An isolated verified restart must retain its original detach/stop ownership.");
                 Assert.Equal(new CapabilitiesConfig { Camera = false }.GetEnabledCommandIds(), fixture.Host.AppliedCommands);
+                Assert.True(fixture.Events.IndexOf("restart") < fixture.Events.IndexOf("release"),
+                    "A verified isolated Gateway must be handed to Companion instead of stopped.");
+                Assert.True(released, "The isolated Gateway must be released only after publication.");
                 Assert.True(server.Requests.Count(request => request.Method == "openclaw.setup.verify") >= 3);
                 published = completion;
                 return Task.CompletedTask;
