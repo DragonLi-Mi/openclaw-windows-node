@@ -2968,6 +2968,88 @@ Gebruik een van deze opties:
   <data name="DebugPage_ChatOverride_ForceNative_Tray.Content" xml:space="preserve">
     <value>Companion-chatinterface forceren</value>
   </data>
+  <data name="Chat_ZeroState_RecentChats" xml:space="preserve"><value>Recente chats</value></data>
+  <data name="Chat_Placement_Environment" xml:space="preserve">
+    <value>Omgeving</value>
+  </data>
+  <data name="Chat_Placement_Workspace" xml:space="preserve">
+    <value>Werkruimte</value>
+  </data>
+  <data name="Chat_Placement_Devices" xml:space="preserve">
+    <value>Je apparaten</value>
+  </data>
+  <data name="Chat_Placement_Projects" xml:space="preserve">
+    <value>Projecten</value>
+  </data>
+  <data name="Chat_Placement_Folders" xml:space="preserve">
+    <value>Gateway-mappen</value>
+  </data>
+  <data name="Chat_Placement_SearchDevices" xml:space="preserve">
+    <value>Omgevingen zoeken</value>
+  </data>
+  <data name="Chat_Placement_SearchProjects" xml:space="preserve">
+    <value>Projecten zoeken of een Git-URL plakken</value>
+  </data>
+  <data name="Chat_Placement_Path" xml:space="preserve">
+    <value>Voer een mappad in</value>
+  </data>
+  <data name="Chat_Placement_DefaultWorkspace" xml:space="preserve">
+    <value>Standaardwerkruimte</value>
+  </data>
+  <data name="Chat_Placement_Browse" xml:space="preserve">
+    <value>Mappen doorbladeren</value>
+  </data>
+  <data name="Chat_Placement_Up" xml:space="preserve">
+    <value>Bovenliggende map</value>
+  </data>
+  <data name="Chat_Placement_UseFolder" xml:space="preserve">
+    <value>Deze map gebruiken</value>
+  </data>
+  <data name="Chat_Placement_Back" xml:space="preserve">
+    <value>Terug naar projecten</value>
+  </data>
+  <data name="Chat_Placement_Clone" xml:space="preserve">
+    <value>Repository klonen bij verzenden</value>
+  </data>
+  <data name="Chat_Placement_Retry" xml:space="preserve">
+    <value>Opnieuw proberen</value>
+  </data>
+  <data name="Chat_Placement_Loading" xml:space="preserve">
+    <value>Locaties laden...</value>
+  </data>
+  <data name="Chat_Placement_Preparing" xml:space="preserve">
+    <value>Chatlocatie voorbereiden...</value>
+  </data>
+  <data name="Chat_Placement_NoMatches" xml:space="preserve">
+    <value>Geen overeenkomende locaties</value>
+  </data>
+  <data name="Chat_Placement_Offline" xml:space="preserve">
+    <value>Niet verbonden</value>
+  </data>
+  <data name="Chat_Placement_HostingDisabled" xml:space="preserve">
+    <value>Sessiehosting is niet ingeschakeld</value>
+  </data>
+  <data name="Chat_Placement_CapacityUnknown" xml:space="preserve">
+    <value>Sessiecapaciteit wordt niet gemeld</value>
+  </data>
+  <data name="Chat_Placement_NoCapacity" xml:space="preserve">
+    <value>Geen beschikbare sessieplaatsen</value>
+  </data>
+  <data name="Chat_Placement_CommandUnavailable" xml:space="preserve">
+    <value>De vereiste opdracht is niet goedgekeurd</value>
+  </data>
+  <data name="Chat_Placement_UpdateRequired" xml:space="preserve">
+    <value>Hostupdate vereist</value>
+  </data>
+  <data name="Chat_Placement_RuntimeUnsupported" xml:space="preserve">
+    <value>Deze agentruntime ondersteunt geen apparaatsessies</value>
+  </data>
+  <data name="Chat_Placement_Gateway" xml:space="preserve">
+    <value>Gateway-host</value>
+  </data>
+  <data name="Chat_Placement_Remote" xml:space="preserve">
+    <value>Externe sessiehost</value>
+  </data>
   <data name="Chat_ZeroState_WelcomeTitle" xml:space="preserve">
     <value>Welkom bij OpenClaw</value>
   </data>
@@ -8031,4 +8113,34 @@ Uw instellingen, gateway, bestanden en modellen blijven op hun plaats.</value>
   <data name="LocalAi_ProfileFallback" xml:space="preserve"><value>Het voorkeursprofiel {0} past niet bij deze hardware. De installatie kan {1} gebruiken met {2:N0} contexttokens. Controleer dit profiel in de installatie voordat u het installeert.</value></data>
   <data name="LocalAi_Reason_InsufficientSystemMemory" xml:space="preserve"><value>Dit profiel vereist minimaal {0} systeemgeheugen.</value></data>
   <data name="LocalAi_Reason_InsufficientDiskSpace" xml:space="preserve"><value>Dit profiel vereist minimaal {0} vrije ruimte op zowel het modelcachevolume als het runtimevolume.</value></data>
+  <data name="Chat_Welcome_Loading" xml:space="preserve"><value>Welkomstinhoud wordt geladen vanaf je Gateway...</value></data>
+  <data name="Chat_Welcome_Unsupported" xml:space="preserve"><value>Deze Gateway biedt geen gedeelde welkomstinhoud. Je kunt hieronder wel een chat starten.</value></data>
+  <data name="Chat_Welcome_Failed" xml:space="preserve"><value>De welkomstinhoud kon niet worden geladen. Maak opnieuw verbinding om het nogmaals te proberen of start hieronder een chat.</value></data>
+  <data name="Chat_Placement_Unknown" xml:space="preserve">
+    <value>Niet geverifieerd</value>
+  </data>
+  <data name="Chat_Placement_Error_DiscoveryFailed" xml:space="preserve">
+    <value>Chatlocaties konden niet worden geladen. Probeer het opnieuw in de locatiekiezer.</value>
+  </data>
+  <data name="Chat_Placement_Error_BrowseFailed" xml:space="preserve">
+    <value>Gateway-mappen konden niet worden geladen. Probeer opnieuw te bladeren.</value>
+  </data>
+  <data name="Chat_Placement_Error_PreparationFailed" xml:space="preserve">
+    <value>De chatlocatie kon niet worden voorbereid. Controleer deze in de Gateway voordat u het opnieuw probeert.</value>
+  </data>
+  <data name="Chat_Placement_Error_PreparationPending" xml:space="preserve">
+    <value>De locatie wordt nog voorbereid. Wacht voordat u opnieuw verzendt.</value>
+  </data>
+  <data name="Chat_Placement_Error_NotReady" xml:space="preserve">
+    <value>De geselecteerde chatlocatie is niet gereed. Vernieuw de keuzes voordat u verzendt.</value>
+  </data>
+  <data name="Chat_Placement_Error_HistoryPending" xml:space="preserve">
+    <value>Wachten op de actuele chatgeschiedenis voordat de locatie wordt voorbereid. Verzend opnieuw zodra het laden is voltooid.</value>
+  </data>
+  <data name="Chat_Placement_Error_Interrupted" xml:space="preserve">
+    <value>De voorbereiding is onderbroken en heeft mogelijk de locatie van deze sessie gewijzigd. Controleer deze in de Gateway voordat u opnieuw verzendt.</value>
+  </data>
+  <data name="Chat_Placement_Error_NoLongerEmpty" xml:space="preserve">
+    <value>Deze sessie is niet meer leeg, dus de wachtende locatiekeuze is geannuleerd. Controleer de sessie en verzend opnieuw om op de huidige locatie door te gaan.</value>
+  </data>
 </root>
