@@ -7140,6 +7140,7 @@ Het binaire bestand wxc-exec is niet gevonden. {1} Als dit een ontwikkelaarsbuil
   <data name="LocalAiPage_EndpointLabel.Text" xml:space="preserve"><value>Eindpunt</value></data>
   <data name="LocalAiPage_ProcessLabel.Text" xml:space="preserve"><value>Proces</value></data>
   <data name="LocalAiPage_StartButton.Content" xml:space="preserve"><value>Router starten</value></data>
+  <data name="LocalAiPage_NativeSelectionRequired" xml:space="preserve"><value>Kies vóór het starten of herstarten van Local AI voor Local AI gebruiken in de installatie van de geselecteerde native Gateway, of selecteer de eigenaar-WSL-Gateway bij Verbinding.</value></data>
   <data name="LocalAiPage_StopButton.Content" xml:space="preserve"><value>Stoppen</value></data>
   <data name="LocalAiPage_RestartButton.Content" xml:space="preserve"><value>Opnieuw starten</value></data>
   <data name="LocalAiPage_OpenLogsButton.Content" xml:space="preserve"><value>Logboeken openen</value></data>
@@ -8009,6 +8010,7 @@ Uw instellingen, gateway, bestanden en modellen blijven op hun plaats.</value>
   <data name="AgentCreation_Description" xml:space="preserve"><value>Maak een agent en werkruimte op de verbonden gateway. Dit maakt geen gesprek en wijzigt uw huidige chat niet.</value></data>
   <data name="AgentCreation_PermissionRequired" xml:space="preserve"><value>Maak verbinding met een gateway met operator.admin-machtiging om een agent te maken.</value></data>
   <data name="AgentCreation_Failed" xml:space="preserve"><value>Het maken van de agent kon niet worden bevestigd. Sluit dit dialoogvenster en vernieuw de agents voordat u het opnieuw probeert.</value></data>
+  <data name="Onboarding_AiSetup_LocalRepairRequiresStop" xml:space="preserve"><value>Open de instellingen van Local AI, verbind opnieuw met de oorspronkelijke Gateway en stop Local AI voordat je de bestanden herstelt. Herstel eerst de routering als dat nog nodig is. Bewaar het eigendomsbewijs en de gedownloade modellen.</value></data>
   <data name="Onboarding_AiSetup_LocalState_ManagementBlocked" xml:space="preserve"><value>Beheer door Companion is niet beschikbaar.</value></data>
   <data name="Onboarding_AiSetup_LocalOwnershipMissing" xml:space="preserve"><value>Dit profiel heeft geen eigendomsbewijs voor de bestaande lokale AI-provider. Als Companion deze bij een eerdere installatiepoging heeft gemaakt, open dan het oorspronkelijke Companion-profiel en kies Lokale AI herstellen en gebruiken. Er is niets gewijzigd. Een gedetecteerd model gebruiken herstelt het beheer door Companion niet.</value></data>
   <data name="Onboarding_AiSetup_LocalOwnershipInvalid" xml:space="preserve"><value>Het opgeslagen eigendom van lokale AI, het model of de gatewayconfiguratie komt niet meer overeen. Controleer in het oorspronkelijke Companion-profiel de oorspronkelijke gateway en de modelinstellingen, inclusief gewijzigde vermeldingen in de lijst met toegestane modellen. Bewaar het eigendomsbewijs; kopieer geen referenties en vervang de provider niet.</value></data>

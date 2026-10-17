@@ -7139,6 +7139,7 @@
   <data name="LocalAiPage_EndpointLabel.Text" xml:space="preserve"><value>终结点</value></data>
   <data name="LocalAiPage_ProcessLabel.Text" xml:space="preserve"><value>进程</value></data>
   <data name="LocalAiPage_StartButton.Content" xml:space="preserve"><value>启动路由器</value></data>
+  <data name="LocalAiPage_NativeSelectionRequired" xml:space="preserve"><value>启动或重启 Local AI 之前，请在所选本机网关的设置流程中选择“使用本地 AI”，或在“连接”中选择拥有此安装的 WSL 网关。</value></data>
   <data name="LocalAiPage_StopButton.Content" xml:space="preserve"><value>停止</value></data>
   <data name="LocalAiPage_RestartButton.Content" xml:space="preserve"><value>重新启动</value></data>
   <data name="LocalAiPage_OpenLogsButton.Content" xml:space="preserve"><value>打开日志</value></data>
@@ -8008,6 +8009,7 @@
   <data name="AgentCreation_Description" xml:space="preserve"><value>在已连接的网关上创建智能体及其工作区。此操作不会创建会话或更改当前聊天。</value></data>
   <data name="AgentCreation_PermissionRequired" xml:space="preserve"><value>请连接具有 operator.admin 权限的网关以创建智能体。</value></data>
   <data name="AgentCreation_Failed" xml:space="preserve"><value>无法确认智能体是否创建成功。请关闭此对话框并刷新智能体列表，然后再试。</value></data>
+  <data name="Onboarding_AiSetup_LocalRepairRequiresStop" xml:space="preserve"><value>打开 Local AI 设置，重新连接原来的网关，并成功停止 Local AI 后再修复文件。如果路由仍需恢复，请先完成恢复。请保留所有权记录和已下载的模型。</value></data>
   <data name="Onboarding_AiSetup_LocalState_ManagementBlocked" xml:space="preserve"><value>Companion 管理不可用。</value></data>
   <data name="Onboarding_AiSetup_LocalOwnershipMissing" xml:space="preserve"><value>此配置文件没有现有本地 AI 提供程序的所有权凭据。如果 Companion 在之前的设置尝试中创建了它，请重新打开原始 Companion 配置文件并选择“恢复并使用本地 AI”。未进行任何更改。使用检测到的模型不会恢复 Companion 管理。</value></data>
   <data name="Onboarding_AiSetup_LocalOwnershipInvalid" xml:space="preserve"><value>已保存的本地 AI 所有权、模型或网关配置不再匹配。请在原始 Companion 配置文件中检查原始网关及其模型设置，包括已修改的模型允许列表条目。保留所有权凭据，不要复制身份验证凭据或替换提供程序。</value></data>
