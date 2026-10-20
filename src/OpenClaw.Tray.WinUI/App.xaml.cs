@@ -1833,7 +1833,7 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
             return;
         }
 
-        if (_gatewayRegistry.IsLegacyMigrationSuppressed(gatewayUrl))
+        if (gatewayUrl is not null && _gatewayRegistry.IsLegacyMigrationSuppressed(gatewayUrl))
         {
             Logger.Info("Automatic legacy Gateway recovery was disabled by explicit removal.");
             TryStartLocalMcpOnlyNode();

@@ -65,6 +65,9 @@ public sealed class AppRefactorContractTests
     {
         var source = ReadAppSources();
         var startup = ExtractMethod(source, "InitializeGatewayClient");
+        Assert.Contains(
+            "if (gatewayUrl is not null && _gatewayRegistry.IsLegacyMigrationSuppressed(gatewayUrl))",
+            startup);
         AssertInOrder(startup,
             "_gatewayRegistry.IsLegacyMigrationSuppressed(gatewayUrl)",
             "TryMigrateLegacyGatewaySettings(gatewayUrl",
