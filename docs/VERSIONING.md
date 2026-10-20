@@ -67,15 +67,52 @@ CI guard that requires the computed version to match the release tag.
 ### Selective alpha backports
 
 Use a release branch from the intended published alpha when only selected fixes
-should ship. In an isolated checkout, cherry-pick the reviewed fixes onto that
-base, create a new canonical alpha tag, then push the branch and tag. For example:
+should ship. GitVersion reads the candidate's configuration, not current main.
+If the base predates the release-branch versioning repair, first cherry-pick the
+reviewed commit that adds the `release` branch override in `GitVersion.yml`.
+Omit that cherry-pick only when the base already contains the repair.
+
+In an isolated checkout, prepare the candidate without creating its release tag:
 
 ```powershell
 $baseTag = '<published-alpha-tag>'
 $releaseTag = '<new-unused-alpha-tag>'
+$versioningRepairCommit = '<reviewed-release-versioning-repair-commit>'
 $fixCommit = '<reviewed-fix-commit>'
 git switch -c "release/$releaseTag" $baseTag
+# Required when the base predates the versioning repair.
+git cherry-pick -x $versioningRepairCommit
 git cherry-pick -x $fixCommit
+```
+
+Before tagging this checkout, verify the proposed tag in a disposable full-history
+clone using the same release branch name. The following check must print the
+exact tag version without its `v` prefix. A mismatch is a release blocker, not a
+reason to override the computed version:
+
+```powershell
+$verificationRepo = Join-Path ([IO.Path]::GetTempPath()) "openclaw-release-check-$([guid]::NewGuid().ToString('N'))"
+git clone --no-hardlinks --branch "release/$releaseTag" . $verificationRepo
+if ($LASTEXITCODE -ne 0) { throw 'Could not clone the release candidate.' }
+Push-Location $verificationRepo
+try {
+    git tag $releaseTag
+    if ($LASTEXITCODE -ne 0) { throw 'Could not create the disposable verification tag.' }
+    $computedVersion = ./scripts/Get-OpenClawVersion.ps1 -Variable SemVer
+    if ($computedVersion -cne $releaseTag.Substring(1)) {
+        throw "Release version mismatch: $computedVersion versus $releaseTag."
+    }
+    Write-Host "Verified $releaseTag at $(git rev-parse HEAD)."
+} finally {
+    Pop-Location
+    Remove-Item -LiteralPath $verificationRepo -Recurse -Force
+}
+```
+
+Only after verification succeeds, create and push the actual release tag from
+the original candidate checkout:
+
+```powershell
 git tag $releaseTag
 git push --atomic origin "refs/heads/release/$releaseTag" "refs/tags/$releaseTag"
 ```
