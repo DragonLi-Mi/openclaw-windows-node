@@ -58,9 +58,38 @@ GitVersion advances to the next alpha prerelease until another tag pins the
 version. For example, after `v0.6.0-alpha.5`, an untagged commit on `master`
 may resolve to `0.6.0-alpha.6`.
 
-`GitVersion.yml` intentionally gives the `master`/`main` branch the `alpha`
-label so alpha tags are treated as exact version sources. Do not remove that
-label unless the release train stops using alpha tags.
+`GitVersion.yml` intentionally gives `master`/`main` and `release/*` branches
+the `alpha` label so alpha tags are treated as exact version sources. Release
+branches also preserve the version when the current commit is tagged. This
+overrides GitVersion's default beta release-branch policy without weakening the
+CI guard that requires the computed version to match the release tag.
+
+### Selective alpha backports
+
+Use a release branch from the intended published alpha when only selected fixes
+should ship. In an isolated checkout, cherry-pick the reviewed fixes onto that
+base, create a new canonical alpha tag, then push the branch and tag. For example:
+
+```powershell
+$baseTag = '<published-alpha-tag>'
+$releaseTag = '<new-unused-alpha-tag>'
+$fixCommit = '<reviewed-fix-commit>'
+git switch -c "release/$releaseTag" $baseTag
+git cherry-pick -x $fixCommit
+git tag $releaseTag
+git push --atomic origin "refs/heads/release/$releaseTag" "refs/tags/$releaseTag"
+```
+
+Choose an unused version that advances the intended release line. Do not move
+an existing tag or reuse a reserved MSIX package identity after deleting a
+release. A maintainer's tag push starts the same full validation, signing, and
+publication gates as a main-based alpha. The daily alpha launcher is not the
+backport entry point: it always selects current `main`. Tags pushed with
+`GITHUB_TOKEN` still require the explicit CI dispatch described below.
+
+CI runs `scripts/test-release-branch-versioning.ps1` with the pinned GitVersion
+tool. Disposable repositories cover lightweight and annotated alpha/stable tags,
+tag checkouts, and newer main changes that must remain excluded.
 
 ## Assembly metadata
 
