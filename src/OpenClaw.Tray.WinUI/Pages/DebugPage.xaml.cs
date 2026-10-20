@@ -870,8 +870,7 @@ public sealed partial class DebugPage : Page
         _suppressOverrideChange = true;
         try
         {
-            SelectByTag(HubChatOverrideCombo, DebugChatSurfaceOverrides.HubChat.ToString());
-            SelectByTag(TrayChatOverrideCombo, DebugChatSurfaceOverrides.TrayChat.ToString());
+            SelectByTag(ChatOverrideCombo, DebugChatSurfaceOverrides.WorkspaceChat.ToString());
         }
         finally
         {
@@ -901,16 +900,10 @@ public sealed partial class DebugPage : Page
         return ChatSurfaceOverride.NoOverride;
     }
 
-    private void OnHubChatOverrideChanged(object sender, SelectionChangedEventArgs e)
+    private void OnChatOverrideChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressOverrideChange) return;
-        DebugChatSurfaceOverrides.HubChat = ParseOverride(HubChatOverrideCombo);
-    }
-
-    private void OnTrayChatOverrideChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_suppressOverrideChange) return;
-        DebugChatSurfaceOverrides.TrayChat = ParseOverride(TrayChatOverrideCombo);
+        DebugChatSurfaceOverrides.WorkspaceChat = ParseOverride(ChatOverrideCombo);
     }
 
 }
