@@ -153,7 +153,7 @@ public sealed partial class WorkspaceWindow : WindowEx
 
         var session = _state.Sessions.FirstOrDefault(session => session.Key == sessionKey)
             ?? new SessionInfo { Key = sessionKey };
-        _agentId = SessionDisplayResolver.Resolve(session).AgentId;
+        _agentSelection.Select(SessionDisplayResolver.Resolve(session).AgentId);
         RefreshSidebar();
         UpdateNavigationSelection();
         BackButton.IsEnabled = _navigation.CanGoBack;
