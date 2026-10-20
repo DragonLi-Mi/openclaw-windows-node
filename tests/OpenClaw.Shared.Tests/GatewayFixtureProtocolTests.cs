@@ -15,6 +15,32 @@ public sealed partial class GatewayFixtureProtocolTests
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(20);
 
     [Fact]
+    public async Task RealClient_FractionalVoiceHistoryPreservesAllContentAndIdentities()
+    {
+        var token = CreateToken();
+        await using var server = await FixtureGatewayServer.StartAsync(GatewayScenario.CreateFractionalVoiceHistory(), token);
+        await using var connected = await ConnectedClient.OpenAsync(server, token, expectedSessionCount: 6);
+        var raw = await connected.Client.SendWizardRequestAsync("chat.history",
+            new { sessionKey = GatewayScenario.VoiceSessionKey });
+        var rows = raw.GetProperty("messages").EnumerateArray().ToArray();
+        Assert.Equal(30, rows.Length);
+        Assert.Equal(18, rows.Count(row => !row.GetProperty("timestamp").TryGetInt64(out _)));
+        var history = await connected.Client.RequestChatHistoryAsync(GatewayScenario.VoiceSessionKey);
+
+        Assert.Equal(30, history.Messages.Count);
+        for (var index = 0; index < rows.Length; index++)
+        {
+            var expectedText = index == 29 ? GatewayScenario.VoiceFinalSentinel : $"Fixture voice history message {index + 1:D2}.";
+            Assert.Equal(expectedText, history.Messages[index].Text);
+            Assert.Equal(rows[index].GetProperty("__openclaw").GetProperty("id").GetString(), history.Messages[index].OpenClawId);
+            Assert.Equal(index + 1, history.Messages[index].OpenClawSeq);
+            Assert.Equal((long)rows[index].GetProperty("timestamp").GetDouble(), history.Messages[index].Ts);
+        }
+        Assert.Equal(30, history.Messages.Select(message => message.OpenClawId).Distinct().Count());
+        Assert.Empty(server.UnexpectedRequests);
+    }
+
+    [Fact]
     public async Task NativeSetup_ResponderGuardStillFaultsServerDisposal()
     {
         var failure = new InvalidOperationException("Unexpected fixture setup method.");
@@ -784,7 +810,7 @@ public sealed partial class GatewayFixtureProtocolTests
         public OpenClawGatewayClient Client { get; } = client;
 
         public static async Task<ConnectedClient> OpenAsync(
-            FixtureGatewayServer server, string token, bool supportsExecApprovals = false)
+            FixtureGatewayServer server, string token, bool supportsExecApprovals = false, int expectedSessionCount = 5)
         {
             var startupOccurrence = server.Requests.Count(r => r.Method == "agents.list") + 1;
             var identity = CreateIdentity();
@@ -800,7 +826,7 @@ public sealed partial class GatewayFixtureProtocolTests
             client.HandshakeSucceeded += (_, _) => handshake.TrySetResult(true);
             client.SessionsUpdated += (_, data) =>
             {
-                if (data.Length == 5)
+                if (data.Length == expectedSessionCount)
                     sessions.TrySetResult(true);
             };
             try

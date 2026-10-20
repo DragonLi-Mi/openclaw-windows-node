@@ -36,6 +36,9 @@ public sealed partial class GatewayScenario
     public const string OtherHistoryMarker = OtherSentinel;
     public const string EdgeSentinel = "FIXTURE EDGE: shared IDs belong to this conversation only.";
     public const int LongMessageCount = 240;
+    public const string VoiceSessionKey = "agent:main:fixture-voice";
+    public const string VoiceTitle = "Fixture: historical realtime voice";
+    public const string VoiceFinalSentinel = "FIXTURE VOICE FINAL: all historical voice messages loaded.";
 
     private static readonly DateTimeOffset Epoch = new(2026, 8, 20, 12, 0, 0, TimeSpan.Zero);
     private readonly Session[] _sessions;
@@ -57,7 +60,8 @@ public sealed partial class GatewayScenario
     private readonly List<object> _createdAgents = [];
     private int _chatSendCount;
 
-    public string Name => _contextUsage is not null ? ContextUsageFixture.Name : IsInteractive ? InteractiveName : _cronJobs is not null ? "cron-editing" : _setup is not null ? "native-setup" : _allowChatSend ? "chat-send" : _allowSessionMutations ? "session-mutations" : _allowAgentCreation ? "agent-creation" : BrowseName;
+    public string Name => _contextUsage is not null ? ContextUsageFixture.Name : IsInteractive ? InteractiveName : _cronJobs is not null ? "cron-editing" : _setup is not null ? "native-setup" : _allowChatSend ? "chat-send" : _allowSessionMutations ? "session-mutations" : _allowAgentCreation ? "agent-creation"
+        : ContainsSession(VoiceSessionKey) ? "fractional-voice-history" : BrowseName;
     public int Version => 1;
     public int ProtocolVersion => GatewayProtocolContract.CurrentVersion;
     public string ContractProvenance =>
@@ -122,6 +126,31 @@ public sealed partial class GatewayScenario
     {
         var browse = CreateBrowse();
         return new(browse._sessions, browse._reads, responder, advertiseSetup);
+    }
+
+    /// <summary>Synthetic historical Talk rows, not a recording of a user's conversation.</summary>
+    public static GatewayScenario CreateFractionalVoiceHistory()
+    {
+        var browse = CreateBrowse();
+        var texts = Enumerable.Range(1, 30)
+            .Select(number => number == 30 ? VoiceFinalSentinel : $"Fixture voice history message {number:D2}.")
+            .ToArray();
+        var voice = CreateSession(VoiceSessionKey, VoiceTitle, "main", "realtime-voice", 5, texts);
+        var messages = voice.Messages.Select((message, index) =>
+        {
+            var row = JsonNode.Parse(message.GetRawText())!.AsObject();
+            if (index >= 12)
+            {
+                row["timestamp"] = 1791257718360.176 + index * 1000;
+                row["api"] = "realtime";
+                row["model"] = "realtime-voice";
+                row["provenance"] = new JsonObject { ["kind"] = "realtime_voice", ["sourceChannel"] = "talk" };
+                if (index % 2 == 0)
+                    row["content"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = texts[index] });
+            }
+            return JsonSerializer.SerializeToElement(row);
+        }).ToArray();
+        return new([.. browse._sessions, voice with { Messages = messages }], browse._reads);
     }
 
     public static GatewayScenario CreateBrowse(bool allowAgentCreation = false, bool requireAgentSelection = false,
