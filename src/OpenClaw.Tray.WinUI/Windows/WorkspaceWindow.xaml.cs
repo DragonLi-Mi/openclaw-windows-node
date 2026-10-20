@@ -42,7 +42,7 @@ public sealed partial class WorkspaceWindow : WindowEx
     private bool _chatApplyQueued;
     private bool _showingAgentCreation;
     private IOperatorGatewayClient? _refreshingClient;
-    private string? _agentId;
+    private readonly WorkspaceAgentSelection _agentSelection = new();
 
     public bool IsClosed { get; private set; }
     internal bool IsChatVisible => !IsClosed && ChatVisibilityPolicy.IsWorkspaceChatVisible(
@@ -51,7 +51,7 @@ public sealed partial class WorkspaceWindow : WindowEx
         AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter
             { State: Microsoft.UI.Windowing.OverlappedPresenterState.Minimized },
         Destination.Page);
-    internal string? SelectedAgentId => _agentId;
+    internal string? SelectedAgentId => _agentSelection.AgentId;
     internal WorkspaceDestination Destination => _navigation.Current;
     internal ChatPage ChatPage => _chat;
     internal bool CanGoBack => _navigation.CanGoBack;
@@ -110,7 +110,10 @@ public sealed partial class WorkspaceWindow : WindowEx
         _chat.SessionSelected += OnChatSessionSelected;
         Closed += OnClosed;
         Root.Loaded += OnLoaded;
-        RefreshSidebar();
+        // The no-gateway accessibility fixture publishes its explicit roster before this window exists.
+        RefreshSidebar(rosterUpdated:
+            Environment.GetEnvironmentVariable("OPENCLAW_ACCESSIBILITY_TEST_SESSIONS") == "1"
+            && Environment.GetEnvironmentVariable("OPENCLAW_TRAY_DATA_DIR") is { Length: > 0 });
     }
 
     internal static string Text(string key) => LocalizationHelper.GetString($"WorkspaceShell_{key}");
@@ -136,7 +139,7 @@ public sealed partial class WorkspaceWindow : WindowEx
     }
 
     internal void OpenCompanion(CompanionPageId page, string? agentId = null) =>
-        _openCompanion(WorkspaceNavigation.CompanionTag(page, agentId ?? _agentId ?? "main"));
+        _openCompanion(WorkspaceNavigation.CompanionTag(page, agentId ?? SelectedAgentId ?? "main"));
 
     internal void OpenTimeline() => _openTimeline();
     internal void OpenCommandCenter() => _openCompanion("command-center");
@@ -182,7 +185,7 @@ public sealed partial class WorkspaceWindow : WindowEx
     internal async Task StartAgentChatAsync(WorkspaceAgent agent)
     {
         _chat.InvalidateNativeSetupForNavigation();
-        _agentId = agent.Id;
+        _agentSelection.Select(agent.Id);
         RefreshSidebar();
         if (agent.LatestSessionKey is { } sessionKey)
             SelectSession(sessionKey);
@@ -198,7 +201,7 @@ public sealed partial class WorkspaceWindow : WindowEx
         {
             var session = _state.Sessions.FirstOrDefault(session => session.Key == sessionKey)
                 ?? new SessionInfo { Key = sessionKey };
-            _agentId = SessionDisplayResolver.Resolve(session).AgentId;
+            _agentSelection.Select(SessionDisplayResolver.Resolve(session).AgentId);
             if (session.Unread)
                 _ = _sessionMenu.AcknowledgeReadAsync(session);
             RefreshSidebar();
@@ -288,10 +291,13 @@ public sealed partial class WorkspaceWindow : WindowEx
         }
     }
 
-    private void RefreshSidebar()
+    private void RefreshSidebar(bool rosterUpdated = false)
     {
         _updating = true;
-        var agents = WorkspaceProjection.Agents(_state.AgentsList, _state.Sessions);
+        var rosterAgents = WorkspaceProjection.Agents(_state.AgentsList, _state.Sessions);
+        _agentSelection.Refresh(CurrentApp.ConnectionManager?.CurrentSnapshot.GatewayId,
+            _state.AgentsList, rosterAgents, rosterUpdated);
+        IReadOnlyList<WorkspaceAgent> agents = _agentSelection.HasCurrentRoster ? rosterAgents : [];
         var previousItems = AssistantSelector.Items.OfType<ComboBoxItem>()
             .Where(item => item.Tag is WorkspaceAgent)
             .ToDictionary(item => ((WorkspaceAgent)item.Tag).Id, StringComparer.Ordinal);
@@ -316,15 +322,17 @@ public sealed partial class WorkspaceWindow : WindowEx
         WorkspaceItemsSync.Arrange(AssistantSelector.Items, 0, desiredItems.Cast<object>().ToList());
         while (AssistantSelector.Items.Count > desiredItems.Count)
             AssistantSelector.Items.RemoveAt(AssistantSelector.Items.Count - 1);
-        _agentId = WorkspaceProjection.SelectedAgentId(_state.AgentsList, agents, _agentId);
+        AssistantSelector.IsEnabled = _agentSelection.HasCurrentRoster &&
+            _state.Status == ConnectionStatus.Connected;
         RestoreAssistantSelection();
         AssistantSelector.PlaceholderText = Text(agents.Count == 0 ? "NoAgents" : "SelectAssistant");
-        var sessions = WorkspaceProjection.Sessions(_state.Sessions, _agentId, _sessionOrder);
+        IReadOnlyList<WorkspaceSession> sessions = _agentSelection.HasCurrentRoster
+            ? WorkspaceProjection.Sessions(_state.Sessions, SelectedAgentId, _sessionOrder) : [];
         SyncSessionItems(_sessionItems, sessions, "WorkspaceSession", NavView.MenuItems.IndexOf(SessionsEmpty) + 1);
         SessionsEmpty.Content = Text("NoSessions");
         SessionsEmpty.Visibility = sessions.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         NewAgentOption.IsEnabled = !_showingAgentCreation;
-        var selectionRequired = WorkspaceProjection.RequiresAgentSelection(_state.AgentsList, agents, _agentId);
+        var selectionRequired = !_agentSelection.IsReady;
         NewSessionButton.IsEnabled =
             !_creatingSession && _state.Status == ConnectionStatus.Connected && !selectionRequired;
         AutomationProperties.SetHelpText(NewSessionButton, selectionRequired ? Text("SelectAssistant") : string.Empty);
@@ -483,8 +491,7 @@ public sealed partial class WorkspaceWindow : WindowEx
         }
 
         RefreshSidebar();
-        if (WorkspaceProjection.RequiresAgentSelection(
-            _state.AgentsList, WorkspaceProjection.Agents(_state.AgentsList, _state.Sessions), _agentId))
+        if (!_agentSelection.IsReady)
         {
             ShowError(Text("SelectAssistant"));
             AssistantSelector.Focus(FocusState.Programmatic);
@@ -492,7 +499,7 @@ public sealed partial class WorkspaceWindow : WindowEx
         }
 
         await CreateAndSelectSessionAsync(
-            client, new SessionCreateRequest { AgentId = _agentId },
+            client, new SessionCreateRequest { AgentId = SelectedAgentId },
             "create-session", "SessionFailed", "SessionUnsupported");
     }
 
@@ -566,7 +573,7 @@ public sealed partial class WorkspaceWindow : WindowEx
 
     private void LeaveSession(string key)
     {
-        var next = WorkspaceProjection.Sessions(_state.Sessions, _agentId, _sessionOrder)
+        var next = WorkspaceProjection.Sessions(_state.Sessions, SelectedAgentId, _sessionOrder)
             .FirstOrDefault(session => session.Key != key);
         var wasChatDestination = _navigation.ChatDestination.SessionKey == key;
         var wasCurrent = _navigation.RemoveSession(key, next?.Key);
@@ -584,7 +591,7 @@ public sealed partial class WorkspaceWindow : WindowEx
         if (e.PropertyName is nameof(AppState.Status) or nameof(AppState.Presence) or nameof(AppState.SelfProfileRevision))
             RefreshOwnerIdentity(e.PropertyName == nameof(AppState.SelfProfileRevision));
         if (e.PropertyName is nameof(AppState.AgentsList) or nameof(AppState.Sessions) or nameof(AppState.Status))
-            RefreshSidebar();
+            RefreshSidebar(rosterUpdated: e.PropertyName == nameof(AppState.AgentsList));
         if (e.PropertyName == nameof(AppState.Status) && _state.Status == ConnectionStatus.Connected)
             _ = RefreshAsync();
         if (e.PropertyName == nameof(AppState.Status))
@@ -638,7 +645,7 @@ public sealed partial class WorkspaceWindow : WindowEx
 
     private void RestoreAssistantSelection() =>
         AssistantSelector.SelectedItem = AssistantSelector.Items.OfType<ComboBoxItem>()
-            .FirstOrDefault(item => item.Tag is WorkspaceAgent agent && agent.Id == _agentId);
+            .FirstOrDefault(item => item.Tag is WorkspaceAgent agent && agent.Id == SelectedAgentId);
 
     private async Task NewAgentAsync()
     {
