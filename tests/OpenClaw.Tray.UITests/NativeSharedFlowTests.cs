@@ -9,6 +9,7 @@ using OpenClaw.Connection;
 using OpenClaw.Connection.NativeGateway;
 using OpenClaw.SetupEngine;
 using OpenClaw.SetupEngine.UI;
+using OpenClaw.SetupEngine.UI.Controls;
 using OpenClaw.SetupEngine.UI.Pages;
 using OpenClaw.Shared;
 using OpenClaw.TestSupport;
@@ -73,7 +74,18 @@ public sealed class NativeSharedFlowTests(UIThreadFixture ui, ITestOutputHelper 
             await ui.YieldToRenderAsync();
             await SaveViewportsAsync(window, ready, $"native-shared-ready-{destination}-{theme}");
             var target = Assert.Single(choices.Children.Cast<SettingsCard>(), choice => (string)choice.Tag == destination.ToString());
-            TestSupport.InvokeSettingsCardAction(ready, target, "Choose_Click");
+            var handle = WinRT.Interop.WindowNative.GetWindowHandle(window);
+            var automationId = target.Name;
+            await Task.Run(() =>
+            {
+                var nativeWindow = System.Windows.Automation.AutomationElement.FromHandle(handle);
+                var nativeChoice = nativeWindow.FindFirst(System.Windows.Automation.TreeScope.Descendants,
+                    new System.Windows.Automation.PropertyCondition(
+                        System.Windows.Automation.AutomationElement.AutomationIdProperty, automationId));
+                Assert.NotNull(nativeChoice);
+                Assert.IsType<System.Windows.Automation.InvokePattern>(nativeChoice.GetCurrentPattern(
+                    System.Windows.Automation.InvokePattern.Pattern)).Invoke();
+            });
             await TestSupport.WaitForRenderedConditionAsync(
                 () => completed.Count == 1, "native publication", () =>
                 {
@@ -136,7 +148,7 @@ public sealed class NativeSharedFlowTests(UIThreadFixture ui, ITestOutputHelper 
             TestSupport.InvokeSettingsCardAction(ai, candidate, "ChoiceAction_Click");
             await WaitAsync(() => frame.Content is AiReadyPage { IsLoaded: true }, "native ready");
             var ready = Assert.IsType<AiReadyPage>(frame.Content);
-            var chat = Find<SettingsCard>(ready, "ChatChoice");
+            var chat = Find<SetupActionCard>(ready, "ChatChoice");
             TestSupport.InvokeSettingsCardAction(ready, chat, "Choose_Click");
             if (failOnce)
             {
