@@ -1359,9 +1359,9 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
     {
         if (_operatorReadScopeUnavailable) return;
         if (!string.IsNullOrEmpty(agentId))
-            await SendTrackedRequestAsync("sessions.list", new { agentId });
+            await SendTrackedRequestAsync("sessions.list", new { agentId, includeDerivedTitles = true });
         else
-            await SendTrackedRequestAsync("sessions.list");
+            await SendTrackedRequestAsync("sessions.list", new { includeDerivedTitles = true });
     }
 
     /// <summary>Subscribe to session change events so the gateway pushes
