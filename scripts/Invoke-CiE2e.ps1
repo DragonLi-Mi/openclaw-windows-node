@@ -1,6 +1,11 @@
 <#
 .SYNOPSIS
     Runs one existing CI E2E shard and enforces its TRX proof contract.
+
+.DESCRIPTION
+    Admits only fresh, consistent reports from this invocation under
+    TestResults\E2E\<invocation-id>. Ordinary CI permits reported MXC skips;
+    the named SSH ownership proofs must pass. This is not formal MXC proof.
 #>
 
 [CmdletBinding()]
@@ -13,9 +18,12 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "TestResultContract.ps1")
 
-$resultsDirectory = "TestResults\E2E"
-$trxPath = Join-Path $resultsDirectory "OpenClaw.E2ETests.$Name.trx"
+$resultsDirectory = Join-Path (Get-Location).ProviderPath "TestResults\E2E"
+$invocation = New-TestInvocation -ResultsDirectory $resultsDirectory -TrxFileName "OpenClaw.E2ETests.$Name.trx"
+$resultsDirectory = $invocation.directory
+Write-Host "E2E TRX ($Name): $($invocation.report)"
 # VSTest's hang timer resets on test events, not fixture progress. A progressing
 # WSL install can exceed it before the first case starts. Bound output inactivity
 # instead; the existing workflow step still caps total wall time at 20 minutes.
@@ -32,46 +40,48 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-[xml]$trx = Get-Content $trxPath
-$executed = [int]$trx.TestRun.ResultSummary.Counters.executed
-if ($executed -lt 1) {
-    throw "E2E shard '$Name' executed zero tests. Check OPENCLAW_RUN_E2E gating/filter before merging."
-}
-
+$result = Read-TestResultContract -Path $invocation.report -StartedUtc $invocation.startedUtc -ExitCode 0 -AllowSkipped
 if ($Name -ne "setup-connect") {
+    Write-Host "E2E test results ($Name): $($result | ConvertTo-Json -Compress)"
     return
 }
 
+[xml]$trx = Get-Content -LiteralPath $invocation.report -Raw
+$ns = [Xml.XmlNamespaceManager]::new($trx.NameTable)
+$ns.AddNamespace('t', $trx.DocumentElement.NamespaceURI)
+$proofResults = @($trx.SelectNodes('/t:TestRun/t:Results//t:UnitTestResult[not(t:InnerResults)]', $ns))
 $mxcProofNames = @(
     "RealGateway_SystemRun_ExecutesThroughWindowsNodeMxcSandbox",
     "RealGateway_SystemRun_BlocksWritesToTrayDataDirectoryInMxcSandbox"
 )
 foreach ($mxcProofName in $mxcProofNames) {
-    $mxcProof = @(
-        $trx.TestRun.Results.UnitTestResult |
+    $mxcProofs = @(
+        $proofResults |
             Where-Object { $_.testName -like "*$mxcProofName*" }
-    ) | Select-Object -First 1
-    if ($null -eq $mxcProof) {
+    )
+    if ($mxcProofs.Count -eq 0) {
         throw "E2E shard '$Name' did not report the MXC proof test '$mxcProofName'. Check the setup-connect filter before merging."
     }
 
-    $mxcOutcome = [string]$mxcProof.outcome
-    if ($mxcOutcome -eq "Passed") {
-        Write-Host "MXC E2E proof passed: $mxcProofName"
-    } elseif ($mxcOutcome -eq "NotExecuted" -or $mxcOutcome -eq "Skipped") {
-        $mxcSkipReason = @(
-            $mxcProof.SelectSingleNode("Output/ErrorInfo/Message")
-            $mxcProof.SelectSingleNode("Output/StdOut")
-        ) |
-            Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace($_.InnerText) } |
-            ForEach-Object { $_.InnerText.Trim() } |
-            Select-Object -First 1
-        if ([string]::IsNullOrWhiteSpace($mxcSkipReason)) {
-            $mxcSkipReason = "skip reason was not present in the trx output"
+    foreach ($mxcProof in $mxcProofs) {
+        $mxcOutcome = [string]$mxcProof.outcome
+        if ($mxcOutcome -eq "Passed") {
+            Write-Host "MXC E2E proof passed: $mxcProofName"
+        } elseif ($mxcOutcome -eq "NotExecuted") {
+            $mxcSkipReason = @(
+                $mxcProof.SelectSingleNode("t:Output/t:ErrorInfo/t:Message", $ns)
+                $mxcProof.SelectSingleNode("t:Output/t:StdOut", $ns)
+            ) |
+                Where-Object { $null -ne $_ -and -not [string]::IsNullOrWhiteSpace($_.InnerText) } |
+                ForEach-Object { $_.InnerText.Trim() } |
+                Select-Object -First 1
+            if ([string]::IsNullOrWhiteSpace($mxcSkipReason)) {
+                $mxcSkipReason = "skip reason was not present in the trx output"
+            }
+            Write-Warning "MXC E2E proof skipped: $mxcProofName; $mxcSkipReason"
+        } else {
+            throw "MXC E2E proof '$mxcProofName' had unexpected outcome '$mxcOutcome'."
         }
-        Write-Warning "MXC E2E proof skipped: $mxcProofName; $mxcSkipReason"
-    } else {
-        throw "MXC E2E proof '$mxcProofName' had unexpected outcome '$mxcOutcome'."
     }
 }
 
@@ -81,17 +91,20 @@ $sshOwnershipProofNames = @(
     "InitialNodeHandshakeListenerReplacementWithholdsCredentialFrame"
 )
 foreach ($sshOwnershipProofName in $sshOwnershipProofNames) {
-    $sshOwnershipProof = @(
-        $trx.TestRun.Results.UnitTestResult |
+    $sshOwnershipProofs = @(
+        $proofResults |
             Where-Object { $_.testName -like "*$sshOwnershipProofName*" }
-    ) | Select-Object -First 1
-    if ($null -eq $sshOwnershipProof) {
+    )
+    if ($sshOwnershipProofs.Count -eq 0) {
         throw "E2E shard '$Name' did not report the SSH ownership proof test '$sshOwnershipProofName'. Check the setup-connect filter before merging."
     }
 
-    $sshOwnershipOutcome = [string]$sshOwnershipProof.outcome
-    if ($sshOwnershipOutcome -ne "Passed") {
-        throw "SSH ownership E2E proof '$sshOwnershipProofName' had outcome '$sshOwnershipOutcome'; this proof must pass and may not skip."
+    foreach ($sshOwnershipProof in $sshOwnershipProofs) {
+        $sshOwnershipOutcome = [string]$sshOwnershipProof.outcome
+        if ($sshOwnershipOutcome -ne "Passed") {
+            throw "SSH ownership E2E proof '$sshOwnershipProofName' had outcome '$sshOwnershipOutcome'; this proof must pass and may not skip."
+        }
+        Write-Host "SSH ownership E2E proof passed: $sshOwnershipProofName"
     }
-    Write-Host "SSH ownership E2E proof passed: $sshOwnershipProofName"
 }
+Write-Host "E2E test results ($Name): $($result | ConvertTo-Json -Compress)"
