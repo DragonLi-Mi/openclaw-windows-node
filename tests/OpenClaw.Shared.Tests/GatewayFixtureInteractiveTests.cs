@@ -407,6 +407,96 @@ public sealed partial class GatewayFixtureProtocolTests
         server.Interactive!.ThrowIfFaulted();
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public async Task Interactive_PeerReceiveAfterAbortRequiresLocalShutdown(bool localShutdown, bool expectServerShutdown)
+    {
+        var token = CreateToken();
+        await using var server = await StartInteractiveAsync(token);
+        var entered = Signal<ClientWebSocket>();
+        var resume = Signal<bool>();
+        var peer = await FixturePeer.ConnectAsync(server, token, async (socket, frame) =>
+        {
+            if (!IsHealthResponse(frame)) return;
+            entered.TrySetResult(socket);
+            await resume.Task.WaitAsync(Deadline);
+        });
+        Task? disposal = null;
+        try
+        {
+            if (expectServerShutdown) peer.ExpectServerShutdown();
+            Assert.True((await peer.RequestAsync("health", new { })).GetProperty("ok").GetBoolean());
+            var socket = await entered.Task.WaitAsync(Deadline);
+            if (localShutdown)
+            {
+                disposal = peer.DisposeAsync().AsTask();
+                Assert.False(disposal.IsCompleted);
+            }
+            else
+            {
+                socket.Abort();
+            }
+            resume.TrySetResult(true);
+
+            if (localShutdown)
+            {
+                await disposal!.WaitAsync(Deadline);
+                Assert.True(peer.Closed.IsCompletedSuccessfully);
+            }
+            else
+            {
+                var failure = await Assert.ThrowsAsync<ObjectDisposedException>(() => peer.Closed.WaitAsync(Deadline));
+                Assert.Equal(typeof(ClientWebSocket).FullName, failure.ObjectName);
+                disposal = peer.DisposeAsync().AsTask();
+                Assert.Same(failure, await Assert.ThrowsAsync<ObjectDisposedException>(() => disposal.WaitAsync(Deadline)));
+            }
+        }
+        finally
+        {
+            resume.TrySetResult(true);
+            if (disposal is null) await peer.DisposeAsync();
+        }
+
+        await using var replacement = await FixturePeer.ConnectAsync(server, token);
+        await replacement.RequestAsync("chat.send", SendParams("after-gated-close"));
+        await replacement.ThroughAsync(e => IsChat(e, "final"));
+        server.Interactive!.ThrowIfFaulted();
+    }
+
+    [Fact]
+    public async Task Interactive_PeerShutdownPreservesUnexpectedReaderFailure()
+    {
+        var token = CreateToken();
+        await using var server = await StartInteractiveAsync(token);
+        var entered = Signal<bool>();
+        var resume = Signal<bool>();
+        var failure = new ObjectDisposedException("unrelated-reader-resource");
+        var peer = await FixturePeer.ConnectAsync(server, token, async (_, frame) =>
+        {
+            if (!IsHealthResponse(frame)) return;
+            entered.TrySetResult(true);
+            await resume.Task.WaitAsync(Deadline);
+            throw failure;
+        });
+        Task? disposal = null;
+        try
+        {
+            await peer.RequestAsync("health", new { });
+            await entered.Task.WaitAsync(Deadline);
+            disposal = peer.DisposeAsync().AsTask();
+            Assert.False(disposal.IsCompleted);
+            resume.TrySetResult(true);
+            Assert.Same(failure, await Assert.ThrowsAsync<ObjectDisposedException>(() => disposal.WaitAsync(Deadline)));
+        }
+        finally
+        {
+            resume.TrySetResult(true);
+            if (disposal is null) await peer.DisposeAsync();
+        }
+    }
+
     [Fact]
     public async Task Interactive_StepAndShutdownAreBounded()
     {
@@ -450,6 +540,9 @@ public sealed partial class GatewayFixtureProtocolTests
     }
 
     private static object SendParams(string nonce) => new { sessionKey = GatewayScenario.EmptySessionKey, message = "Synthetic prompt", idempotencyKey = nonce };
+    private static bool IsHealthResponse(JsonElement frame) =>
+        frame.GetProperty("type").GetString() == "res" &&
+        frame.TryGetProperty("payload", out var payload) && payload.TryGetProperty("durationMs", out _);
     private static bool IsChat(JsonElement frame, string state) =>
         frame.GetProperty("event").GetString() == "chat" && frame.GetProperty("payload").GetProperty("state").GetString() == state;
 
@@ -473,14 +566,16 @@ public sealed partial class GatewayFixtureProtocolTests
         private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonElement>> _pending = new();
         private readonly Channel<JsonElement> _events = Channel.CreateUnbounded<JsonElement>();
         private readonly SemaphoreSlim _send = new(1);
+        private Func<ClientWebSocket, JsonElement, Task>? _afterFrame;
         private Task _reader = Task.CompletedTask;
         private volatile bool _expectServerShutdown;
         public Task Closed => _reader;
         public void ExpectServerShutdown() => _expectServerShutdown = true;
 
-        public static async Task<FixturePeer> ConnectAsync(FixtureGatewayServer server, string token)
+        public static async Task<FixturePeer> ConnectAsync(FixtureGatewayServer server, string token,
+            Func<ClientWebSocket, JsonElement, Task>? afterFrame = null)
         {
-            var peer = new FixturePeer();
+            var peer = new FixturePeer { _afterFrame = afterFrame };
             await peer._socket.ConnectAsync(server.Endpoint, peer._lifetime.Token);
             peer._reader = peer.ReadAsync();
             var challenge = (await peer.ThroughAsync(e => e.GetProperty("event").GetString() == "connect.challenge"))[^1];
@@ -533,7 +628,12 @@ public sealed partial class GatewayFixtureProtocolTests
                     ValueWebSocketReceiveResult result;
                     do
                     {
-                        result = await _socket.ReceiveAsync(buffer.AsMemory(), _lifetime.Token);
+                        try
+                        {
+                            result = await _socket.ReceiveAsync(buffer.AsMemory(), _lifetime.Token);
+                        }
+                        // Abort disposes ClientWebSocket before ReceiveAsync checks cancellation.
+                        catch (ObjectDisposedException) when (_lifetime.IsCancellationRequested) { return; }
                         if (result.MessageType == WebSocketMessageType.Close) return;
                         message.Write(buffer, 0, result.Count);
                     } while (!result.EndOfMessage);
@@ -541,6 +641,7 @@ public sealed partial class GatewayFixtureProtocolTests
                     var frame = document.RootElement.Clone();
                     if (frame.GetProperty("type").GetString() == "event") _events.Writer.TryWrite(frame);
                     else if (frame.TryGetProperty("id", out var id) && _pending.TryGetValue(id.GetString()!, out var pending)) pending.TrySetResult(frame);
+                    if (_afterFrame is not null) await _afterFrame(_socket, frame);
                 }
             }
             catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
