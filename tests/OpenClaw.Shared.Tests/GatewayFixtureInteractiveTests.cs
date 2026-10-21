@@ -254,6 +254,31 @@ public sealed partial class GatewayFixtureProtocolTests
     [Theory]
     [InlineData(GatewayScenario.EmptySessionKey, "main")]
     [InlineData(GatewayScenario.OtherSessionKey, "research")]
+    public async Task Interactive_ScopedModelsUseLiveSessionOwnerAfterCreateAndDelete(string seedKey, string agentId)
+    {
+        var token = CreateToken();
+        await using var server = await StartInteractiveAsync(token);
+        await using var peer = await FixturePeer.ConnectAsync(server, token);
+        var create = await peer.RequestAsync("sessions.create", new { agentId });
+        var createdKey = create.GetProperty("key").GetString()!;
+
+        foreach (var sessionKey in new[] { createdKey, seedKey })
+        {
+            var models = await peer.RequestAsync("models.list", new { sessionKey, view = "configured" });
+            Assert.NotEmpty(models.GetProperty("models").EnumerateArray());
+
+            await peer.RequestAsync("sessions.delete", new { key = sessionKey, deleteTranscript = true });
+
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                peer.RequestAsync("models.list", new { sessionKey, view = "configured" }));
+            Assert.Contains("Unknown fixture session key", error.Message);
+        }
+        Assert.Empty(server.UnexpectedRequests);
+    }
+
+    [Theory]
+    [InlineData(GatewayScenario.EmptySessionKey, "main")]
+    [InlineData(GatewayScenario.OtherSessionKey, "research")]
     public async Task Interactive_LastCompletedForkExcludesUnfinishedToolTurn(string key, string agentId)
     {
         var token = CreateToken();
