@@ -65,6 +65,11 @@ public sealed class NativeSharedFlowTests(UIThreadFixture ui, ITestOutputHelper 
             var ready = Assert.IsType<AiReadyPage>(frame.Content);
             var choices = Find<StackPanel>(ready, "Choices");
             Assert.Equal(["Chat", "Channels", "Skills"], choices.Children.Cast<FrameworkElement>().Select(element => element.Tag));
+            AssertNoCompletionFooterActions(ready);
+            Assert.Null(ready.FindName("SkipButton"));
+            Assert.Null(ready.FindName("FinishButton"));
+            Assert.False(Find<InfoBar>(ready, "ErrorBar").IsOpen);
+            Assert.Same(Find<Button>(ready, "RecoveryButton"), Find<InfoBar>(ready, "ErrorBar").ActionButton);
             Assert.Empty(completed);
             Assert.Empty(registry.GetAll());
             Assert.Null(ready.FindName("NativeSummary"));
@@ -130,6 +135,60 @@ public sealed class NativeSharedFlowTests(UIThreadFixture ui, ITestOutputHelper 
         }, supported: false);
     }
 
+    [Fact]
+    public async Task CompletionFailure_ExposesOnlyErrorRecoveryAndReturnsThroughTheOwningSetupFlow()
+    {
+        await WithNativeAsync(async (_, frame, _, _, server, completed) =>
+        {
+            var ai = Assert.IsType<AiSetupPage>(frame.Content);
+            await WaitAsync(() => Find<ItemsControl>(ai, "CandidateChoices").IsEnabled &&
+                TestSupport.FindDescendants<SettingsCard>(Find<ItemsControl>(ai, "CandidateChoices")).Any(),
+                "verified completion candidate");
+            var candidate = Assert.Single(TestSupport.FindDescendants<SettingsCard>(
+                Find<ItemsControl>(ai, "CandidateChoices")));
+            TestSupport.InvokeSettingsCardAction(ai, candidate, "ChoiceAction_Click");
+            await WaitAsync(() => frame.Content is AiReadyPage { IsLoaded: true }, "ready chooser");
+            var ready = Assert.IsType<AiReadyPage>(frame.Content);
+            var error = Find<InfoBar>(ready, "ErrorBar");
+            var recovery = Find<Button>(ready, "RecoveryButton");
+            Assert.False(error.IsOpen);
+            AssertNoCompletionFooterActions(ready);
+            var verifications = server.Requests.Count(request => request.Method == "openclaw.setup.verify");
+            var choicePeer = FrameworkElementAutomationPeer.CreatePeerForElement(
+                Find<SetupActionCard>(ready, "ChatChoice"));
+            Assert.IsAssignableFrom<IInvokeProvider>(choicePeer.GetPattern(PatternInterface.Invoke)).Invoke();
+            await WaitAsync(() => error.IsOpen && recovery.IsEnabled, "visible completion failure recovery");
+
+            Assert.Same(recovery, error.ActionButton);
+            Assert.Empty(completed);
+            Assert.True(server.Requests.Count(request => request.Method == "openclaw.setup.verify") > verifications);
+            AssertNoCompletionFooterActions(ready);
+            Assert.Null(ready.FindName("SkipButton"));
+            Assert.Null(ready.FindName("FinishButton"));
+            Assert.All(Find<StackPanel>(ready, "Choices").Children,
+                element => Assert.True(Assert.IsAssignableFrom<Control>(element).IsEnabled));
+
+            Assert.IsAssignableFrom<IInvokeProvider>(
+                new ButtonAutomationPeer(recovery).GetPattern(PatternInterface.Invoke)).Invoke();
+            await WaitAsync(() => frame.Content is AiSetupPage { IsLoaded: true }, "recovery through AI owner");
+            Assert.Empty(completed);
+            Assert.NotSame(ready, frame.Content);
+        }, startupRegistrationAllowed: true,
+            applyStartup: (_, _) => Task.FromException(new IOException("Synthetic startup registration failure.")));
+    }
+
+    private static void AssertNoCompletionFooterActions(AiReadyPage page)
+    {
+        var root = Assert.IsType<Grid>(page.Content);
+        var progress = Find<SetupProgressIndicator>(page, "FlowProgress");
+        var footerContent = root.Children.OfType<FrameworkElement>()
+            .Where(element => Grid.GetRow(element) == Grid.GetRow(progress)).ToArray();
+        Assert.Empty(footerContent.OfType<Button>());
+        Assert.Empty(footerContent.SelectMany(element => TestSupport.FindDescendants<Button>(element)));
+        Assert.Empty(footerContent.OfType<SettingsCard>());
+        Assert.Empty(footerContent.SelectMany(element => TestSupport.FindDescendants<SettingsCard>(element)));
+    }
+
     [Theory]
     [InlineData(false, false, false)]
     [InlineData(false, true, false)]
@@ -161,8 +220,7 @@ public sealed class NativeSharedFlowTests(UIThreadFixture ui, ITestOutputHelper 
             await WaitAsync(() => completed.Count == 1, "startup choice applied");
             Assert.Equal(failOnce ? [selectedStartup, selectedStartup] : new[] { selectedStartup }, applications);
             Assert.Equal("native-ui", registry.ActiveGatewayId);
-            var data = Assert.IsType<string>(typeof(SetupWindow).GetProperty("DataDir",
-                BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window));
+            var data = window.DataDir;
             using var saved = JsonDocument.Parse(File.ReadAllText(Path.Combine(data, "settings.json")));
             Assert.Equal(selectedStartup, saved.RootElement.GetProperty("AutoStart").GetBoolean());
         }, isolated: isolated, startupRegistrationAllowed: true,
@@ -273,7 +331,7 @@ public sealed class NativeSharedFlowTests(UIThreadFixture ui, ITestOutputHelper 
             await OnboardingNativeProof.NextCompositionAsync(TimeSpan.FromMilliseconds(400));
             Invoke(Assert.Single(TestSupport.FindDescendants<Button>(recovery), button => (string?)button.Tag == "CancelSetup"));
             await WaitAsync(() => frame.Content is CapabilitiesPage { IsLoaded: true }, "native cancel returns to access");
-            Assert.Null(typeof(SetupWindow).GetProperty("NativeSetupSession", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window));
+            Assert.Null(window.NativeSetupSession);
             Assert.False(runtime.Running);
             Assert.Empty(completed);
             Assert.Empty(registry.GetAll());
@@ -430,8 +488,7 @@ public sealed class NativeSharedFlowTests(UIThreadFixture ui, ITestOutputHelper 
                     publishNativeCompletion: (choice, _) => { completed.Add(choice); return Task.CompletedTask; }));
                 window.SelectGatewayRoute(SetupGatewayRoute.Native);
                 if (beforeAi is null)
-                    typeof(SetupWindow).GetMethod("NavigateToNativeAiSetup", BindingFlags.NonPublic | BindingFlags.Instance)!
-                        .Invoke(window, [native]);
+                    window.NavigateToNativeAiSetup(native);
                 else
                     window.NavigateToCapabilities();
                 window.Activate();
@@ -442,8 +499,7 @@ public sealed class NativeSharedFlowTests(UIThreadFixture ui, ITestOutputHelper 
                 if (beforeAi is not null)
                 {
                     await beforeAi(window, frame);
-                    typeof(SetupWindow).GetMethod("NavigateToNativeAiSetup", BindingFlags.NonPublic | BindingFlags.Instance)!
-                        .Invoke(window, [native]);
+                    window.NavigateToNativeAiSetup(native);
                 }
                 await WaitAsync(() => frame.Content is AiSetupPage { IsLoaded: true }, "shared native AI mounted");
                 await assertion(window, frame, registry, runtime, server, completed);
@@ -521,7 +577,7 @@ public sealed class NativeSharedFlowTests(UIThreadFixture ui, ITestOutputHelper 
             Assert.Single(server.Requests, request => request.Method == "wizard.next");
             Assert.Single(server.Requests, request => request.Method == "wizard.cancel");
             Assert.Equal(0, runtime.Disposals);
-            Assert.NotNull(typeof(SetupWindow).GetProperty("NativeSetupSession", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window));
+            Assert.NotNull(window.NativeSetupSession);
             Assert.Empty(registry.GetAll());
             Assert.Empty(completed);
         }, supported: false, wizardReply: (method, _) => method == "wizard.cancel"
