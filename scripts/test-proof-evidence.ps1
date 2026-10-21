@@ -557,6 +557,220 @@ try {
         $checks++
         $runnerInvocations++
     }
+    # The real E2E entry point runs in a child shell with only dotnet replaced.
+    # Fixed sibling artifacts model earlier attempts and workflow provenance.
+    $e2eHarness = Join-Path $root 'e2e-runner-harness.ps1'
+    Set-Content -LiteralPath $e2eHarness @'
+param([string]$Repo, [string]$Case, [string]$Name, [int]$ProofIndex, [string]$Results)
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+Set-Location $Results
+if ($Case -eq 'psdrive-location') {
+    New-PSDrive -Name E2eRepo -PSProvider FileSystem -Root $Results | Out-Null
+    Set-Location E2eRepo:\
+} elseif ($Case -eq 'provider-location') {
+    Set-Location "Microsoft.PowerShell.Core\FileSystem::$Results"
+}
+if ($Case -in @('location-mismatch', 'psdrive-location', 'provider-location')) {
+    $processDirectory = Join-Path $Results 'process-cwd'
+    New-Item -ItemType Directory -Path $processDirectory | Out-Null
+    [Environment]::CurrentDirectory = $processDirectory
+} else {
+    [Environment]::CurrentDirectory = $Results
+}
+$filter = switch ($Name) {
+    'setup-connect' { 'FullyQualifiedName~OpenClaw.E2ETests.Setup.SetupAndConnectTests|FullyQualifiedName~OpenClaw.E2ETests.Setup.MxcSetupAndConnectTests|FullyQualifiedName~OpenClaw.E2ETests.Setup.MirroredWslPortLeaseTests|FullyQualifiedName~OpenClaw.E2ETests.Setup.SshOwnershipAdversarialProofTests|FullyQualifiedName~OpenClaw.E2ETests.Setup.TrayExecutableResolutionTests' }
+    'revocation-recovery' { 'FullyQualifiedName~OpenClaw.E2ETests.Setup.RevocationAndRecoveryTests' }
+    'network-recovery' { 'FullyQualifiedName~OpenClaw.E2ETests.Setup.NetworkRecoveryTests' }
+}
+$proofNames = @(
+    'RealGateway_SystemRun_ExecutesThroughWindowsNodeMxcSandbox',
+    'RealGateway_SystemRun_BlocksWritesToTrayDataDirectoryInMxcSandbox',
+    'UnownedListenerIsRejectedThenOwnedTunnelRecoversWithoutRepairing',
+    'InitialHandshakeListenerReplacementWithholdsCredentialFrame',
+    'InitialNodeHandshakeListenerReplacementWithholdsCredentialFrame'
+)
+$environment = @{
+    OPENCLAW_RUN_E2E = '1'
+    OPENCLAW_RUN_MXC_E2E = 'inherited-mxc-gate'
+    OPENCLAW_RUN_OLLAMA_E2E = 'inherited-ollama-gate'
+    OPENCLAW_E2E_GATEWAY_VERSION = '2026.9.9'
+    OPENCLAW_REPO_ROOT = $Results
+    OPENCLAW_TRAY_DATA_DIR = (Join-Path $Results 'tray-data')
+}
+foreach ($entry in $environment.GetEnumerator()) { [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value) }
+$artifactRoot = Join-Path $Results 'TestResults\E2E'
+New-Item -ItemType Directory -Path $artifactRoot | Out-Null
+$oldReport = Join-Path $artifactRoot "OpenClaw.E2ETests.$Name.trx"
+$baseline = Join-Path $artifactRoot 'gateway-release.json'
+Set-Content -LiteralPath $baseline '{"version":"2026.9.9"}'
+$state = @{ calls = 0; directories = [Collections.Generic.List[string]]::new() }
+function global:dotnet {
+    $state.calls++
+    $values = @($args)
+    $directory = $values[[Array]::IndexOf($values, '--results-directory') + 1]
+    $expected = @('test', 'tests/OpenClaw.E2ETests', '--no-build', '-c', 'Debug', '-r', 'win-x64',
+        '--verbosity', 'normal', '--results-directory', $directory,
+        '--logger', "trx;LogFileName=OpenClaw.E2ETests.$Name.trx", '--logger', 'console;verbosity=detailed',
+        '--filter', $filter)
+    if (($values | ConvertTo-Json -Compress) -cne ($expected | ConvertTo-Json -Compress)) {
+        throw 'E2E project/filter/build/logger arguments changed.'
+    }
+    foreach ($entry in $environment.GetEnumerator()) {
+        if ([Environment]::GetEnvironmentVariable($entry.Key) -cne $entry.Value) { throw "E2E changed inherited environment: $($entry.Key)" }
+    }
+    if ((Split-Path -Parent $directory) -cne $artifactRoot -or
+        -not (Test-Path -LiteralPath $directory -PathType Container) -or
+        @(Get-ChildItem -LiteralPath $directory -Force).Count -ne 0 -or
+        $directory -in $state.directories) { throw 'E2E invocation directory is not fresh, unique, and under the uploaded artifact root.' }
+    $state.directories.Add($directory)
+    Write-Host "E2E controlled launch: $($state.calls)"
+    $global:LASTEXITCODE = if ($Case -eq 'nonzero') { 9 } else { 0 }
+    $report = Join-Path $directory "OpenClaw.E2ETests.$Name.trx"
+    if ($Case -in @('missing', 'nonzero')) { return }
+    if ($Case -eq 'malformed') { Set-Content $report '<bad'; return }
+    $passed = if ($Case -in @('zero', 'all-skipped')) { 0 } elseif ($Name -eq 'setup-connect') { 6 } else { 1 }
+    $skipped = if ($Case -in @('mixed', 'all-skipped')) { 1 } else { 0 }
+    if ($Case -like 'mxc-skip-*' -or $Case -like 'ssh-*') { $passed--; $skipped++ }
+    $failed = if ($Case -eq 'failed') { 1 } else { 0 }
+    $time = if ($Case -eq 'stale') { [DateTime]::UtcNow.AddDays(-1) } else { [DateTime]::UtcNow }
+    Write-Trx $report $passed $skipped $failed $time
+    [xml]$trx = Get-Content $report -Raw
+    $ns = [Xml.XmlNamespaceManager]::new($trx.NameTable)
+    $ns.AddNamespace('t', $trx.DocumentElement.NamespaceURI)
+    $rows = @($trx.SelectNodes('/t:TestRun/t:Results/t:UnitTestResult', $ns))
+    for ($index = 0; $index -lt $rows.Count; $index++) {
+        $testName = if ($Name -eq 'setup-connect' -and $index -lt 5) { $proofNames[$index] } else { "OrdinaryTest$index" }
+        $rows[$index].SetAttribute('testName', "OpenClaw.E2ETests.Setup.Fixture.$testName")
+    }
+    if ($Case -eq 'missing-proof') { $rows[$ProofIndex].SetAttribute('testName', 'UnrelatedPassingTest') }
+    if ($Case -like 'mxc-skip-*' -or $Case -like 'ssh-*') {
+        $rows[$passed].SetAttribute('outcome', 'Passed')
+        $rows[$ProofIndex].SetAttribute('outcome', 'NotExecuted')
+        if ($Case -in @('mxc-skip-message', 'mxc-skip-stdout')) {
+            $output = $trx.CreateElement('Output', $ns.LookupNamespace('t'))
+            if ($Case -eq 'mxc-skip-message') {
+                $errorInfo = $trx.CreateElement('ErrorInfo', $ns.LookupNamespace('t'))
+                $message = $trx.CreateElement('Message', $ns.LookupNamespace('t'))
+                $message.InnerText = 'controlled MXC host unavailable'
+                [void]$errorInfo.AppendChild($message)
+                [void]$output.AppendChild($errorInfo)
+            }
+            $stdout = $trx.CreateElement('StdOut', $ns.LookupNamespace('t'))
+            $stdout.InnerText = 'controlled MXC stdout reason'
+            [void]$output.AppendChild($stdout)
+            [void]$rows[$ProofIndex].AppendChild($output)
+        }
+    }
+    if ($Case -eq 'inconsistent') { $trx.TestRun.ResultSummary.Counters.total = '99' }
+    if ($Case -eq 'duplicate') { foreach ($row in $rows) { $row.SetAttribute('executionId', 'duplicate') } }
+    if ($Case -eq 'ssh-duplicate-skip') {
+        $rows[$ProofIndex].SetAttribute('outcome', 'Passed')
+        $rows[-1].SetAttribute('testName', $rows[$ProofIndex].GetAttribute('testName'))
+        $rows[-1].SetAttribute('outcome', 'NotExecuted')
+    }
+    if ($Case -eq 'grouped') {
+        $container = $trx.SelectSingleNode('/t:TestRun/t:Results', $ns)
+        $parent = $trx.CreateElement('UnitTestResult', $ns.LookupNamespace('t'))
+        $parent.SetAttribute('testName', 'Grouped tests')
+        $parent.SetAttribute('outcome', 'Passed')
+        $inner = $trx.CreateElement('InnerResults', $ns.LookupNamespace('t'))
+        foreach ($row in $rows) { [void]$inner.AppendChild($row) }
+        [void]$parent.AppendChild($inner)
+        [void]$container.AppendChild($parent)
+    }
+    $trx.Save($report)
+    if ($Case -eq 'stale-file') { (Get-Item $report).LastWriteTimeUtc = [DateTime]::UtcNow.AddDays(-1) }
+}
+'@
+    Add-Content -LiteralPath $e2eHarness ("function Write-Trx {`n" + $writer + "`n}")
+    Add-Content -LiteralPath $e2eHarness @'
+Write-Trx $oldReport 1 0 0 ([DateTime]::UtcNow.AddDays(-1))
+$oldHash = (Get-FileHash $oldReport).Hash
+try {
+    $iterations = if ($Case -eq 'passed') { 2 } else { 1 }
+    for ($iteration = 0; $iteration -lt $iterations; $iteration++) {
+        & (Join-Path $Repo 'scripts\Invoke-CiE2e.ps1') -Name $Name -Filter $filter
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    }
+} finally {
+    if ((Get-FileHash $oldReport).Hash -cne $oldHash -or
+        (Get-Content $baseline -Raw).Trim() -cne '{"version":"2026.9.9"}') { throw 'E2E changed sibling report/provenance artifacts.' }
+}
+'@
+    foreach ($name in @('setup-connect', 'revocation-recovery', 'network-recovery')) {
+        $e2eCases = @('psdrive-location', 'provider-location', 'location-mismatch', 'passed', 'missing', 'malformed', 'zero', 'all-skipped', 'mixed', 'nonzero', 'stale', 'stale-file', 'inconsistent', 'failed')
+        if ($name -eq 'setup-connect') {
+            $e2eCases += @('duplicate', 'grouped', 'missing-proof', 'mxc-skip-message', 'mxc-skip-stdout', 'mxc-skip-empty', 'ssh-skip', 'ssh-duplicate-skip')
+        }
+        foreach ($case in $e2eCases) {
+            $proofIndices = switch ($case) {
+                'missing-proof' { 0..4 }
+                { $_ -like 'mxc-skip-*' } { 0..1 }
+                { $_ -like 'ssh-*' } { 2..4 }
+                default { 0 }
+            }
+            foreach ($proofIndex in $proofIndices) {
+                $e2eResults = Join-Path $root ([guid]::NewGuid().ToString('N'))
+                New-Item -ItemType Directory -Path $e2eResults | Out-Null
+                $savedPreference = $ErrorActionPreference
+                try {
+                    $ErrorActionPreference = 'Continue'
+                    $output = & $shell -NoProfile -ExecutionPolicy Bypass -File $e2eHarness -Repo $RepoRoot -Name $name -Case $case -ProofIndex $proofIndex -Results $e2eResults 2>&1
+                    $exit = $LASTEXITCODE
+                } finally { $ErrorActionPreference = $savedPreference }
+                $text = $output -join "`n"
+                $expectedPass = $case -in @('psdrive-location', 'provider-location', 'location-mismatch', 'passed', 'mixed', 'grouped') -or $case -like 'mxc-skip-*'
+                if (($exit -eq 0) -ne $expectedPass) { throw "e2e/$name/$case/$proofIndex unexpected exit ${exit}: $text" }
+                $expectedCalls = if ($case -eq 'passed') { 2 } else { 1 }
+                if ([regex]::Matches($text, 'E2E controlled launch:').Count -ne $expectedCalls) { throw "E2E did not execute the expected command: $text" }
+                $diagnostics = [regex]::Matches($text, "(?m)^E2E TRX \($name\): (.+)\r?$")
+                if ($diagnostics.Count -ne $expectedCalls) { throw "E2E did not identify the shard and report on every path: $text" }
+                for ($index = 0; $index -lt $diagnostics.Count; $index++) {
+                    $path = $diagnostics[$index].Groups[1].Value.TrimEnd("`r")
+                    if ([IO.Path]::GetFileName($path) -cne "OpenClaw.E2ETests.$name.trx" -or
+                        (Split-Path -Parent (Split-Path -Parent $path)) -cne (Join-Path $e2eResults 'TestResults\E2E') -or
+                        $diagnostics[$index].Index -gt $text.IndexOf("E2E controlled launch: $($index + 1)", [StringComparison]::Ordinal) -or
+                        ($case -notin @('missing', 'nonzero') -and -not (Test-Path -LiteralPath $path -PathType Leaf))) {
+                        throw "E2E diagnostic does not name the actual invocation report before execution: $text"
+                    }
+                }
+                $rejection = switch ($case) {
+                    'missing' { 'missing' }
+                    'malformed' { 'Load|XML|end of file|unexpected' }
+                    { $_ -in @('zero', 'all-skipped') } { 'zero' }
+                    { $_ -in @('stale', 'stale-file') } { 'stale' }
+                    'inconsistent' { 'counters disagree' }
+                    'duplicate' { 'identities' }
+                    'failed' { 'failed tests' }
+                    'missing-proof' { 'did not report the (MXC|SSH ownership) proof test' }
+                    { $_ -like 'ssh-*' } { 'this proof must pass and may not skip' }
+                }
+                if ($rejection -and $text -notmatch $rejection) { throw "E2E rejected for the wrong reason (wanted $rejection): $text" }
+                if ($case -eq 'nonzero' -and $exit -ne 9) { throw "E2E did not preserve dotnet exit code 9: $text" }
+                if ($expectedPass) {
+                    $executed = if ($name -eq 'setup-connect') { 6 } else { 1 }
+                    $skipped = if ($case -eq 'mixed' -or $case -like 'mxc-skip-*') { 1 } else { 0 }
+                    if ($case -like 'mxc-skip-*') { $executed-- }
+                    $counts = '"discovered":' + ($executed + $skipped) + ',"executed":' + $executed + ',"passed":' + $executed + ',"failed":0,"skipped":' + $skipped
+                    if ([regex]::Matches($text, [regex]::Escape($counts)).Count -ne $expectedCalls) { throw "E2E omitted admitted counts: $text" }
+                    if ($name -eq 'setup-connect' -and
+                        ([regex]::Matches($text, 'SSH ownership E2E proof passed:').Count -ne 3 * $expectedCalls -or
+                         [regex]::Matches($text, 'MXC E2E proof passed:').Count -ne (2 - [int]($case -like 'mxc-skip-*')) * $expectedCalls)) {
+                        throw "E2E did not enforce every named proof: $text"
+                    }
+                    $reason = switch ($case) {
+                        'mxc-skip-message' { 'controlled MXC host unavailable' }
+                        'mxc-skip-stdout' { 'controlled MXC stdout reason' }
+                        'mxc-skip-empty' { 'skip reason was not present in the trx output' }
+                    }
+                    if ($reason -and $text -notmatch "MXC E2E proof skipped: .+; $reason") { throw "MXC skip lost its reason: $text" }
+                } elseif ($text -match 'E2E test results') { throw "Rejected E2E invocation printed admitted results: $text" }
+                $checks++
+                $runnerInvocations++
+            }
+        }
+    }
     Write-Host "Proof result/evidence regressions passed: $checks checks (including $runnerInvocations controlled runner invocations)."
 } finally {
     if (Test-Path $sourceProbe) { Remove-Item -LiteralPath $sourceProbe -Force }

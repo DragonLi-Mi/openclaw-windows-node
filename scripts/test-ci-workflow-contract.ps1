@@ -692,8 +692,8 @@ foreach ($proofName in @(
         -Message "E2E runner lost proof assertion '$proofName'."
 }
 foreach ($skipReasonToken in @(
-        '$mxcProof.SelectSingleNode("Output/ErrorInfo/Message")',
-        '$mxcProof.SelectSingleNode("Output/StdOut")',
+        '$mxcProof.SelectSingleNode("t:Output/t:ErrorInfo/t:Message", $ns)',
+        '$mxcProof.SelectSingleNode("t:Output/t:StdOut", $ns)',
         '$null -ne $_'
     )) {
     Assert-Contains `
