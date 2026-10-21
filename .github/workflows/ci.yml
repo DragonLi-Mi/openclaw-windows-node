@@ -1,5 +1,5 @@
 name: Build and Test
-run-name: Pinned x64 UI crash diagnostic
+run-name: Pinned x64 bootstrap diagnostic
 
 # Temporary diagnostic branch only. Never merge this workflow into a product branch.
 on:
@@ -16,13 +16,15 @@ jobs:
   ui-crash-diagnostic:
     if: github.repository == 'openclaw/openclaw-windows-node' && github.ref == 'refs/heads/bkudiess-hosted-ui-crash-diagnostics'
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 40
     defaults:
       run:
         shell: pwsh
     env:
-      SOURCE_SHA: a930e7340fed94b6b141845103a37c31da9da78c
-      SOURCE_TREE: cec4d338093fed15bd2d69c303143961cbc5183a
+      SOURCE_SHA: 28db1917457f41f947a18f052fc4b7bd18a07267
+      SOURCE_TREE: 9678154ee56469aa43cb025f449e8568710feb85
+      BASE_FIXTURE_BLOB: d60a264d76ee4005517420366ddea8dfdcf3b145
+      DIAGNOSTIC_SOURCE_TREE: 425519e640b688c2e4638417958dcfbc1f8a7c8c
       WORKFLOW_SHA: ${{ github.workflow_sha }}
       WORKFLOW_REF: ${{ github.workflow_ref }}
       OPENCLAW_REPO_ROOT: ${{ github.workspace }}
@@ -34,14 +36,14 @@ jobs:
       GitVersion_NoFetchEnabled: 'true'
 
     steps:
-    - name: Checkout exact historical source
+    - name: Checkout exact failed bootstrap source
       uses: actions/checkout@v7
       with:
-        ref: a930e7340fed94b6b141845103a37c31da9da78c
+        ref: 28db1917457f41f947a18f052fc4b7bd18a07267
         fetch-depth: 0
         persist-credentials: false
 
-    - name: Verify workflow and source identities
+    - name: Verify base and apply only the diagnostic fixture
       timeout-minutes: 2
       run: |
         $ErrorActionPreference = 'Stop'
@@ -60,6 +62,23 @@ jobs:
         if ($LASTEXITCODE -ne 0) { throw 'Workflow file identity unavailable.' }
         $output = Join-Path $env:GITHUB_WORKSPACE 'DiagnosticEvidence'
         New-Item -ItemType Directory -Path $output | Out-Null
+        $fixture = 'tests/OpenClaw.Tray.UITests/UIThreadFixture.cs'
+        $baseFixture = git rev-parse "HEAD:$fixture"
+        if ($LASTEXITCODE -ne 0 -or $baseFixture -cne $env:BASE_FIXTURE_BLOB) { throw 'Base fixture mismatch.' }
+        $patchedFixture = git rev-parse "$($env:WORKFLOW_SHA):$fixture"
+        if ($LASTEXITCODE -ne 0 -or $patchedFixture -ceq $baseFixture) { throw 'Diagnostic fixture is missing.' }
+        git restore --source=$env:WORKFLOW_SHA --worktree -- $fixture
+        if ($LASTEXITCODE -ne 0) { throw 'Could not apply the sole authorized fixture patch.' }
+        git add -- $fixture
+        if ($LASTEXITCODE -ne 0) { throw 'Could not index diagnostic fixture.' }
+        $paths = @(git diff --cached --name-only)
+        if ($LASTEXITCODE -ne 0 -or $paths.Count -ne 1 -or $paths[0] -cne $fixture) {
+          throw 'Unexpected instrumented-source delta.'
+        }
+        $diagnosticTree = git write-tree
+        if ($LASTEXITCODE -ne 0 -or $diagnosticTree -cne $env:DIAGNOSTIC_SOURCE_TREE) { throw 'Diagnostic source tree mismatch.' }
+        git diff --cached --binary -- $fixture | Set-Content (Join-Path $output 'fixture.patch')
+        if ($LASTEXITCODE -ne 0) { throw 'Diagnostic patch capture failed.' }
         [ordered]@{
           runId = $env:GITHUB_RUN_ID
           attempt = $env:GITHUB_RUN_ATTEMPT
@@ -70,12 +89,17 @@ jobs:
           dispatchRef = $env:GITHUB_REF
           sourceSha = $head
           sourceTree = $tree
+          baseFixtureBlob = $baseFixture
+          diagnosticFixtureBlob = $patchedFixture
+          diagnosticSourceTree = $diagnosticTree
+          diagnosticPatchSha256 = (Get-FileHash (Join-Path $output 'fixture.patch') -Algorithm SHA256).Hash
+          instrumented = $true
           runnerOS = $env:RUNNER_OS
           runnerArch = $env:RUNNER_ARCH
           imageOS = $env:ImageOS
           imageVersion = $env:ImageVersion
           osVersion = [Environment]::OSVersion.VersionString
-          privacy = 'Only projected metadata, output-stripped TRX, sequence, and allowlisted diagnostic excerpts are uploaded. No dumps.'
+          privacy = 'Only projected metadata, output-stripped TRX, sequence, reviewed fixture patch, fixed startup markers and allowlisted diagnostic excerpts are uploaded. No dumps.'
         } | ConvertTo-Json | Set-Content (Join-Path $output 'identity.json')
         Get-Content (Join-Path $output 'identity.json')
         if ($env:RUNNER_ARCH -cne 'X64') { throw 'An x64 host is required.' }
@@ -93,7 +117,7 @@ jobs:
         dotnet restore tests\OpenClaw.Tray.UITests -r win-x64
         if ($LASTEXITCODE -ne 0) { throw "UI restore failed: $LASTEXITCODE" }
 
-    - name: Build pinned UI project
+    - name: Build instrumented pinned UI project
       timeout-minutes: 10
       run: |
         dotnet build tests\OpenClaw.Tray.UITests -c Debug -r win-x64 --no-restore
@@ -122,8 +146,34 @@ jobs:
         [ordered]@{ version = $version; url = $url; exitCode = $LASTEXITCODE } |
           ConvertTo-Json | Set-Content DiagnosticEvidence\runtime-install.json
 
-    - name: Run bounded diagnostics and admit each fresh report
-      timeout-minutes: 25
+    - name: Inventory current-user WindowsAppRuntime registration
+      shell: powershell
+      timeout-minutes: 2
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $packages = @()
+        $queryError = $null
+        try {
+          $packages = @(Get-AppxPackage -Name 'Microsoft.WindowsAppRuntime*' -ErrorAction Stop |
+            Select-Object Name,@{n='Version';e={$_.Version.ToString()}},
+              @{n='Architecture';e={$_.Architecture.ToString()}},PackageFullName,
+              @{n='Status';e={$_.Status.ToString()}},IsFramework)
+        } catch {
+          $queryError = [ordered]@{
+            exceptionType = $_.Exception.GetType().FullName
+            errorId = $_.FullyQualifiedErrorId
+            hresult = $_.Exception.HResult
+          }
+        }
+        [ordered]@{
+          scope = 'Current user only; Microsoft.WindowsAppRuntime*'
+          status = if ($null -ne $queryError) { 'query-failed' } elseif ($packages.Count -eq 0) { 'none-registered' } else { 'observed' }
+          queryError = $queryError
+          packages = $packages
+        } | ConvertTo-Json -Depth 6 | Set-Content DiagnosticEvidence\package-registration.json
+
+    - name: Run one bounded bootstrap diagnostic
+      timeout-minutes: 10
       run: |
         Set-StrictMode -Version Latest
         $ErrorActionPreference = 'Stop'
@@ -139,9 +189,30 @@ jobs:
           ConvertTo-Json -InputObject $Value -Depth 12 | Set-Content -LiteralPath $Path
         }
 
+        function Get-SafeError($ErrorRecord, [string]$Operation, [int]$ProcessId = 0) {
+          $exception = $ErrorRecord.Exception
+          while ($null -ne $exception.InnerException) { $exception = $exception.InnerException }
+          [ordered]@{
+            operation = $Operation
+            pid = $ProcessId
+            exceptionType = $exception.GetType().FullName
+            hresult = $exception.HResult
+            nativeErrorCode = if ($exception -is [ComponentModel.Win32Exception]) { $exception.NativeErrorCode } else { $null }
+            errorId = $ErrorRecord.FullyQualifiedErrorId
+            observedUtc = [DateTime]::UtcNow.ToString('o')
+          }
+        }
+
         function Export-SafeReports($Invocation, $Destination) {
+          $markerPattern = '(?m)^\s*(startup-diagnostic utc=\d{4}-\d{2}-\d{2}T[\d:.]+Z; pid=\d+; managedTid=\d+; nativeTid=\d+; phase=(?:ready-wait-before|ready-wait-after|ready-wait-timeout|com-wrappers-before|com-wrappers-after|bootstrap-before|bootstrap-after); timeoutSeconds=\d+; majorMinor=\d+; versionTag=)\s*$'
+          $markers = [Collections.Generic.HashSet[string]]::new()
           if (Test-Path -LiteralPath $Invocation.report) {
             [xml]$trx = Get-Content -LiteralPath $Invocation.report -Raw
+            foreach ($output in @($trx.SelectNodes("//*[local-name()='StdOut' or local-name()='StdErr']"))) {
+              foreach ($match in [regex]::Matches($output.InnerText, $markerPattern)) {
+                $null = $markers.Add($match.Groups[1].Value)
+              }
+            }
             # Preserve result identities/counters, never test output, transcripts or attachment paths.
             foreach ($node in @($trx.SelectNodes("//*[local-name()='Output' or local-name()='RunInfos' or local-name()='ResultFiles' or local-name()='CollectorDataEntries']"))) {
               $null = $node.ParentNode.RemoveChild($node)
@@ -161,7 +232,9 @@ jobs:
           $console = [Collections.Generic.List[string]]::new()
           foreach ($file in @('stdout.log','stderr.log')) {
             foreach ($line in Get-Content -LiteralPath (Join-Path $Invocation.directory $file)) {
-              if ($line -match '^\s*(Passed|Failed|Skipped)\s+(OpenClaw\.Tray\.UITests\.[A-Za-z0-9_.]+)') {
+              if ($line -cmatch $markerPattern) {
+                $null = $markers.Add($Matches[1])
+              } elseif ($line -match '^\s*(Passed|Failed|Skipped)\s+(OpenClaw\.Tray\.UITests\.[A-Za-z0-9_.]+)') {
                 $console.Add("$($Matches[1]) $($Matches[2])")
               } elseif ($line -match 'Test host process crashed') {
                 $console.Add('Test host process crashed')
@@ -169,10 +242,13 @@ jobs:
                 $console.Add($Matches[0])
               } elseif ($line -match '^\s*(Total tests|Passed|Failed|Skipped):\s*(\d+|Unknown)') {
                 $console.Add($Matches[0].Trim())
+              } elseif ($line -match 'specified inactivity time of (\d+) minutes has elapsed') {
+                $console.Add("Blame inactivity timeout elapsed: $($Matches[1]) minutes")
               }
             }
           }
           $console | Set-Content (Join-Path $Destination 'console-excerpt.txt')
+          @($markers | Sort-Object) | Set-Content (Join-Path $Destination 'startup-markers.txt')
           $diagnostics = [Collections.Generic.List[object]]::new()
           foreach ($file in Get-ChildItem -LiteralPath $Invocation.directory -Filter 'vstest*.log') {
             $lineNumber = 0
@@ -187,7 +263,7 @@ jobs:
                 'BlameCollector\.EventsTestCaseEnd' { 'case-end'; break }
                 'Blame Collector: Session End' { 'session-end'; break }
                 'Test host process crashed' { 'host-crashed'; break }
-                'inactivity.*timer.*fired|CollectDumpAndAbortTesthost' { 'hang-collector'; break }
+                'specified inactivity time.*elapsed|inactivity.*timer.*fired' { 'inactivity-timeout'; break }
                 default { $null }
               }
               if ($null -ne $kind) {
@@ -212,7 +288,7 @@ jobs:
             LogName = 'Application'; Id = 1000,1001; StartTime = $Started; EndTime = $Finished
           } -ErrorAction SilentlyContinue -ErrorVariable errors)
           $failures = @($errors | Where-Object { $_.FullyQualifiedErrorId -notlike 'NoMatchingEventsFound*' } |
-            ForEach-Object { $_.FullyQualifiedErrorId })
+            ForEach-Object { Get-SafeError $_ 'query-crash-events' })
           $records = [Collections.Generic.List[object]]::new()
           $hostIds = @($Processes.Values | Where-Object role -eq 'testhost' | ForEach-Object id)
           foreach ($event in $events) {
@@ -271,14 +347,14 @@ jobs:
           $stderr = $process.StandardError.ReadToEndAsync()
           $handles = @{}
           $processes = @{}
-          $issues = [Collections.Generic.HashSet[string]]::new()
+          $issues = [Collections.Generic.List[object]]::new()
           $timedOut = $false
           $leftovers = $false
           $monitorFailed = $false
           $modules = @{}
           try {
             while (-not $process.HasExited) {
-              $candidates = @(Get-CimInstance Win32_Process -Filter "Name='dotnet.exe' OR Name='testhost.exe' OR Name='datacollector.exe'")
+              $candidates = @(Get-CimInstance Win32_Process -Filter "Name='dotnet.exe' OR Name='testhost.exe' OR Name='datacollector.exe'" -OperationTimeoutSec 5 -ErrorAction Stop)
               $changed = $true
               while ($changed) {
                 $changed = $false
@@ -297,7 +373,7 @@ jobs:
                     }
                     $changed = $true
                   } catch {
-                    $null = $issues.Add("Process observation unavailable for PID ${childId}: $($_.Exception.GetType().Name)")
+                    $issues.Add((Get-SafeError $_ 'observe-owned-process' $childId))
                   }
                 }
               }
@@ -310,8 +386,9 @@ jobs:
                   }
                 } elseif ($processes[$childId].role -eq 'testhost') {
                   try {
+                    $handle.Refresh()
                     foreach ($module in $handle.Modules) {
-                      if ($module.ModuleName -match '^(Microsoft\.UI\.|Microsoft\.WindowsAppRuntime|WindowsAppRuntime|CoreMessaging|coreclr|clrjit|hostfxr|testhost|OpenClaw\.Tray)') {
+                      if ($module.ModuleName -match '^(Microsoft\.UI\.|Microsoft\.WindowsAppRuntime|WindowsAppRuntime|Microsoft\.Windows\.ApplicationModel|WinRT\.Runtime|CoreMessaging|coreclr|clrjit|hostfxr|testhost|OpenClaw\.Tray)') {
                         $key = "$childId/$($module.ModuleName)"
                         if (-not $modules.ContainsKey($key)) {
                           $modules[$key] = [ordered]@{
@@ -322,7 +399,7 @@ jobs:
                       }
                     }
                   } catch {
-                    $null = $issues.Add("Module observation unavailable for PID ${childId}: $($_.Exception.GetType().Name)")
+                    $issues.Add((Get-SafeError $_ 'refresh-and-read-modules' $childId))
                   }
                 }
               }
@@ -334,44 +411,73 @@ jobs:
             }
           } catch {
             $monitorFailed = $true
-            $null = $issues.Add("Process monitor failed: $($_.Exception.GetType().Name)")
+            $issues.Add((Get-SafeError $_ 'query-or-monitor-owned-processes'))
           } finally {
-            $graceDeadline = [DateTime]::UtcNow.AddSeconds(5)
-            while (-not $timedOut -and -not $monitorFailed -and
-                @($handles.Values | Where-Object { -not $_.HasExited }).Count -gt 0 -and
-                [DateTime]::UtcNow -lt $graceDeadline) {
-              Start-Sleep -Milliseconds 200
-            }
             foreach ($childId in @($handles.Keys)) {
               $handle = $handles[$childId]
-              if (-not $handle.HasExited) {
-                $leftovers = $true
-                Stop-Process -Id $childId -Force -ErrorAction Stop
-                $null = $handle.WaitForExit(10000)
-              }
-              if ($handle.HasExited) {
+              try {
+                if (-not $timedOut -and -not $monitorFailed -and -not $handle.HasExited) {
+                  $null = $handle.WaitForExit(5000)
+                }
+                if (-not $handle.HasExited) {
+                  $leftovers = $true
+                  Stop-Process -Id $childId -Force -ErrorAction Stop
+                  if (-not $handle.WaitForExit(10000)) { throw 'Owned child did not exit after termination.' }
+                }
                 $processes[$childId].exitCode = $handle.ExitCode
                 $processes[$childId].exitObservedUtc = [DateTime]::UtcNow.ToString('o')
+              } catch {
+                $monitorFailed = $true
+                $issues.Add((Get-SafeError $_ 'owned-process-exit' $childId))
               }
             }
-            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
-            $null = $process.WaitForExit(10000)
-            if (-not $stdout.Wait(10000) -or -not $stderr.Wait(10000)) { throw 'Owned process streams did not close.' }
-            $stdout.Result | Set-Content (Join-Path $invocation.directory 'stdout.log')
-            $stderr.Result | Set-Content (Join-Path $invocation.directory 'stderr.log')
+            $exitCode = $null
+            try {
+              if (-not $process.HasExited) {
+                $leftovers = $true
+                Stop-Process -Id $process.Id -Force -ErrorAction Stop
+              }
+              if (-not $process.WaitForExit(10000)) { throw 'Owned command did not exit after termination.' }
+              $exitCode = $process.ExitCode
+            } catch {
+              $monitorFailed = $true
+              $issues.Add((Get-SafeError $_ 'owned-command-exit' $commandPid))
+            }
+            foreach ($stream in @(@{ task=$stdout; name='stdout' }, @{ task=$stderr; name='stderr' })) {
+              try {
+                if (-not $stream.task.Wait(10000)) { throw 'Owned process stream did not close.' }
+                $stream.task.Result | Set-Content (Join-Path $invocation.directory "$($stream.name).log")
+              } catch {
+                $monitorFailed = $true
+                $issues.Add((Get-SafeError $_ "read-$($stream.name)" $commandPid))
+                '' | Set-Content (Join-Path $invocation.directory "$($stream.name).log")
+              }
+            }
             $finished = [DateTime]::UtcNow
-            $exitCode = $process.ExitCode
             Write-Json @($processes.Values) (Join-Path $destination 'processes.json')
             Write-Json @($modules.Values) (Join-Path $destination 'loaded-modules.json')
+            Write-Json $issues.ToArray() (Join-Path $destination 'observation-errors.json')
             foreach ($handle in $handles.Values) { $handle.Dispose() }
             $process.Dispose()
           }
           $admission = $null
           $admissionError = $null
           try {
-            $admission = Read-TestResultContract -Path $invocation.report -StartedUtc $invocation.startedUtc -ExitCode $exitCode -AllowSkipped:($Name -eq 'OriginalUI')
-            if ($Name -eq 'Focused' -and ($admission.discovered -ne 4 -or $admission.passed -ne 4)) {
-              throw 'The focused invocation must execute and pass exactly four theories.'
+            if ($null -eq $exitCode) { throw 'The command exit code could not be observed.' }
+            $admission = Read-TestResultContract -Path $invocation.report -StartedUtc $invocation.startedUtc -ExitCode $exitCode
+            if ($admission.discovered -ne 5 -or $admission.passed -ne 5) {
+              throw 'The bootstrap invocation must execute and pass exactly five cases with no skips.'
+            }
+            [xml]$admittedTrx = Get-Content -LiteralPath $invocation.report -Raw
+            $expectedNames = @('OpenClaw.Tray.UITests.AudioPipelineFirstAudioTimeoutTests.FirstNonemptyAudio_CancelsTimeout')
+            foreach ($pinned in @('False','True')) {
+              foreach ($working in @('False','True')) {
+                $expectedNames += "OpenClaw.Tray.UITests.WorkspaceSessionLayoutTests.LongTitlesLeaveRoomForBusyOrUnreadStatus(pinned: $pinned, working: $working)"
+              }
+            }
+            $actualNames = @($admittedTrx.SelectNodes("//*[local-name()='UnitTestResult']") | ForEach-Object { $_.GetAttribute('testName') })
+            if (@(Compare-Object $expectedNames $actualNames -CaseSensitive).Count -ne 0) {
+              throw 'Completed cases do not match the exact one-fact/four-theory inventory.'
             }
           } catch {
             $admissionError = $_.Exception.Message
@@ -380,12 +486,16 @@ jobs:
           try {
             Get-ScopedCrashEvents $started ([DateTime]::UtcNow) $processes $destination
           } catch {
-            $null = $issues.Add("Crash-event collection failed: $($_.Exception.GetType().Name)")
-            Write-Json @{ queryError = $_.Exception.GetType().Name } (Join-Path $destination 'crash-events.json')
+            $errorData = Get-SafeError $_ 'collect-crash-events'
+            $issues.Add($errorData)
+            Write-Json @{ queryError = $errorData } (Join-Path $destination 'crash-events.json')
           }
           Export-SafeReports $invocation $destination
           $hostCount = @($processes.Values | Where-Object role -eq 'testhost').Count
-          if ($hostCount -eq 0) { $null = $issues.Add('No owned testhost was observed. PID and module evidence is unavailable.') }
+          if ($hostCount -ne 1) {
+            $monitorFailed = $true
+            $issues.Add(@{ operation = 'owned-testhost-count'; observedCount = $hostCount; expectedCount = 1 })
+          }
           $record = [ordered]@{
             selection = $Name; filter = $Filter; invocationId = $invocation.id
             startedUtc = $started.ToString('o'); finishedUtc = $finished.ToString('o')
@@ -394,7 +504,7 @@ jobs:
             timedOut = $timedOut; terminatedRemainingOwnedProcesses = $leftovers
             hostHealthy = (-not $timedOut -and -not $leftovers -and -not $monitorFailed)
             admitted = ($null -ne $admission -and $null -eq $admissionError -and -not $timedOut -and -not $leftovers -and -not $monitorFailed)
-            result = $admission; admissionError = $admissionError; diagnosticLimitations = @($issues)
+            result = $admission; admissionError = $admissionError; diagnosticLimitations = $issues.ToArray()
           }
           Write-Json $record (Join-Path $destination 'invocation.json')
           Write-Host ($record | ConvertTo-Json -Depth 6 -Compress)
@@ -403,18 +513,7 @@ jobs:
         }
 
         try {
-          $focus = Invoke-DiagnosticSelection 'Focused' 'FullyQualifiedName~OpenClaw.Tray.UITests.ReactorChatLayoutProofTests.ComposerFlyouts_UseBoundedNativePopoverPresentation' 360
-          $last = $focus
-          if ($focus.admitted) {
-            $last = Invoke-DiagnosticSelection 'OriginalUI' 'Category!=Accessibility&Category!=NativeOnboardingProof' 600
-          } else {
-            Write-Json @{ selection = 'OriginalUI'; status = 'not-run'; reason = 'Focused four-case invocation did not complete cleanly.' } (Join-Path $evidenceRoot 'original-not-run.json')
-          }
-          if ($last.hostHealthy) {
-            $null = Invoke-DiagnosticSelection 'Accessibility' 'Category=Accessibility' 360
-          } else {
-            Write-Json @{ selection = 'Accessibility'; status = 'not-run'; reason = 'Previous owned invocation exceeded its budget or left processes alive.' } (Join-Path $evidenceRoot 'accessibility-not-run.json')
-          }
+          $null = Invoke-DiagnosticSelection 'Bootstrap' 'FullyQualifiedName=OpenClaw.Tray.UITests.AudioPipelineFirstAudioTimeoutTests.FirstNonemptyAudio_CancelsTimeout|FullyQualifiedName=OpenClaw.Tray.UITests.WorkspaceSessionLayoutTests.LongTitlesLeaveRoomForBusyOrUnreadStatus' 450
         } finally {
           Write-Json $runs.ToArray() (Join-Path $evidenceRoot 'selections.json')
           $runs | ForEach-Object {
@@ -422,16 +521,18 @@ jobs:
           }
         }
         git diff --exit-code
-        if ($LASTEXITCODE -ne 0) { throw 'Tracked pinned source changed during diagnostics.' }
-        if ($runs.Count -ne 3 -or @($runs | Where-Object { -not $_.admitted }).Count -gt 0) {
-          throw 'At least one diagnostic selection failed, aborted, or could not run. Preserved evidence is not a passing UI proof.'
+        if ($LASTEXITCODE -ne 0) { throw 'Instrumented tracked source changed during diagnostics.' }
+        $finalTree = git write-tree
+        if ($LASTEXITCODE -ne 0 -or $finalTree -cne $env:DIAGNOSTIC_SOURCE_TREE) { throw 'Instrumented source tree changed.' }
+        if ($runs.Count -ne 1 -or @($runs | Where-Object { -not $_.admitted }).Count -gt 0) {
+          throw 'The single bootstrap diagnostic failed, aborted, or could not run. No passing UI proof is established.'
         }
 
     - name: Upload only reviewed allowlisted evidence
       if: always()
       uses: actions/upload-artifact@v7
       with:
-        name: pinned-ui-crash-diagnostic-${{ github.run_id }}
+        name: pinned-bootstrap-diagnostic-${{ github.run_id }}
         path: DiagnosticEvidence/
         if-no-files-found: error
         retention-days: 7

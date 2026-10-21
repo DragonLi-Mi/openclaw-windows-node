@@ -95,16 +95,29 @@ public sealed class UIThreadFixture : IDisposable
             out var configuredTimeoutSeconds) && configuredTimeoutSeconds > 0
             ? configuredTimeoutSeconds
             : DefaultStartupTimeoutSeconds;
+        TraceStartup("ready-wait-before", timeoutSeconds);
         if (!_ready.Wait(TimeSpan.FromSeconds(timeoutSeconds)))
         {
+            TraceStartup("ready-wait-timeout", timeoutSeconds);
             var threadState = _uiThread.IsAlive ? _uiThread.ThreadState.ToString() : "stopped";
             throw new InvalidOperationException(
                 $"UIThreadFixture failed to initialize within {timeoutSeconds}s; phase='{_startupPhase}', threadState='{threadState}'");
         }
+        TraceStartup("ready-wait-after", timeoutSeconds);
 
         if (_startupError != null)
             throw new InvalidOperationException("UIThreadFixture initialization failed", _startupError);
     }
+
+    private static void TraceStartup(string phase, int timeoutSeconds = 0)
+    {
+        Console.Error.WriteLine(
+            $"startup-diagnostic utc={DateTime.UtcNow:O}; pid={Environment.ProcessId}; managedTid={Environment.CurrentManagedThreadId}; nativeTid={GetCurrentThreadId()}; phase={phase}; timeoutSeconds={timeoutSeconds}; majorMinor={WinAppSdkMajorMinor}; versionTag={WinAppSdkVersionTag}");
+        Console.Error.Flush();
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
 
     private static uint ResolveWinAppSdkMajorMinor()
     {
@@ -205,12 +218,16 @@ public sealed class UIThreadFixture : IDisposable
             OnboardingNativeProof.InitializeProductProcessDpi();
             OnboardingNativeProof.TraceDpiContext("UIThreadProc: before bootstrap");
             _startupPhase = "initializing Windows App SDK bootstrap";
+            TraceStartup("com-wrappers-before");
             WinRT.ComWrappersSupport.InitializeComWrappers();
+            TraceStartup("com-wrappers-after");
 
             // Initialize WinAppSDK runtime (unpackaged process).
             if (Interlocked.Exchange(ref s_bootstrapInitialized, 1) == 0)
             {
+                TraceStartup("bootstrap-before");
                 Bootstrap.Initialize(WinAppSdkMajorMinor, WinAppSdkVersionTag);
+                TraceStartup("bootstrap-after");
             }
             OnboardingNativeProof.TraceDpiContext("UIThreadProc: bootstrap complete");
 
