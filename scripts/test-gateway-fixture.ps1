@@ -15,6 +15,7 @@ param(
     [switch]$Screenshots
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'TestResultContract.ps1')
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $resolvedApp = (Resolve-Path -LiteralPath $AppPath).Path
 $artifacts = [IO.Path]::GetFullPath($ArtifactsDirectory)
@@ -27,12 +28,14 @@ $platform = if ($arch -eq 'Arm64') { 'ARM64' } else { 'x64' }
 
 function Invoke-FixtureTests {
     param([string]$Project, [string]$Filter, [string]$ResultName)
+    $invocation = New-TestInvocation -ResultsDirectory $resultsDirectory -TrxFileName "$ResultName.trx"
+    Write-Host "Fixture TRX ($ResultName): $($invocation.report)"
     $start = [Diagnostics.ProcessStartInfo]::new('dotnet')
     $start.UseShellExecute = $false
     $start.WorkingDirectory = $repoRoot
     foreach ($argument in @('test', (Join-Path $repoRoot $Project), '-c', $Configuration,
         '-r', $rid, "-p:Platform=$platform", '-p:DevBuild=false', '--filter', $Filter,
-        '--results-directory', $resultsDirectory, '--logger', "trx;LogFileName=$ResultName.trx")) {
+        '--results-directory', $invocation.directory, '--logger', "trx;LogFileName=$ResultName.trx")) {
         $start.ArgumentList.Add($argument)
     }
     $start.Environment['OPENCLAW_RUN_GATEWAY_FIXTURE_UI'] = '1'
@@ -46,17 +49,12 @@ function Invoke-FixtureTests {
             $process.Kill($true)
             throw "$ResultName exceeded 15 minutes. Stopped only the owned test process tree."
         }
-        if ($process.ExitCode -ne 0) { throw "$ResultName failed (exit $($process.ExitCode)). Results: $resultsDirectory" }
+        $exitCode = $process.ExitCode
     } finally {
         $process.Dispose()
     }
-    $resultFile = Join-Path $resultsDirectory "$ResultName.trx"
-    if (-not (Test-Path -LiteralPath $resultFile)) { throw "$ResultName produced no test report." }
-    [xml]$trx = Get-Content -LiteralPath $resultFile -Raw
-    $counters = $trx.TestRun.ResultSummary.Counters
-    if ([int]$counters.total -le 0 -or [int]$counters.passed -ne [int]$counters.total) {
-        throw "$ResultName did not execute and pass every selected test. Skips are not fixture proof."
-    }
+    $result = Read-TestResultContract -Path $invocation.report -StartedUtc $invocation.startedUtc -ExitCode $exitCode
+    Write-Host ("Fixture tests reported ($ResultName): " + ($result | ConvertTo-Json -Compress))
 }
 
 Invoke-FixtureTests 'tests\OpenClaw.Tray.IntegrationTests\OpenClaw.Tray.IntegrationTests.csproj' 'FullyQualifiedName~GatewayFixtureProfileTests|FullyQualifiedName~GatewayFixtureRunTests|FullyQualifiedName~GatewayFixtureAppTests' 'fixture-profile-app'

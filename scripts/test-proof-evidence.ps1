@@ -339,6 +339,224 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             $runnerInvocations++
         }
     }
+    # Replace only the process-launch boundary in a disposable copy. The real
+    # fixture runner still builds ProcessStartInfo and admits the supplied TRX.
+    $fixtureRepo = Join-Path $root 'fixture-repo'
+    $fixtureScripts = Join-Path $fixtureRepo 'scripts'
+    New-Item -ItemType Directory -Path $fixtureScripts | Out-Null
+    Copy-Item -LiteralPath (Join-Path $RepoRoot 'scripts\TestResultContract.ps1') -Destination $fixtureScripts
+    $fixtureSource = Get-Content -LiteralPath (Join-Path $RepoRoot 'scripts\test-gateway-fixture.ps1') -Raw
+    $launch = '[Diagnostics.Process]::Start($start)'
+    if (($fixtureSource.Split(@($launch), [StringSplitOptions]::None)).Count -ne 2) {
+        throw 'Expected exactly one fixture process-launch boundary.'
+    }
+    Set-Content -LiteralPath (Join-Path $fixtureScripts 'test-gateway-fixture.ps1') -Value $fixtureSource.Replace($launch, '(Start-ControlledFixtureProcess $start)')
+    $fixtureHarness = Join-Path $root 'fixture-runner-harness.ps1'
+    Set-Content -LiteralPath $fixtureHarness @'
+param([string]$Repo, [string]$Case, [int]$FailureIndex, [string]$Configuration, [string]$Results)
+$ErrorActionPreference = 'Stop'
+$script:calls = 0
+$fixtureState = @{ directories = [Collections.Generic.List[string]]::new() }
+$app = Join-Path $Repo 'selected app.exe'
+Set-Content -LiteralPath $app 'not an executable; never launched'
+$env:OPENCLAW_RUN_GATEWAY_FIXTURE_UI = 'parent-gate'
+$env:OPENCLAW_GATEWAY_FIXTURE_APP = 'parent-app'
+$env:OPENCLAW_GATEWAY_FIXTURE_ARTIFACTS = 'parent-artifacts'
+$env:OPENCLAW_GATEWAY_FIXTURE_SCREENSHOTS = 'parent-screenshots'
+$env:OPENCLAW_REPO_ROOT = 'parent-root'
+function Start-ControlledFixtureProcess($Start) {
+    $script:calls++
+    $index = $script:calls
+    $projects = @('OpenClaw.Tray.IntegrationTests', 'OpenClaw.Tray.UITests')
+    $filters = @(
+        'FullyQualifiedName~GatewayFixtureProfileTests|FullyQualifiedName~GatewayFixtureRunTests|FullyQualifiedName~GatewayFixtureAppTests',
+        'FullyQualifiedName~GatewayFixtureUiTests'
+    )
+    $names = @('fixture-profile-app', 'fixture-ui')
+    $arch = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
+    $rid = if ($arch -eq 'Arm64') { 'win-arm64' } else { 'win-x64' }
+    $platform = if ($arch -eq 'Arm64') { 'ARM64' } else { 'x64' }
+    $values = @($Start.ArgumentList)
+    $directory = $values[[Array]::IndexOf($values, '--results-directory') + 1]
+    $runParent = Split-Path -Parent $directory
+    if ((Split-Path -Parent $runParent) -cne $Results) {
+        throw 'Fixture report escaped the selected artifacts root.'
+    }
+    if ($fixtureState.directories.Count -gt 0 -and
+        $runParent -cne (Split-Path -Parent $fixtureState.directories[0])) {
+        throw 'Fixture invocations do not share one run parent.'
+    }
+    if (-not (Test-Path -LiteralPath $directory -PathType Container) -or
+        @(Get-ChildItem -LiteralPath $directory -Force).Count -ne 0 -or
+        $directory -in $fixtureState.directories) { throw 'Fixture invocation directory is not fresh and unique.' }
+    $fixtureState.directories.Add($directory)
+    $expected = @('test', (Join-Path $Repo "tests\$($projects[$index - 1])\$($projects[$index - 1]).csproj"),
+        '-c', $Configuration, '-r', $rid, "-p:Platform=$platform", '-p:DevBuild=false',
+        '--filter', $filters[$index - 1], '--results-directory', $directory,
+        '--logger', "trx;LogFileName=$($names[$index - 1]).trx")
+    if (($values | ConvertTo-Json -Compress) -cne ($expected | ConvertTo-Json -Compress) -or
+        $Start.FileName -cne 'dotnet' -or $Start.UseShellExecute -or $Start.WorkingDirectory -cne $Repo) {
+        throw 'Fixture runner changed its exact project/filter/build/process contract.'
+    }
+    foreach ($entry in @{
+        OPENCLAW_RUN_GATEWAY_FIXTURE_UI = '1'
+        OPENCLAW_GATEWAY_FIXTURE_APP = $app
+        OPENCLAW_GATEWAY_FIXTURE_ARTIFACTS = $Results
+        OPENCLAW_GATEWAY_FIXTURE_SCREENSHOTS = $(if ($Configuration -eq 'Release') { '1' } else { '0' })
+        OPENCLAW_REPO_ROOT = $Repo
+    }.GetEnumerator()) {
+        if ($Start.Environment[$entry.Key] -cne $entry.Value) { throw "Incorrect child environment: $($entry.Key)" }
+    }
+    if ($env:OPENCLAW_RUN_GATEWAY_FIXTURE_UI -cne 'parent-gate' -or
+        $env:OPENCLAW_GATEWAY_FIXTURE_APP -cne 'parent-app' -or
+        $env:OPENCLAW_GATEWAY_FIXTURE_ARTIFACTS -cne 'parent-artifacts' -or
+        $env:OPENCLAW_GATEWAY_FIXTURE_SCREENSHOTS -cne 'parent-screenshots' -or
+        $env:OPENCLAW_REPO_ROOT -cne 'parent-root') { throw 'Fixture runner leaked environment into its parent.' }
+    $activeCase = if ($index -eq $FailureIndex) { $Case } else { 'passed' }
+    $report = Join-Path $directory "$($names[$index - 1]).trx"
+    if ($activeCase -eq 'malformed') { Set-Content $report '<bad' }
+    elseif ($activeCase -ne 'missing') {
+        $passed = if ($activeCase -in @('zero', 'all-skipped')) { 0 } else { 2 }
+        $skipped = if ($activeCase -in @('mixed', 'all-skipped')) { 1 } else { 0 }
+        $failed = if ($activeCase -eq 'failed') { 1 } else { 0 }
+        $time = if ($activeCase -eq 'stale') { [DateTime]::UtcNow.AddDays(-1) } else { [DateTime]::UtcNow }
+        Write-Trx $report $passed $skipped $failed $time
+        if ($activeCase -eq 'stale-file') { (Get-Item $report).LastWriteTimeUtc = [DateTime]::UtcNow.AddDays(-1) }
+        if ($activeCase -eq 'inconsistent') {
+            (Get-Content $report -Raw).Replace("outcome='Passed'", "outcome='Failed'") | Set-Content $report
+        }
+        if ($activeCase -eq 'duplicate') {
+            [xml]$trx = Get-Content $report -Raw
+            foreach ($leaf in $trx.TestRun.Results.UnitTestResult) { $leaf.executionId = 'duplicate' }
+            $trx.Save($report)
+        }
+    }
+    $process = [pscustomobject]@{
+        ExitCode = $(if ($activeCase -eq 'nonzero') { 9 } else { 0 })
+        Timeout = ($activeCase -eq 'timeout')
+        Killed = $false
+        Disposed = $false
+        Index = $index
+    }
+    $process | Add-Member ScriptMethod WaitForExit {
+        param($Milliseconds)
+        if ($Milliseconds -ne 900000) { throw 'Fixture wait deadline changed.' }
+        return -not $this.Timeout
+    }
+    $process | Add-Member ScriptMethod Kill {
+        param($EntireTree)
+        if (-not $this.Timeout -or -not $EntireTree) { throw 'Unexpected owned-process cleanup.' }
+        $this.Killed = $true
+    }
+    $process | Add-Member ScriptMethod Dispose {
+        if ($this.Timeout -ne $this.Killed) { throw 'Timed-out owned process tree was not stopped.' }
+        $this.Disposed = $true
+        Write-Host "Fixture process disposed: $($this.Index); killed=$($this.Killed)"
+    }
+    Write-Host "Fixture controlled launch: $index"
+    return $process
+}
+'@
+    Add-Content -LiteralPath $fixtureHarness ("function Write-Trx {`n" + $writer + "`n}")
+    Add-Content -LiteralPath $fixtureHarness @'
+try {
+    & (Join-Path $Repo 'scripts\test-gateway-fixture.ps1') -AppPath $app -Configuration $Configuration -ArtifactsDirectory $Results -Screenshots:($Configuration -eq 'Release')
+} catch {
+    Write-Host $_.ScriptStackTrace
+    throw
+}
+'@
+    foreach ($configuration in @('Debug', 'Release')) {
+        $failureIndices = if ($configuration -eq 'Release') { @(2) } else { @(1, 2) }
+        $fixtureCases = if ($configuration -eq 'Release') { @('passed') } else {
+            @('stale', 'passed', 'missing', 'malformed', 'zero', 'all-skipped', 'mixed', 'nonzero', 'stale-file', 'inconsistent', 'duplicate', 'failed', 'timeout')
+        }
+        foreach ($failureIndex in $failureIndices) {
+            foreach ($case in $fixtureCases) {
+                $fixtureResults = Join-Path $root ([guid]::NewGuid().ToString('N'))
+                $savedPreference = $ErrorActionPreference
+                try {
+                    $ErrorActionPreference = 'Continue'
+                    $output = & $shell -NoProfile -ExecutionPolicy Bypass -File $fixtureHarness -Repo $fixtureRepo -Case $case -FailureIndex $failureIndex -Configuration $configuration -Results $fixtureResults 2>&1
+                    $exit = $LASTEXITCODE
+                } finally { $ErrorActionPreference = $savedPreference }
+                $text = $output -join "`n"
+                $expectedPass = $case -eq 'passed'
+                if (($exit -eq 0) -ne $expectedPass) { throw "fixture/$configuration/$failureIndex/$case unexpected exit ${exit}: $text" }
+                $expectedCalls = if ($expectedPass) { 2 } else { $failureIndex }
+                $reports = @(Get-ChildItem -LiteralPath $fixtureResults -Filter '*.trx' -Recurse | Select-Object -ExpandProperty FullName)
+                for ($index = 1; $index -le $expectedCalls; $index++) {
+                    $name = @('fixture-profile-app', 'fixture-ui')[$index - 1]
+                    $diagnostic = [regex]::Match($text, "(?m)^Fixture TRX \($name\): (.+)\r?$")
+                    $path = $diagnostic.Groups[1].Value.TrimEnd("`r")
+                    if (-not $diagnostic.Success -or
+                        [IO.Path]::GetFileName($path) -cne "$name.trx" -or
+                        (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $path))) -cne $fixtureResults -or
+                        $text.IndexOf($diagnostic.Value, [StringComparison]::Ordinal) -gt
+                        $text.IndexOf("Fixture controlled launch: $index", [StringComparison]::Ordinal)) {
+                        throw "Fixture did not identify the actual suite/report before execution: $text"
+                    }
+                    if (($case -ne 'missing' -or $index -ne $failureIndex) -and $path -cnotin $reports) {
+                        throw "Fixture diagnostic did not name the actual report: $text"
+                    }
+                }
+                if ([regex]::Matches($text, 'Fixture controlled launch:').Count -ne $expectedCalls -or
+                    [regex]::Matches($text, 'Fixture process disposed:').Count -ne $expectedCalls) {
+                    throw "Fixture did not stop at the failing invocation or dispose every owned process: $text"
+                }
+                $rejection = switch ($case) {
+                    'missing' { 'missing|no test report' }
+                    'malformed' { 'Load|XML|end of file|unexpected' }
+                    'zero' { 'zero|did not execute' }
+                    'all-skipped' { 'zero|did not execute' }
+                    'mixed' { 'Skips' }
+                    'nonzero' { 'exit code 9|exit 9' }
+                    'stale' { 'stale' }
+                    'stale-file' { 'stale' }
+                    'inconsistent' { 'counters disagree' }
+                    'duplicate' { 'identities' }
+                    'failed' { 'failed tests' }
+                    'timeout' { 'exceeded 15 minutes' }
+                }
+                if ($rejection -and $text -notmatch $rejection) { throw "Fixture rejected for the wrong reason (wanted $rejection): $text" }
+                if ($expectedPass -and ([regex]::Matches($text, '"executed":2').Count -ne 2 -or
+                    [regex]::Matches($text, 'Fixture TRX \(').Count -ne 2)) {
+                    throw "Fixture did not report both admitted execution counts and report paths: $text"
+                }
+                $checks++
+                $runnerInvocations++
+            }
+        }
+    }
+    $invocationLine = '$invocation = New-TestInvocation -ResultsDirectory $resultsDirectory -TrxFileName "$ResultName.trx"'
+    if ($fixtureSource.Split(@($invocationLine), [StringSplitOptions]::None).Count -ne 2) {
+        throw 'Expected exactly one fixture invocation boundary for negative controls.'
+    }
+    foreach ($mutation in @('wrong-root', 'split-parent')) {
+        $replacement = if ($mutation -eq 'wrong-root') {
+            '$invocation = New-TestInvocation -ResultsDirectory (Join-Path $repoRoot "wrong-root") -TrxFileName "$ResultName.trx"'
+        } else {
+            '$invocation = New-TestInvocation -ResultsDirectory (Join-Path $artifacts ([guid]::NewGuid().ToString("N"))) -TrxFileName "$ResultName.trx"'
+        }
+        $mutant = $fixtureSource.Replace($invocationLine, $replacement).Replace($launch, '(Start-ControlledFixtureProcess $start)')
+        Set-Content -LiteralPath (Join-Path $fixtureScripts 'test-gateway-fixture.ps1') -Value $mutant
+        $fixtureResults = Join-Path $root ([guid]::NewGuid().ToString('N'))
+        $savedPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $output = & $shell -NoProfile -ExecutionPolicy Bypass -File $fixtureHarness -Repo $fixtureRepo -Case passed -FailureIndex 1 -Configuration Debug -Results $fixtureResults 2>&1
+            $exit = $LASTEXITCODE
+        } finally { $ErrorActionPreference = $savedPreference }
+        $text = $output -join "`n"
+        $reason = if ($mutation -eq 'wrong-root') { 'escaped the selected artifacts root' } else { 'do not share one run parent' }
+        $expectedCalls = if ($mutation -eq 'wrong-root') { 0 } else { 1 }
+        if ($exit -eq 0 -or $text -notmatch $reason -or
+            [regex]::Matches($text, 'Fixture controlled launch:').Count -ne $expectedCalls) {
+            throw "Fixture path guard did not reject $mutation for the intended reason: $text"
+        }
+        $checks++
+        $runnerInvocations++
+    }
     Write-Host "Proof result/evidence regressions passed: $checks checks (including $runnerInvocations controlled runner invocations)."
 } finally {
     if (Test-Path $sourceProbe) { Remove-Item -LiteralPath $sourceProbe -Force }
