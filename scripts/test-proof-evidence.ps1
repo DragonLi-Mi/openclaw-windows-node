@@ -250,6 +250,31 @@ param([string]$Repo, [string]$Runner, [string]$Case, [string]$Results)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $Repo 'scripts\ProofEvidence.ps1')
 $sourceProbe = Join-Path $Repo ('scripts\runner-source-probe-' + [guid]::NewGuid().ToString('N') + '.txt')
+$ciRunner = $Runner -like 'ci*'
+$ciException = $Runner -in @('ci-accessibility', 'ci-dev')
+$state = @{ directories = [Collections.Generic.List[string]]::new(); coverage = 0 }
+if ($ciRunner) {
+    $env:GITHUB_STEP_SUMMARY = Join-Path $Results "$Runner-$Case-summary.md"
+    Set-Content -LiteralPath $env:GITHUB_STEP_SUMMARY 'Existing step summary'
+    Set-Location -LiteralPath $Results
+    # Model a shell location that differs from the native process working directory.
+    [Environment]::CurrentDirectory = $Repo
+    $ciResults = Join-Path $Results 'ci-results'
+    New-Item -ItemType Directory -Path $ciResults -Force | Out-Null
+}
+function global:dotnet-coverage {
+    $values = @($args)
+    if ($ciException -or $Case -notlike 'coverage-*') { throw 'Unexpected coverage instrumentation.' }
+    if ($values[0] -cne 'collect' -or $values[1] -cne '--output' -or
+        $values[3] -cne '--output-format' -or $values[4] -cne 'cobertura' -or $values[5] -cne 'dotnet') {
+        throw 'CI coverage command changed.'
+    }
+    $dotnetArguments = $values[6..($values.Count - 1)]
+    $directory = $dotnetArguments[[Array]::IndexOf($dotnetArguments, '--results-directory') + 1]
+    if ($values[2] -cne (Join-Path $directory 'coverage.cobertura.xml')) { throw 'Coverage escaped this invocation.' }
+    $state.coverage++
+    dotnet @dotnetArguments
+}
 function global:dotnet {
     if ($Case -in @('unsupported-output', 'lookalike-output', 'missing-e2e-gate', 'missing-ollama-gate')) {
         throw 'Unexpected test execution before prerequisite rejection.'
@@ -258,13 +283,34 @@ function global:dotnet {
     $directory = $values[[Array]::IndexOf($values, '--results-directory') + 1]
     $logger = @($values | Where-Object { $_ -like 'trx;LogFileName=*' })[0]
     $report = Join-Path $directory $logger.Substring('trx;LogFileName='.Length)
+    if ($ciRunner) {
+        $expected = @('test', 'unused.csproj', '-c', 'Debug')
+        if ($Runner -eq 'ci-dev') { $expected += @('--no-restore', '-p:DevBuild=true') }
+        else { $expected += '--no-build' }
+        if ($ciException) { $expected += @('-r', 'win-x64') }
+        $expected += @('--verbosity', 'normal', '--results-directory', $directory, '--logger', 'trx;LogFileName=ci.trx')
+        if ($Runner -eq 'ci-accessibility') { $expected += @('--filter', 'Category=Accessibility') }
+        if ($Runner -eq 'ci-dev') {
+            $expected += @('--filter', 'FullyQualifiedName~SettingsManagerIsolationTests|FullyQualifiedName~AppRefactorContractTests.SandboxPage_')
+        }
+        if (($values -join "`n") -cne ($expected -join "`n")) { throw "Unexpected CI test arguments: $values" }
+        if ((Split-Path -Parent $directory) -cne $ciResults -or
+            @(Get-ChildItem -LiteralPath $directory -Force).Count -ne 0 -or $directory -in $state.directories) {
+            throw 'CI invocation directory is not fresh, unique, or under the requested PowerShell location.'
+        }
+        $state.directories.Add($directory)
+        Write-Host 'CI controlled launch'
+    }
     $global:LASTEXITCODE = 0
-    if ($Case -eq 'missing') { return }
+    if ($Case -in @('missing', 'coverage-missing')) { return }
     if ($Case -eq 'malformed') { Set-Content $report '<bad'; return }
     $passed = if ($Case -in @('zero', 'all-skipped')) { 0 } else { 1 }
     $skipped = if ($Case -in @('mixed', 'all-skipped')) { 1 } else { 0 }
+    $failed = if ($Case -eq 'failed') { 1 } else { 0 }
     $time = if ($Case -eq 'stale') { [DateTime]::UtcNow.AddDays(-1) } else { [DateTime]::UtcNow }
-    Write-Trx $report $passed $skipped 0 $time
+    Write-Trx $report $passed $skipped $failed $time
+    if ($Case -eq 'stale-file') { (Get-Item -LiteralPath $report).LastWriteTimeUtc = [DateTime]::UtcNow.AddDays(-1) }
+    if ($Case -eq 'inconsistent') { (Get-Content $report -Raw).Replace("total='1'", "total='2'") | Set-Content $report }
     if ($Case -eq 'nonzero') { $global:LASTEXITCODE = 9 }
     if ($Case -eq 'nonzero-source-change') {
         Set-Content -LiteralPath $sourceProbe 'synthetic changed source'
@@ -274,6 +320,7 @@ function global:dotnet {
 '@
     Add-Content $harness ("function Write-Trx {`n" + $writer + "`n}")
     Add-Content $harness @'
+if ($ciRunner) { Write-Trx (Join-Path $ciResults 'ci.trx') }
 try {
     if ($Runner -eq 'gateway') {
         $env:OPENCLAW_RUN_E2E = if ($Case -eq 'missing-e2e-gate') { $null } else { '1' }
@@ -287,8 +334,21 @@ try {
     } elseif ($Runner -eq 'proof') {
         & (Join-Path $Repo 'scripts\run-proof-tests.ps1') -Project 'tests\OpenClaw.Tray.UITests\OpenClaw.Tray.UITests.csproj' -Filter 'Category=Accessibility' -ResultName 'winui-accessibility' -RuntimeIdentifier win-x64 -ResultsDirectory $Results
     } else {
-        $env:OPENCLAW_CI_COLLECT_COVERAGE = 'false'
-        & (Join-Path $Repo 'scripts\Invoke-CiTest.ps1') -Project 'unused.csproj' -ResultsDirectory $Results -TrxFileName 'ci.trx'
+        $env:OPENCLAW_CI_COLLECT_COVERAGE = if ($ciException -or $Case -like 'coverage-*') { 'true' } else { 'false' }
+        $options = @{}
+        if ($ciException) {
+            $options = @{ Runtime = 'win-x64'; SkipCoverage = $true; SummaryTitle = 'Selected CI tests' }
+            if ($Runner -eq 'ci-dev') {
+                $options.DevBuild = $true
+                $options.Filter = 'FullyQualifiedName~SettingsManagerIsolationTests|FullyQualifiedName~AppRefactorContractTests.SandboxPage_'
+            } else { $options.Filter = 'Category=Accessibility' }
+        }
+        $repeats = if ($Case -eq 'passed') { 2 } else { 1 }
+        for ($i = 0; $i -lt $repeats; $i++) {
+            & (Join-Path $Repo 'scripts\Invoke-CiTest.ps1') -Project 'unused.csproj' -ResultsDirectory 'ci-results' -TrxFileName 'ci.trx' @options
+        }
+        $expectedCoverage = if ($Case -like 'coverage-*') { 1 } else { 0 }
+        if ($state.coverage -ne $expectedCoverage) { throw 'Coverage collection count changed.' }
     }
     if ($Runner -in @('proof', 'gateway') -and $Case -in @('passed', 'artifact-output')) {
         $summary = @(Get-ChildItem -LiteralPath $Results -Filter 'evidence-summary.json' -Recurse | Sort-Object LastWriteTimeUtc)[-1].FullName
@@ -298,8 +358,10 @@ try {
 } finally { if (Test-Path -LiteralPath $sourceProbe) { Remove-Item -LiteralPath $sourceProbe } }
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 '@
-    foreach ($runner in @('proof', 'ci', 'gateway', 'adhoc')) {
+    foreach ($runner in @('proof', 'ci', 'ci-accessibility', 'ci-dev', 'gateway', 'adhoc')) {
         $runnerCases = @('passed', 'missing', 'malformed', 'zero', 'all-skipped', 'mixed', 'nonzero', 'stale')
+        if ($runner -like 'ci*') { $runnerCases += @('stale-file', 'inconsistent', 'failed') }
+        if ($runner -eq 'ci') { $runnerCases += @('coverage-passed', 'coverage-missing') }
         if ($runner -eq 'proof') { $runnerCases += @('nonzero-source-change', 'artifact-output', 'unsupported-output', 'lookalike-output') }
         if ($runner -eq 'gateway') { $runnerCases = @('passed', 'missing-e2e-gate', 'missing-ollama-gate') }
         if ($runner -eq 'adhoc') { $runnerCases = @('passed') }
@@ -317,8 +379,48 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
                 $output = & $shell -NoProfile -ExecutionPolicy Bypass -File $harness -Repo $RepoRoot -Runner $runner -Case $case -Results $results 2>&1
                 $exit = $LASTEXITCODE
             } finally { $ErrorActionPreference = $savedPreference }
-            $expectedPass = $case -in @('passed', 'artifact-output') -or ($case -eq 'mixed' -and $runner -eq 'ci')
+            $expectedPass = $case -in @('passed', 'coverage-passed', 'artifact-output') -or ($case -eq 'mixed' -and $runner -like 'ci*')
             if (($exit -eq 0) -ne $expectedPass) { throw "$runner/$case unexpected exit ${exit}: $output" }
+            if ($runner -like 'ci*') {
+                $text = $output -join "`n"
+                $expectedCalls = if ($case -eq 'passed') { 2 } else { 1 }
+                if ([regex]::Matches($text, 'CI controlled launch').Count -ne $expectedCalls -or
+                    [regex]::Matches($text, 'CI TRX:').Count -ne $expectedCalls) {
+                    throw "CI invocation/diagnostic count mismatch: $text"
+                }
+                $reason = switch ($case) {
+                    'missing' { 'missing' }
+                    'coverage-missing' { 'missing' }
+                    'malformed' { 'Load|XML|end of file|unexpected' }
+                    'zero' { 'zero' }
+                    'all-skipped' { 'zero' }
+                    'stale' { 'stale' }
+                    'stale-file' { 'stale' }
+                    'inconsistent' { 'disagree' }
+                    'failed' { 'failed tests' }
+                }
+                if ($reason -and $text -notmatch $reason) { throw "CI rejected the fixture for the wrong reason: $text" }
+                if ($case -eq 'nonzero' -and $exit -ne 9) { throw 'CI lost the command exit code.' }
+                if (-not $expectedPass -and $text -match 'CI test results:') { throw "CI admitted rejected results: $text" }
+                $summary = Get-Content -LiteralPath (Join-Path $results "$runner-$case-summary.md") -Raw
+                if (-not $summary.StartsWith('Existing step summary')) { throw 'CI overwrote an existing step summary.' }
+                if ($runner -eq 'ci') {
+                    if ($summary.Trim() -cne 'Existing step summary') { throw 'Ordinary CI unexpectedly opted into summaries.' }
+                } else {
+                    if ($summary -notmatch 'not complete native/custom proof' -or $summary -notmatch 'TRX identifier: [0-9a-f]{32}/ci\.trx') {
+                        throw "CI summary omitted its proof qualification or report identity: $summary"
+                    }
+                    if ($expectedPass) {
+                        $row = if ($case -eq 'mixed') { '| 2 | 1 | 1 | 0 | 1 |' } else { '| 1 | 1 | 1 | 0 | 0 |' }
+                        $outcome = if ($case -eq 'mixed') { 'passed-with-permitted-skips' } else { 'passed' }
+                        if ([regex]::Matches($summary, [regex]::Escape($row)).Count -ne $expectedCalls -or
+                            $summary -notmatch "Outcome: $outcome\." -or
+                            $summary -notmatch 'skipped tests were not validated') { throw "CI summary lost actual counts or qualifications: $summary" }
+                    } elseif ($summary -notmatch 'Test run failed or its report was not admitted' -or $summary -match '\| Discovered \||Outcome: passed') {
+                        throw "CI summary claimed passing scans without admitted results: $summary"
+                    }
+                }
+            }
             $expectedRejection = switch ($case) {
                 'unsupported-output' { 'under TestResults or artifacts' }
                 'lookalike-output' { 'under TestResults or artifacts' }

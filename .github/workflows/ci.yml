@@ -619,11 +619,15 @@ jobs:
 
     - name: Run Dev containment settings tests
       run: >
-        dotnet test tests/OpenClaw.Tray.Tests
-        -c Debug -r win-x64 --no-restore -p:DevBuild=true
-        --filter "FullyQualifiedName~SettingsManagerIsolationTests|FullyQualifiedName~AppRefactorContractTests.SandboxPage_"
-        --results-directory TestResults\TrayDev
-        --logger "trx;LogFileName=OpenClaw.Tray.DevSettings.Tests.trx"
+        ./scripts/Invoke-CiTest.ps1
+        -Project tests/OpenClaw.Tray.Tests
+        -Runtime win-x64
+        -DevBuild
+        -SkipCoverage
+        -Filter "FullyQualifiedName~SettingsManagerIsolationTests|FullyQualifiedName~AppRefactorContractTests.SandboxPage_"
+        -ResultsDirectory TestResults\TrayDev
+        -TrxFileName OpenClaw.Tray.DevSettings.Tests.trx
+        -SummaryTitle "Dev containment settings"
 
     - name: Upload Test Results
       if: always()
@@ -726,31 +730,15 @@ jobs:
 
     # Accessibility Insights CI pass: scans each page in the real app process.
     - name: Run Accessibility Tests (Axe.Windows)
-      id: a11y
       run: >
-        dotnet test tests/OpenClaw.Tray.UITests
-        --no-build
-        -c Debug
-        -r win-x64
-        --verbosity normal
-        --results-directory TestResults\Accessibility
-        --logger "trx;LogFileName=Accessibility.trx"
-        --filter Category=Accessibility
-
-    - name: Accessibility test summary
-      if: always() && steps.a11y.outcome != 'skipped'
-      shell: pwsh
-      run: |
-        if ("${{ steps.a11y.outcome }}" -eq "failure") {
-          "### :x: Accessibility violations detected" >> $env:GITHUB_STEP_SUMMARY
-          "" >> $env:GITHUB_STEP_SUMMARY
-          "Axe.Windows scans found WCAG violations in one or more pages." >> $env:GITHUB_STEP_SUMMARY
-          "See the `Accessibility.trx` artifact for details." >> $env:GITHUB_STEP_SUMMARY
-        } else {
-          "### :white_check_mark: Accessibility scans passed" >> $env:GITHUB_STEP_SUMMARY
-          "" >> $env:GITHUB_STEP_SUMMARY
-          "All pages passed Axe.Windows accessibility validation." >> $env:GITHUB_STEP_SUMMARY
-        }
+        ./scripts/Invoke-CiTest.ps1
+        -Project tests/OpenClaw.Tray.UITests
+        -Runtime win-x64
+        -SkipCoverage
+        -ResultsDirectory TestResults\Accessibility
+        -TrxFileName Accessibility.trx
+        -Filter Category=Accessibility
+        -SummaryTitle "Accessibility (Axe.Windows)"
 
     - name: Verify DevBuild identity marker
       shell: pwsh

@@ -545,11 +545,15 @@ foreach ($token in @(
 
 $devSettingsStep = Get-StepBlock -Text $trayJob -Name "Run Dev containment settings tests"
 foreach ($token in @(
-        "dotnet test tests/OpenClaw.Tray.Tests",
-        "-p:DevBuild=true",
-        "FullyQualifiedName~SettingsManagerIsolationTests",
-        "FullyQualifiedName~AppRefactorContractTests.SandboxPage_",
-        "OpenClaw.Tray.DevSettings.Tests.trx"
+        "./scripts/Invoke-CiTest.ps1",
+        "-Project tests/OpenClaw.Tray.Tests",
+        "-Runtime win-x64",
+        "-DevBuild",
+        "-SkipCoverage",
+        '-Filter "FullyQualifiedName~SettingsManagerIsolationTests|FullyQualifiedName~AppRefactorContractTests.SandboxPage_"',
+        "-ResultsDirectory TestResults\TrayDev",
+        "-TrxFileName OpenClaw.Tray.DevSettings.Tests.trx",
+        '-SummaryTitle "Dev containment settings"'
     )) {
     Assert-Contains -Text $devSettingsStep -Expected $token -Message "Dev settings coverage is missing '$token'."
 }
@@ -559,10 +563,30 @@ Assert-NotContains -Text $devSettingsStep -Unexpected "--no-build" `
 $uiJob = Get-JobBlock "ui-tests"
 foreach ($token in @(
         "Install WindowsAppRuntime",
-        "--filter Category=Accessibility",
+        "-Filter Category=Accessibility",
         "Verify DevBuild identity marker"
     )) {
     Assert-Contains -Text $uiJob -Expected $token -Message "UI lane is missing '$token'."
+}
+
+$accessibilityStep = Get-StepBlock -Text $uiJob -Name "Run Accessibility Tests (Axe.Windows)"
+foreach ($token in @(
+        "./scripts/Invoke-CiTest.ps1",
+        "-Project tests/OpenClaw.Tray.UITests",
+        "-Runtime win-x64",
+        "-Filter Category=Accessibility",
+        "-ResultsDirectory TestResults\Accessibility",
+        "-TrxFileName Accessibility.trx",
+        "-SkipCoverage",
+        '-SummaryTitle "Accessibility (Axe.Windows)"'
+    )) {
+    Assert-Contains -Text $accessibilityStep -Expected $token -Message "Accessibility admission is missing '$token'."
+}
+Assert-NotContains -Text $accessibilityStep -Unexpected "-DevBuild" `
+    -Message "Accessibility tests must keep the prebuilt Debug identity."
+foreach ($token in @('steps.a11y.outcome', 'All pages passed', 'Axe.Windows scans found WCAG violations')) {
+    Assert-NotContains -Text $uiJob -Unexpected $token `
+        -Message "Accessibility reporting must not infer scan results from a step outcome: '$token'."
 }
 
 $trayUiStep = Get-StepBlock -Text $uiJob -Name "Run Tray UI Tests"
@@ -580,8 +604,25 @@ foreach ($token in @('"--blame-hang"', '"--blame-hang-timeout"', '"--blame-hang-
 $runnerUses = [regex]::Matches(
     $workflow,
     "(?m)^\s+\./scripts/Invoke-CiTest\.ps1\s*$").Count
-if ($runnerUses -ne 8) {
-    throw "Expected all 8 non-E2E test projects to use Invoke-CiTest.ps1, found $runnerUses."
+if ($runnerUses -ne 10) {
+    throw "Expected 8 ordinary invocations plus accessibility and Dev settings to use Invoke-CiTest.ps1, found $runnerUses."
+}
+$ordinarySteps = @(
+    @{ Job = $coreJob; Name = 'Run Shared Tests' },
+    @{ Job = $coreJob; Name = 'Run Connection Tests' },
+    @{ Job = $coreJob; Name = 'Run WinNode CLI Tests' },
+    @{ Job = $trayJob; Name = 'Run Tray Tests' },
+    @{ Job = $trayJob; Name = 'Run Tray Integration Tests' },
+    @{ Job = $trayJob; Name = 'Run SetupEngine Tests' },
+    @{ Job = $uiJob; Name = 'Run Functional UI Tests' },
+    @{ Job = $uiJob; Name = 'Run Tray UI Tests' }
+)
+foreach ($step in $ordinarySteps) {
+    $block = Get-StepBlock -Text $step.Job -Name $step.Name
+    foreach ($option in @('-DevBuild', '-SkipCoverage', '-SummaryTitle')) {
+        Assert-NotContains -Text $block -Unexpected $option `
+            -Message "Ordinary invocation '$($step.Name)' must retain its defaults."
+    }
 }
 if ($workflow -match "(?m)^\s+dotnet-coverage collect\s*$") {
     throw "Workflow test steps must not invoke dotnet-coverage directly."
