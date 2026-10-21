@@ -82,6 +82,7 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
     /// as <see cref="OpenClaw.Chat.ChatComposeTarget.IsReady"/>.
     /// </summary>
     public bool HasHandshakeSnapshot => Volatile.Read(ref _hasHandshakeSnapshot);
+    public bool IsAgentsListUnsupported => Volatile.Read(ref _agentsListUnsupported);
     private string? _operatorDeviceId;
     private string[] _grantedOperatorScopes = Array.Empty<string>();
     private string _connectAuthToken;
@@ -151,6 +152,7 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
 
     private void ResetUnsupportedMethodFlags()
     {
+        var agentsListWasUnsupported = _agentsListUnsupported;
         _usageStatusUnsupported = false;
         _usageCostUnsupported = false;
         _sessionPreviewUnsupported = false;
@@ -162,6 +164,8 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
         _agentFilesListUnsupported = false;
         _agentFileGetUnsupported = false;
         _operatorReadScopeUnavailable = false;
+        if (agentsListWasUnsupported)
+            AgentsListUnsupportedChanged?.Invoke(this, false);
     }
 
     /// <summary>
@@ -297,6 +301,7 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
     public event EventHandler<ModelsListInfo>? ModelsListUpdated;
     public event EventHandler<PresenceEntry[]>? PresenceUpdated;
     public event EventHandler<JsonElement>? AgentsListUpdated;
+    public event EventHandler<bool>? AgentsListUnsupportedChanged;
     public event EventHandler<JsonElement>? AgentFilesListUpdated;
     public event EventHandler<JsonElement>? AgentFileContentUpdated;
 
@@ -3008,6 +3013,7 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
                 case "agents.list":
                     _agentsListUnsupported = true;
                     _logger.Warn("agents.list unsupported on gateway");
+                    AgentsListUnsupportedChanged?.Invoke(this, true);
                     return;
                 case "agents.files.list":
                     _agentFilesListUnsupported = true;

@@ -45,6 +45,8 @@ public sealed partial class GatewayFixtureUiTests
         await WithAppAsync(async run =>
         {
             await WaitVerifiedChatAsync(run);
+            Assert.Single(AppWindows(run));
+            Assert.NotNull(FindById(run, "WorkspaceNavHome"));
             Assert.Contains(run.Gateway.Requests, request => request.Method == "openclaw.setup.verify" && request.Outcome == "ok");
             await run.WaitForAsync(() => Task.FromResult(
                 !File.Exists(Path.Combine(run.Profile.DataDirectory, "setup-dashboard-handoff", "pending.json"))),
@@ -101,6 +103,50 @@ public sealed partial class GatewayFixtureUiTests
                     setupVerificationRequests = run.Gateway.Requests.Count(request => request.Method == "openclaw.setup.verify"),
                     run.Gateway.ConnectionCount
                 }, new JsonSerializerOptions { WriteIndented = true }));
+        }, scenario: scenario, prepareSetupHandoff: IssueSyntheticHandoff);
+    }
+
+    [GatewayFixtureUiFact]
+    [Trait("Category", "GatewayFixture")]
+    public async Task VerifiedSetupBindingClearsBeforeNewConversationResponse()
+    {
+        var scenario = GatewayScenario.CreateNativeSetup((method, _) => method switch
+        {
+            "openclaw.setup.verify" => new { ok = true, modelRef = "fixture/browse", latencyMs = 1 },
+            _ => throw new InvalidOperationException($"Unexpected synthetic setup request: {method}")
+        }, allowSessionMutations: true);
+        await WithAppAsync(async run =>
+        {
+            await WaitVerifiedChatAsync(run);
+            Assert.Single(AppWindows(run));
+            var registry = new GatewayRegistry(run.Profile.DataDirectory);
+            var identityPath = registry.GetIdentityDirectory(run.Profile.GatewayId);
+            File.Delete(Path.Combine(identityPath, "device-key-ed25519.json"));
+            new DeviceIdentity(identityPath).Initialize();
+            await run.Gateway.CloseConnectionsAsync();
+            await WaitUiAsync(run, () => FindText(run, AuthorityWarning) is { Current.IsOffscreen: false } &&
+                FindById(run, "WorkspaceSessionsAdd") is { } add && add.Current.IsEnabled,
+                "bound setup authority warning before ordinary new conversation");
+
+            run.Gateway.HoldSessionMutations();
+            try
+            {
+                Invoke(FindById(run, "WorkspaceSessionsAdd")!);
+                await run.Gateway.WaitForRequestAsync("sessions.create");
+                await WaitUiAsync(run, () => FindById(run, "ChatNativeSetupError") is null,
+                    "obsolete verified setup binding cleared while creation response is held");
+                Assert.DoesNotContain(run.Gateway.Requests,
+                    request => request.Method == "sessions.create" && request.Outcome == "ok");
+                CaptureContinuity(run, "native-handoff-cleared-before-create-response.png");
+            }
+            finally
+            {
+                run.Gateway.ReleaseSessionMutations();
+            }
+            await WaitUiAsync(run, () => SessionSelected(run, "Fixture: new conversation 1"),
+                "ordinary created conversation after verified binding invalidation");
+            Assert.Null(FindById(run, "ChatNativeSetupError"));
+            Assert.Single(AppWindows(run));
         }, scenario: scenario, prepareSetupHandoff: IssueSyntheticHandoff);
     }
 
