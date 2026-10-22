@@ -700,8 +700,10 @@ try {
 }
 '@
     foreach ($name in @('setup-connect', 'revocation-recovery', 'network-recovery')) {
-        $e2eCases = @('psdrive-location', 'provider-location', 'location-mismatch', 'passed', 'missing', 'malformed', 'zero', 'all-skipped', 'mixed', 'nonzero', 'stale', 'stale-file', 'inconsistent', 'failed')
+        $e2eCases = @('passed', 'missing', 'mixed', 'nonzero')
         if ($name -eq 'setup-connect') {
+            # Admission/path variants share one owner; keep routing and outcome checks on every shard.
+            $e2eCases += @('psdrive-location', 'provider-location', 'location-mismatch', 'malformed', 'zero', 'all-skipped', 'stale', 'stale-file', 'inconsistent', 'failed')
             $e2eCases += @('duplicate', 'grouped', 'missing-proof', 'mxc-skip-message', 'mxc-skip-stdout', 'mxc-skip-empty', 'ssh-skip', 'ssh-duplicate-skip')
         }
         foreach ($case in $e2eCases) {
