@@ -99,6 +99,7 @@
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ConversationFileText.cs" Link="Chat\ConversationFileText.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ConversationFileDrafts.cs" Link="Chat\ConversationFileDrafts.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ConversationFilesController.cs" Link="Chat\ConversationFilesController.cs" />
+    <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatConversationAccountIdentity.cs" Link="Chat\ChatConversationAccountIdentity.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatConversationToolDetails.cs" Link="Chat\ChatConversationToolDetails.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatComposerSession.cs" Link="Chat\ChatComposerSession.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\IChatComposerFactory.cs" Link="Chat\IChatComposerFactory.cs" />

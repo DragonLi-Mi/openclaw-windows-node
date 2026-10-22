@@ -8141,4 +8141,8 @@
   <data name="Chat_Files_Downloaded" xml:space="preserve"><value>已下载原始文件。</value></data>
   <data name="Chat_Files_Uncertain" xml:space="preserve"><value>操作已中断或超时。草稿已保留。请重新验证后再重试。</value></data>
   <data name="Chat_Panel_ToolUnavailable" xml:space="preserve"><value>这些详细信息已不是最新状态。请从当前工具重新打开详细信息。</value></data>
+  <data name="Chat_Panel_AccountLoading" xml:space="preserve"><value>正在验证此对话的操作员帐户。</value></data>
+  <data name="Chat_Panel_AccountUnavailable" xml:space="preserve"><value>此 Gateway 无法验证操作员帐户。对话面板不可用。</value></data>
+  <data name="Chat_Panel_AccountFailed" xml:space="preserve"><value>无法验证操作员帐户。请重新连接以重试。</value></data>
+  <data name="Chat_Panel_AccountChanged" xml:space="preserve"><value>操作员帐户已更改。请重新连接后再打开对话面板。</value></data>
 </root>

@@ -7,6 +7,14 @@ namespace OpenClaw.Tray.Tests;
 
 public sealed class ChatConversationToolDetailsTests
 {
+    [Theory]
+    [InlineData(false, false, true)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, true)]
+    public void NativeDetailsWaitForHistoryCommittedInTheCurrentConnection(bool native, bool current, bool expected) =>
+        Assert.Equal(expected, ChatConversationToolDetails.HasCurrentHistory(
+            native, "one", current ? new HashSet<string> { "one" } : null));
+
     private static ChatTimelineItem Tool(string output = "initial", string? run = "run-one") =>
         new("tool-entry", ChatTimelineItemKind.ToolCall, "input",
             ToolName: "read", ToolOutput: output, ToolCallId: "call-one", ToolRunId: run);
@@ -16,7 +24,7 @@ public sealed class ChatConversationToolDetailsTests
     {
         var client = DispatchProxy.Create<IOperatorGatewayClient, ChatConversationPanelStateTests.GatewayProxy>();
         var context = ChatConversationContext.Capture("gateway-one", client,
-            new() { Key = "one", SessionId = "session-one", AgentId = "writing" })!;
+            new() { Key = "one", SessionId = "session-one", AgentId = "writing" }, "profile-a")!;
         using var panels = new ChatConversationPanelState(_ => context);
         panels.Bind("one");
         var details = new ChatConversationToolDetails();
@@ -33,7 +41,7 @@ public sealed class ChatConversationToolDetailsTests
     {
         var client = DispatchProxy.Create<IOperatorGatewayClient, ChatConversationPanelStateTests.GatewayProxy>();
         var context = ChatConversationContext.Capture("gateway-one", client,
-            new() { Key = "one", SessionId = "session-one", AgentId = "writing" })!;
+            new() { Key = "one", SessionId = "session-one", AgentId = "writing" }, "profile-a")!;
         using var panels = new ChatConversationPanelState(_ => context);
         panels.Bind("one");
         var details = new ChatConversationToolDetails();
@@ -54,12 +62,13 @@ public sealed class ChatConversationToolDetailsTests
     [InlineData("session")]
     [InlineData("reset")]
     [InlineData("client")]
+    [InlineData("account")]
     public void AnotherAuthenticatedContextCannotAdoptSelectedTool(string change)
     {
         var client = DispatchProxy.Create<IOperatorGatewayClient, ChatConversationPanelStateTests.GatewayProxy>();
         var proxy = (ChatConversationPanelStateTests.GatewayProxy)client;
         var original = ChatConversationContext.Capture("gateway-one", client,
-            new() { Key = "one", SessionId = "session-one", AgentId = "writing" })!;
+            new() { Key = "one", SessionId = "session-one", AgentId = "writing" }, "profile-a")!;
         var context = original;
         using var panels = new ChatConversationPanelState(key => key == context.Identity.SessionKey ? context : null);
         panels.Bind("one");
@@ -79,6 +88,7 @@ public sealed class ChatConversationToolDetailsTests
         }
         if (change == "session") context = original with { Identity = original.Identity with { SessionKey = "two" } };
         if (change == "reset") context = original with { Identity = original.Identity with { SessionId = "session-reset" } };
+        if (change == "account") context = original with { Identity = original.Identity with { UserId = "profile-b" } };
         if (change == "client") context = original with
         {
             Client = DispatchProxy.Create<IOperatorGatewayClient, ChatConversationPanelStateTests.GatewayProxy>()

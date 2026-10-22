@@ -8208,4 +8208,8 @@ After enrolling, return to Settings &gt; Windows Update and check for updates. I
   <data name="Chat_Files_Downloaded" xml:space="preserve"><value>Original file downloaded.</value></data>
   <data name="Chat_Files_Uncertain" xml:space="preserve"><value>The operation was interrupted or timed out. Your draft is retained. Revalidate before retrying.</value></data>
   <data name="Chat_Panel_ToolUnavailable" xml:space="preserve"><value>These details are no longer current. Reopen details from the current tool.</value></data>
+  <data name="Chat_Panel_AccountLoading" xml:space="preserve"><value>Verifying the operator account for this conversation.</value></data>
+  <data name="Chat_Panel_AccountUnavailable" xml:space="preserve"><value>This Gateway cannot verify the operator account. Conversation panels are unavailable.</value></data>
+  <data name="Chat_Panel_AccountFailed" xml:space="preserve"><value>The operator account could not be verified. Reconnect to retry.</value></data>
+  <data name="Chat_Panel_AccountChanged" xml:space="preserve"><value>The operator account changed. Reconnect before opening conversation panels.</value></data>
 </root>
