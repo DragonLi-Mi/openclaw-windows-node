@@ -8141,4 +8141,5 @@ Ga na inschrijving terug naar Instellingen &gt; Windows Update en controleer op 
   <data name="Chat_Files_DownloadFailed" xml:space="preserve"><value>De download is niet voltooid of de verbinding is gewijzigd. Controleer de bestemming voordat u het opnieuw probeert met een nieuwe machtiging.</value></data>
   <data name="Chat_Files_Downloaded" xml:space="preserve"><value>Oorspronkelijk bestand gedownload.</value></data>
   <data name="Chat_Files_Uncertain" xml:space="preserve"><value>De bewerking is onderbroken of verlopen. Uw concept blijft behouden. Controleer opnieuw voordat u het opnieuw probeert.</value></data>
+  <data name="Chat_Panel_ToolUnavailable" xml:space="preserve"><value>Deze details zijn niet meer actueel. Open de details opnieuw vanuit de huidige tool.</value></data>
 </root>

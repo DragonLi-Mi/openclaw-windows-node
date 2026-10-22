@@ -8140,4 +8140,5 @@ Après votre inscription, revenez dans Paramètres &gt; Windows Update et recher
   <data name="Chat_Files_DownloadFailed" xml:space="preserve"><value>Le téléchargement n&apos;est pas terminé ou la connexion a changé. Vérifiez la destination avant de réessayer avec une nouvelle autorisation.</value></data>
   <data name="Chat_Files_Downloaded" xml:space="preserve"><value>Fichier original téléchargé.</value></data>
   <data name="Chat_Files_Uncertain" xml:space="preserve"><value>L&apos;opération a été interrompue ou a expiré. Votre brouillon est conservé. Revérifiez avant de réessayer.</value></data>
+  <data name="Chat_Panel_ToolUnavailable" xml:space="preserve"><value>Ces détails ne sont plus à jour. Rouvrez les détails depuis l'outil actuel.</value></data>
 </root>

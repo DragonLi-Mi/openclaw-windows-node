@@ -8207,4 +8207,5 @@ After enrolling, return to Settings &gt; Windows Update and check for updates. I
   <data name="Chat_Files_DownloadFailed" xml:space="preserve"><value>The download did not finish or the connection changed. Check your destination before retrying with a new grant.</value></data>
   <data name="Chat_Files_Downloaded" xml:space="preserve"><value>Original file downloaded.</value></data>
   <data name="Chat_Files_Uncertain" xml:space="preserve"><value>The operation was interrupted or timed out. Your draft is retained. Revalidate before retrying.</value></data>
+  <data name="Chat_Panel_ToolUnavailable" xml:space="preserve"><value>These details are no longer current. Reopen details from the current tool.</value></data>
 </root>

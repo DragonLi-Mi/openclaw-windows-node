@@ -8140,4 +8140,5 @@
   <data name="Chat_Files_DownloadFailed" xml:space="preserve"><value>下载未完成或连接已更改。请先检查目标文件，再使用新的授权重试。</value></data>
   <data name="Chat_Files_Downloaded" xml:space="preserve"><value>已下载原始文件。</value></data>
   <data name="Chat_Files_Uncertain" xml:space="preserve"><value>操作已中断或超时。草稿已保留。请重新验证后再重试。</value></data>
+  <data name="Chat_Panel_ToolUnavailable" xml:space="preserve"><value>这些详细信息已不是最新状态。请从当前工具重新打开详细信息。</value></data>
 </root>

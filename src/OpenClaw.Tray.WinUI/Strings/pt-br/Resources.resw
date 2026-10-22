@@ -8192,4 +8192,5 @@ Após a inscrição, volte para Configurações &gt; Windows Update e verifique 
   <data name="Chat_Files_DownloadFailed" xml:space="preserve"><value>O download não terminou ou a conexão mudou. Verifique o destino antes de tentar novamente com uma nova autorização.</value></data>
   <data name="Chat_Files_Downloaded" xml:space="preserve"><value>Arquivo original baixado.</value></data>
   <data name="Chat_Files_Uncertain" xml:space="preserve"><value>A operação foi interrompida ou expirou. Seu rascunho foi mantido. Revalide antes de tentar novamente.</value></data>
+  <data name="Chat_Panel_ToolUnavailable" xml:space="preserve"><value>Estes detalhes não estão mais atualizados. Reabra os detalhes na ferramenta atual.</value></data>
 </root>
