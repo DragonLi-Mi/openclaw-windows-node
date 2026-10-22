@@ -138,6 +138,11 @@
     <ControlTemplate x:Key="ChatWelcomeAvatarTemplate" TargetType="Control">
         <ContentPresenter x:Name="AvatarRoot"/>
     </ControlTemplate>
+    <ControlTemplate x:Key="ChatConversationCanvasTemplate" TargetType="Control">
+        <ContentPresenter x:Name="CanvasContentRoot"
+                          HorizontalContentAlignment="Stretch"
+                          VerticalContentAlignment="Stretch" />
+    </ControlTemplate>
     <DataTemplate x:Key="ChatPlacementItemTemplate">
         <Grid ColumnSpacing="12" MinHeight="44" Padding="0,4">
             <Grid.ColumnDefinitions>

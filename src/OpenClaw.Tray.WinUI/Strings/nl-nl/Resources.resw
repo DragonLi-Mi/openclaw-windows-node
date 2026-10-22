@@ -8090,4 +8090,14 @@ Ga na inschrijving terug naar Instellingen &gt; Windows Update en controleer op 
   <data name="Chat_Panel_WidthFormat" xml:space="preserve"><value>{0} pixels breed</value></data>
   <data name="Chat_Panel_Waiting" xml:space="preserve"><value>Wachten tot dit gesprek verbinding maakt. Uw paneelselectie blijft behouden.</value></data>
   <data name="Chat_Panel_Unavailable" xml:space="preserve"><value>Deze inhoud is niet meer beschikbaar in dit gesprek.</value></data>
+  <data name="Chat_Canvas_Loading" xml:space="preserve"><value>Canvas laden...</value></data>
+  <data name="Chat_Canvas_Ready" xml:space="preserve"><value>Canvas</value></data>
+  <data name="Chat_Canvas_Waiting" xml:space="preserve"><value>Maak opnieuw verbinding om dit Canvas-document te bekijken.</value></data>
+  <data name="Chat_Canvas_Unsupported" xml:space="preserve"><value>Deze Gateway ondersteunt geen Canvas-documenten in gesprekken.</value></data>
+  <data name="Chat_Canvas_PluginUnsupported" xml:space="preserve"><value>MCP-apps zijn niet beschikbaar in deze versie.</value></data>
+  <data name="Chat_Canvas_PreviewUnsupported" xml:space="preserve"><value>Dit gehoste voorbeeld is geen ondersteund Canvas-document voor gesprekken.</value></data>
+  <data name="Chat_Canvas_Blocked" xml:space="preserve"><value>Canvas-inhoud is geblokkeerd. Controleer de Gateway-machtigingen en sandboxconfiguratie en probeer het opnieuw.</value></data>
+  <data name="Chat_Canvas_Error" xml:space="preserve"><value>Canvas kon niet worden geladen. Controleer de Gateway-verbinding en probeer het opnieuw.</value></data>
+  <data name="Chat_Canvas_ScriptsRestricted" xml:space="preserve"><value>Scripts zijn uitgeschakeld omdat het Gateway-beleid strikt of niet beschikbaar is.</value></data>
+  <data name="Chat_Canvas_InteractionBlocked" xml:space="preserve"><value>Deze actie is niet toegestaan binnen Canvas-inhoud.</value></data>
 </root>

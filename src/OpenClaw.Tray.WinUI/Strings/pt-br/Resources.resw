@@ -8141,4 +8141,14 @@ Após a inscrição, volte para Configurações &gt; Windows Update e verifique 
   <data name="Chat_Panel_WidthFormat" xml:space="preserve"><value>{0} pixels de largura</value></data>
   <data name="Chat_Panel_Waiting" xml:space="preserve"><value>Aguardando a conexão desta conversa. Sua seleção de painel foi mantida.</value></data>
   <data name="Chat_Panel_Unavailable" xml:space="preserve"><value>Este conteúdo não está mais disponível nesta conversa.</value></data>
+  <data name="Chat_Canvas_Loading" xml:space="preserve"><value>Carregando Canvas...</value></data>
+  <data name="Chat_Canvas_Ready" xml:space="preserve"><value>Canvas</value></data>
+  <data name="Chat_Canvas_Waiting" xml:space="preserve"><value>Reconecte-se para visualizar este documento Canvas.</value></data>
+  <data name="Chat_Canvas_Unsupported" xml:space="preserve"><value>Este Gateway não oferece suporte a documentos Canvas em conversas.</value></data>
+  <data name="Chat_Canvas_PluginUnsupported" xml:space="preserve"><value>Aplicativos MCP não estão disponíveis nesta versão.</value></data>
+  <data name="Chat_Canvas_PreviewUnsupported" xml:space="preserve"><value>Esta prévia hospedada não é um documento Canvas de conversa compatível.</value></data>
+  <data name="Chat_Canvas_Blocked" xml:space="preserve"><value>O conteúdo Canvas foi bloqueado. Verifique as permissões do Gateway e a configuração da sandbox e tente novamente.</value></data>
+  <data name="Chat_Canvas_Error" xml:space="preserve"><value>Não foi possível carregar Canvas. Verifique a conexão com o Gateway e tente novamente.</value></data>
+  <data name="Chat_Canvas_ScriptsRestricted" xml:space="preserve"><value>Os scripts estão desativados porque a política do Gateway é restrita ou está indisponível.</value></data>
+  <data name="Chat_Canvas_InteractionBlocked" xml:space="preserve"><value>Esta ação não é permitida dentro do conteúdo Canvas.</value></data>
 </root>

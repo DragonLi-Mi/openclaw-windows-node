@@ -1,0 +1,313 @@
+using System.Reflection;
+using OpenClaw.Shared;
+using OpenClaw.TestSupport;
+using OpenClawTray.Chat;
+
+namespace OpenClaw.Tray.Tests;
+
+public sealed class ChatConversationCanvasControllerTests
+{
+    public class GatewayProxy : DispatchProxy
+    {
+        public long Epoch = 12;
+        public bool Connected = true;
+        public int Reads;
+        public Func<CanvasDocumentRequest, long, CancellationToken, Task<CanvasDocumentView>> Read = (_, _, _) =>
+            Task.FromResult(Document("default"));
+
+        protected override object? Invoke(MethodInfo? method, object?[]? args)
+        {
+            switch (method?.Name)
+            {
+                case "get_SessionMutationConnectionEpoch": return (long?)Epoch;
+                case "get_IsConnectedToGateway": return Connected;
+                case "get_AuthenticatedSigningDeviceId": return "signing-one";
+                case "ViewCanvasDocumentAsync":
+                    Reads++;
+                    return Read((CanvasDocumentRequest)args![0]!, (long)args[1]!, (CancellationToken)args[2]!);
+                default: throw new NotSupportedException(method?.Name);
+            }
+        }
+    }
+
+    private static CanvasDocumentView Document(string html) =>
+        new(html, new Uri("https://gateway.example"), new Uri("https://sandbox.example/mcp-app-sandbox?v=one"));
+
+    private sealed class Fixture : IDisposable
+    {
+        internal readonly GatewayProxy Gateway;
+        internal readonly ChatConversationPanelState Panels;
+        internal readonly ChatConversationCanvasSelection Selection;
+        internal readonly ChatConversationCanvasController Controller;
+
+        internal Fixture(Func<ChatConversationCanvasPrompt, CancellationToken, Task<ChatConversationCanvasPromptResult>>? submit = null)
+        {
+            var client = DispatchProxy.Create<IOperatorGatewayClient, GatewayProxy>();
+            Gateway = (GatewayProxy)client;
+            Panels = new(key => ChatConversationContext.Capture("gateway-one", client,
+                new SessionInfo { Key = key, SessionId = key + "-id", AgentId = "research" }));
+            Panels.Bind("agent:research:one");
+            Panels.Open("canvas", "cv_one", "run-one");
+            Selection = new(Panels.Context!.Identity,
+                new(ConversationCanvasContentKind.Document, "cv_one",
+                    "/__openclaw__/canvas/documents/cv_one/index.html", "Owned document", true),
+                "message-one", "run-one");
+            Controller = new(Panels, Selection, submit ?? ((_, _) => Task.FromResult(ChatConversationCanvasPromptResult.Accepted)));
+        }
+
+        internal async Task Ready()
+        {
+            await Controller.LoadAsync();
+            Controller.SurfaceReady(Controller.Snapshot.Operation!);
+            Assert.Equal(ChatConversationCanvasPhase.Ready, Controller.Snapshot.Phase);
+        }
+
+        public void Dispose() { Controller.Dispose(); Panels.Dispose(); }
+    }
+
+    [Fact]
+    public async Task ReadUsesCapturedSessionAndEpochWithoutMainSessionFallback()
+    {
+        using var fixture = new Fixture();
+        fixture.Gateway.Read = (request, epoch, _) =>
+        {
+            Assert.Equal("agent:research:one", request.SessionKey);
+            Assert.Equal("cv_one", request.DocumentId);
+            Assert.Equal(12, epoch);
+            return Task.FromResult(Document("exact document"));
+        };
+        await fixture.Controller.LoadAsync();
+        Assert.Equal("exact document", fixture.Controller.Snapshot.Document?.Html);
+        Assert.Null(fixture.Controller.Snapshot.EmbedSandboxMode);
+        Assert.False(ConversationCanvasBoundary.AllowScripts(
+            fixture.Controller.Snapshot.EmbedSandboxMode, fixture.Selection.Content));
+    }
+
+    [Theory]
+    [InlineData("navigation")]
+    [InlineData("epoch")]
+    [InlineData("panel")]
+    [InlineData("close")]
+    [InlineData("dispose")]
+    public async Task StaleReadCompletionCannotPaintAfterOwnerChanges(string change)
+    {
+        using var fixture = new Fixture();
+        var result = new TaskCompletionSource<CanvasDocumentView>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Gateway.Read = (_, _, _) => result.Task;
+        var read = fixture.Controller.LoadAsync();
+        Assert.Equal(ChatConversationCanvasPhase.Loading, fixture.Controller.Snapshot.Phase);
+        switch (change)
+        {
+            case "navigation": fixture.Panels.ExpectSelection("agent:research:two"); break;
+            case "epoch": fixture.Gateway.Epoch++; fixture.Panels.Refresh(); break;
+            case "panel": fixture.Panels.Open("files"); break;
+            case "close": fixture.Panels.Close("canvas"); break;
+            case "dispose": fixture.Controller.Dispose(); break;
+        }
+        result.SetResult(Document("stale bytes"));
+        await read;
+        Assert.Null(fixture.Controller.Snapshot.Document);
+        Assert.Equal(ChatConversationCanvasPhase.Waiting, fixture.Controller.Snapshot.Phase);
+    }
+
+    [Fact]
+    public async Task NewRetryWinsEvenWhenOldTransportIgnoresCancellation()
+    {
+        using var fixture = new Fixture();
+        var first = new TaskCompletionSource<CanvasDocumentView>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Gateway.Read = (_, _, _) => first.Task;
+        var old = fixture.Controller.LoadAsync();
+        fixture.Gateway.Read = (_, _, _) => Task.FromResult(Document("new bytes"));
+        await fixture.Controller.LoadAsync();
+        first.SetResult(Document("old bytes"));
+        await old;
+        Assert.Equal("new bytes", fixture.Controller.Snapshot.Document?.Html);
+    }
+
+    [Fact]
+    public async Task UnexpectedTransportCancellationHasVisibleErrorAndCanRetry()
+    {
+        using var fixture = new Fixture();
+        fixture.Gateway.Read = (_, _, _) => Task.FromException<CanvasDocumentView>(new OperationCanceledException("transport"));
+        await fixture.Controller.LoadAsync();
+        Assert.Equal(ChatConversationCanvasPhase.Error, fixture.Controller.Snapshot.Phase);
+        fixture.Gateway.Read = (_, _, _) => Task.FromResult(Document("recovered"));
+        await fixture.Ready();
+        Assert.Equal("recovered", fixture.Controller.Snapshot.Document?.Html);
+    }
+
+    [Fact]
+    public async Task SuspendedSurfaceRetainsDocumentButCannotAcceptPromptsUntilRenderedAgain()
+    {
+        using var fixture = new Fixture();
+        await fixture.Ready();
+        var operation = fixture.Controller.Snapshot.Operation!;
+        fixture.Controller.SurfaceSuspended(operation);
+        Assert.Equal(ChatConversationCanvasPhase.Loaded, fixture.Controller.Snapshot.Phase);
+        Assert.NotNull(fixture.Controller.Snapshot.Document);
+        Assert.Equal(ChatConversationCanvasPromptResult.Rejected,
+            await fixture.Controller.SubmitPromptAsync("hello", () => true, DateTimeOffset.UtcNow));
+        fixture.Controller.SurfaceReady(operation);
+        Assert.Equal(ChatConversationCanvasPhase.Ready, fixture.Controller.Snapshot.Phase);
+    }
+
+    [Fact]
+    public async Task WrongSessionOwnerCannotDispatchEvenOnSameClient()
+    {
+        using var fixture = new Fixture();
+        using var wrong = new ChatConversationCanvasController(fixture.Panels,
+            fixture.Selection with { Owner = fixture.Selection.Owner with { SessionId = "other-session" } },
+            (_, _) => Task.FromResult(ChatConversationCanvasPromptResult.Accepted));
+        await wrong.LoadAsync();
+        Assert.Equal(0, fixture.Gateway.Reads);
+        Assert.Equal(ChatConversationCanvasPhase.Waiting, wrong.Snapshot.Phase);
+    }
+
+    [Fact]
+    public async Task PluginDescriptorNeverUsesCanvasDocumentRpc()
+    {
+        using var fixture = new Fixture();
+        using var plugin = new ChatConversationCanvasController(fixture.Panels,
+            fixture.Selection with { Content = fixture.Selection.Content with { Kind = ConversationCanvasContentKind.McpApp } },
+            (_, _) => Task.FromResult(ChatConversationCanvasPromptResult.Accepted));
+        await plugin.LoadAsync();
+        Assert.Equal(ChatConversationCanvasPhase.Unsupported, plugin.Snapshot.Phase);
+        Assert.Equal(0, fixture.Gateway.Reads);
+    }
+
+    [Theory]
+    [InlineData(false, "ordinary text")]
+    [InlineData(true, "/reset")]
+    [InlineData(true, "!command")]
+    public async Task PromptRequiresFocusAndConversationalText(bool focused, string text)
+    {
+        var submitted = 0;
+        using var fixture = new Fixture((_, _) =>
+        {
+            submitted++;
+            return Task.FromResult(ChatConversationCanvasPromptResult.Accepted);
+        });
+        await fixture.Ready();
+        Assert.Equal(ChatConversationCanvasPromptResult.Rejected,
+            await fixture.Controller.SubmitPromptAsync(text, () => focused, DateTimeOffset.UtcNow));
+        Assert.Equal(0, submitted);
+    }
+
+    [Fact]
+    public async Task PromptIsBoundedAndWaitsForActualParentAcceptance()
+    {
+        var started = new TaskCompletionSource<ChatConversationCanvasPrompt>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var accepted = new TaskCompletionSource<ChatConversationCanvasPromptResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var fixture = new Fixture((prompt, _) => { started.SetResult(prompt); return accepted.Task; });
+        await fixture.Ready();
+        var pending = fixture.Controller.SubmitPromptAsync("explain this", () => true, DateTimeOffset.UtcNow);
+        var captured = await started.Task;
+        Assert.Equal(fixture.Selection, captured.Selection);
+        Assert.Equal("explain this", captured.Text);
+        Assert.False(pending.IsCompleted);
+        Assert.Equal(ChatConversationCanvasPromptResult.Rejected,
+            await fixture.Controller.SubmitPromptAsync("second", () => true, DateTimeOffset.UtcNow));
+        fixture.Panels.Bind("agent:research:two");
+        accepted.SetResult(ChatConversationCanvasPromptResult.Accepted);
+        Assert.Equal(ChatConversationCanvasPromptResult.Stale, await pending);
+    }
+
+    [Fact]
+    public async Task PromptRateLimitIsTenPerMinuteForOneCapturedDocumentLifetime()
+    {
+        using var fixture = new Fixture();
+        await fixture.Ready();
+        var now = new DateTimeOffset(2026, 10, 22, 0, 0, 0, TimeSpan.Zero);
+        for (var count = 0; count < 10; count++)
+            Assert.Equal(ChatConversationCanvasPromptResult.Accepted,
+                await fixture.Controller.SubmitPromptAsync("hello", () => true, now));
+        Assert.Equal(ChatConversationCanvasPromptResult.Rejected,
+            await fixture.Controller.SubmitPromptAsync("eleventh", () => true, now.AddSeconds(59)));
+        Assert.Equal(ChatConversationCanvasPromptResult.Accepted,
+            await fixture.Controller.SubmitPromptAsync("next minute", () => true, now.AddMinutes(1)));
+    }
+
+    [Fact]
+    public void ProfilePathsAreEphemeralUnderSuppliedRootAndContainNoConversationIdentity()
+    {
+        using var root = new TempDirectory();
+        var first = new ConversationCanvasProfile(root.Path);
+        var second = new ConversationCanvasProfile(root.Path);
+        Assert.NotEqual(first.DirectoryPath, second.DirectoryPath);
+        Assert.StartsWith(root.Path + Path.DirectorySeparatorChar + "ConversationCanvas" + Path.DirectorySeparatorChar,
+            first.DirectoryPath, StringComparison.OrdinalIgnoreCase);
+        first.Create();
+        File.WriteAllText(Path.Combine(first.DirectoryPath, "owned-fixture.txt"), "fixture");
+        first.DeleteAfterBrowserExit();
+        Assert.False(Directory.Exists(first.DirectoryPath));
+        Assert.True(Directory.Exists(root.Path));
+    }
+
+    [Theory]
+    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", FileAttributes.Directory, true)]
+    [InlineData("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", FileAttributes.Directory | FileAttributes.ReparsePoint, false)]
+    [InlineData("another-session", FileAttributes.Directory, false)]
+    public void OrphanSweepRefusesUnknownFoldersAndRedirectedProfiles(string name, FileAttributes attributes, bool eligible) =>
+        Assert.Equal(eligible, ConversationCanvasProfile.IsSweepCandidate(name, attributes));
+
+    [Fact]
+    public void OrphanSweepPreservesLiveAndUnknownProfilesAndDeletesOnlyRecordedDeadOwners()
+    {
+        using var root = new TempDirectory();
+        var active = new ConversationCanvasProfile(root.Path);
+        active.Create();
+        active.RecordBrowser(Environment.ProcessId);
+        var profiles = Path.GetDirectoryName(active.DirectoryPath)!;
+        var stale = Path.Combine(profiles, new string('a', 32));
+        Directory.CreateDirectory(stale);
+        File.WriteAllText(Path.Combine(stale, "companion-owner.json"), """
+            {"Format":"openclaw-conversation-canvas-profile/v1","ProcessId":2147483647,
+             "StartTimeUtcTicks":1,"BrowserProcessId":2147483646,"BrowserStartTimeUtcTicks":1}
+            """);
+        var unknown = Path.Combine(profiles, new string('b', 32));
+        Directory.CreateDirectory(unknown);
+        File.WriteAllText(Path.Combine(unknown, "unknown.txt"), "leave intact");
+        ConversationCanvasProfile.SweepStaleProfiles(profiles);
+        Assert.True(Directory.Exists(active.DirectoryPath));
+        Assert.True(Directory.Exists(unknown));
+        Assert.False(Directory.Exists(stale));
+        active.DeleteAfterBrowserExit();
+    }
+
+    [Theory]
+    [InlineData("malformed")]
+    [InlineData("oversized")]
+    [InlineData("browser-unrecorded")]
+    public void OrphanSweepPreservesUnprovenOwnership(string kind)
+    {
+        using var root = new TempDirectory();
+        var folder = root.Combine(new string('c', 32));
+        Directory.CreateDirectory(folder);
+        var marker = kind switch
+        {
+            "malformed" => "{not valid JSON",
+            "oversized" => new string(' ', 2049),
+            _ => """
+                {"Format":"openclaw-conversation-canvas-profile/v1","ProcessId":2147483647,
+                 "StartTimeUtcTicks":1,"BrowserProcessId":0,"BrowserStartTimeUtcTicks":0}
+                """
+        };
+        File.WriteAllText(Path.Combine(folder, "companion-owner.json"), marker);
+        ConversationCanvasProfile.SweepStaleProfiles(root.Path);
+        Assert.True(Directory.Exists(folder));
+    }
+
+    [Fact]
+    public void ReusedProcessIdDoesNotPreserveAnOldOwnedProfile()
+    {
+        using var root = new TempDirectory();
+        var folder = root.Combine(new string('d', 32));
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "companion-owner.json"), $$"""
+            {"Format":"openclaw-conversation-canvas-profile/v1","ProcessId":{{Environment.ProcessId}},
+             "StartTimeUtcTicks":1,"BrowserProcessId":{{Environment.ProcessId}},"BrowserStartTimeUtcTicks":1}
+            """);
+        ConversationCanvasProfile.SweepStaleProfiles(root.Path);
+        Assert.False(Directory.Exists(folder));
+    }
+}

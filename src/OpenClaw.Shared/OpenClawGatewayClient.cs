@@ -781,7 +781,7 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
                 ExtractOrderedMessageContent(m, role, toolContent));
             if (string.IsNullOrEmpty(text)
                 && toolContent.Count == 0
-                && contentParts.All(static part => part.Kind != ChatMessageContentPartKind.Media))
+                && contentParts.All(static part => part.Kind is not (ChatMessageContentPartKind.Media or ChatMessageContentPartKind.Canvas)))
             {
                 continue;
             }
@@ -947,6 +947,8 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
                         : null,
                     IsError = ReadNullableBoolean(item, "isError", "is_error")
                         ?? ReadBoolean(message, "isError", "is_error"),
+                    CanvasContent = kind == ChatToolContentKind.Result
+                        ? ConversationCanvasContent.ReadToolResult(item) : [],
                 });
             }
         }
@@ -957,7 +959,7 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
             || (hasArrayContent && normalizedRole is "tool" or "function");
         if (blocks.All(static block => block.Kind != ChatToolContentKind.Result)
             && supportsResultFallback
-            && !string.IsNullOrEmpty(messageText))
+            && (!string.IsNullOrEmpty(messageText) || ConversationCanvasContent.ReadToolResult(message).Count > 0))
         {
             blocks.Add(new ChatToolContentInfo
             {
@@ -972,6 +974,7 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
                 ToolName = ReadFirstString(message, "toolName", "tool_name", "name") ?? "tool",
                 Text = messageText,
                 IsError = ReadBoolean(message, "isError", "is_error"),
+                CanvasContent = ConversationCanvasContent.ReadToolResult(message),
             });
         }
 
@@ -1045,6 +1048,15 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
             }
 
             FlushTextRun();
+            if (ConversationCanvasContent.ReadContentBlock(item) is { } canvas)
+            {
+                parts.Add(new ChatMessageContentPartInfo
+                {
+                    Kind = ChatMessageContentPartKind.Canvas,
+                    Canvas = canvas,
+                });
+                continue;
+            }
             if (TryParseStructuredMedia(item, normalizedType, out var media))
             {
                 parts.Add(new ChatMessageContentPartInfo
@@ -1075,7 +1087,8 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
             .ToLowerInvariant();
         if (structuredToolCount == 0
             && normalizedRole is "toolresult" or "tool" or "function"
-            && toolContent.Count > 0)
+            && toolContent.Count > 0
+            && parts.All(static part => part.Kind != ChatMessageContentPartKind.Canvas))
         {
             return toolContent
                 .Select(static tool => new ChatMessageContentPartInfo
@@ -4158,7 +4171,8 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
             var toolContent = ExtractToolContent(message, role, text);
             var contentParts = ExtractOrderedMessageContent(message, role, toolContent);
             if (string.IsNullOrEmpty(text)
-                && contentParts.All(static part => part.Kind != ChatMessageContentPartKind.Media))
+                && contentParts.All(static part => part.Kind is not (ChatMessageContentPartKind.Media or ChatMessageContentPartKind.Canvas)) &&
+                toolContent.All(static tool => tool.CanvasContent.Count == 0))
             {
                 return;
             }

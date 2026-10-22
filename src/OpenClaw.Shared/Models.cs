@@ -1913,6 +1913,7 @@ public class ChatToolContentInfo
     public JsonElement? Args { get; set; }
     public string? Text { get; set; }
     public bool IsError { get; set; }
+    public IReadOnlyList<ConversationCanvasContent> CanvasContent { get; set; } = [];
 }
 
 public enum ChatMessageContentPartKind
@@ -1920,6 +1921,7 @@ public enum ChatMessageContentPartKind
     Text,
     Tool,
     Media,
+    Canvas,
 }
 
 public class ChatMessageContentPartInfo
@@ -1928,6 +1930,7 @@ public class ChatMessageContentPartInfo
     public string? Text { get; set; }
     public ChatToolContentInfo? Tool { get; set; }
     public ChatMediaContentInfo? Media { get; set; }
+    public ConversationCanvasContent? Canvas { get; set; }
 }
 
 public enum ChatMediaContentKind

@@ -8089,4 +8089,14 @@
   <data name="Chat_Panel_WidthFormat" xml:space="preserve"><value>宽度为 {0} 像素</value></data>
   <data name="Chat_Panel_Waiting" xml:space="preserve"><value>正在等待此对话连接。已保留您的面板选择。</value></data>
   <data name="Chat_Panel_Unavailable" xml:space="preserve"><value>此内容在当前对话中已不可用。</value></data>
+  <data name="Chat_Canvas_Loading" xml:space="preserve"><value>正在加载 Canvas...</value></data>
+  <data name="Chat_Canvas_Ready" xml:space="preserve"><value>Canvas</value></data>
+  <data name="Chat_Canvas_Waiting" xml:space="preserve"><value>请重新连接以查看此 Canvas 文档。</value></data>
+  <data name="Chat_Canvas_Unsupported" xml:space="preserve"><value>此 Gateway 不支持对话中的 Canvas 文档。</value></data>
+  <data name="Chat_Canvas_PluginUnsupported" xml:space="preserve"><value>此版本不支持 MCP 应用。</value></data>
+  <data name="Chat_Canvas_PreviewUnsupported" xml:space="preserve"><value>此托管预览不是受支持的对话 Canvas 文档。</value></data>
+  <data name="Chat_Canvas_Blocked" xml:space="preserve"><value>Canvas 内容已被阻止。请检查 Gateway 权限和沙盒配置，然后重试。</value></data>
+  <data name="Chat_Canvas_Error" xml:space="preserve"><value>无法加载 Canvas。请检查 Gateway 连接，然后重试。</value></data>
+  <data name="Chat_Canvas_ScriptsRestricted" xml:space="preserve"><value>Gateway 策略为严格模式或不可用，因此脚本已禁用。</value></data>
+  <data name="Chat_Canvas_InteractionBlocked" xml:space="preserve"><value>Canvas 内容中不允许执行此操作。</value></data>
 </root>

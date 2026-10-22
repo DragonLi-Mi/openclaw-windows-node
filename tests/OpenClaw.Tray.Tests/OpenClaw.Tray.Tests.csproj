@@ -96,6 +96,8 @@
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatPlacementController.cs" Link="Chat\ChatPlacementController.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatConversationPanelState.cs" Link="Chat\ChatConversationPanelState.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatConversationPanelBinding.cs" Link="Chat\ChatConversationPanelBinding.cs" />
+    <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatConversationCanvasController.cs" Link="Chat\ChatConversationCanvasController.cs" />
+    <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ConversationCanvasProfile.cs" Link="Chat\ConversationCanvasProfile.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatComposerSession.cs" Link="Chat\ChatComposerSession.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\IChatComposerFactory.cs" Link="Chat\IChatComposerFactory.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatComposerFactory.cs" Link="Chat\ChatComposerFactory.cs" />

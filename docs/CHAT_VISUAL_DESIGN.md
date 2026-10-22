@@ -102,6 +102,49 @@ Files requires the selected session's Gateway-provided source and conflict-safe
 save contract. Hosted Canvas content requires its separate isolated content
 boundary; a native panel alone does not establish Canvas parity.
 
+### Conversation Canvas content boundary
+
+`ReactorConversationCanvas` is the content consumer for the conversation panel,
+not the node-global `canvas.*` window. Integration must supply a typed descriptor,
+the exact accepted conversation identity and the normal composer's acknowledged
+prompt-admission callback. Visible tool text does not supply document ownership.
+The Shared parser preserves ordered `type:"canvas"` blocks and structured MCP App
+preview metadata rather than treating HTML or document identifiers as media.
+
+Saved documents use the advertised `canvas.document.view` method with the captured
+session key, document id and ready-connection epoch. The authenticated response
+supplies HTML and the public sandbox shell URL. The content-only WebView2 uses
+one ephemeral profile per surface, a trusted in-memory parent document, and the
+Gateway's separate-origin `/mcp-app-sandbox` proxy. Authored HTML is delivered by
+message to that proxy, whose inner document remains sandboxed. No Gateway token,
+local directory mapping, host object, OS bridge or general native RPC is exposed.
+
+The native consumer has localized loading, waiting, blocked, unsupported and
+retry states. Missing effective Gateway embed policy disables scripts and shows
+an explicit restriction notice; a preview's `scripts` field alone cannot grant
+execution. The narrow private prompt channel requires current visible focus,
+non-command text of at most 4,000 characters, no control or bidi-override
+characters, at most ten prompts per minute, and the parent conversation's actual
+acceptance. This character rejection is intentionally stricter than the web
+client. Close or owner change disposes the surface; a reconnect must refetch the
+document rather than reuse old sandbox or prompt authority.
+The rate limit belongs to the captured controller lifetime; reopening creates
+a new limiter. Retiring browser environments remain rooted until exit, and
+normal cleanup removes only their own profile after exit. First-use cleanup
+runs off the UI thread and considers only versioned GUID profile directories
+whose recorded app and browser process identities have both ended. Unknown,
+malformed, redirected or potentially live profiles remain untouched. A crash
+before the browser identity is recorded can leave an unsweepable profile; it is
+preserved rather than risking a live browser's files.
+
+This consumer slice does not implement legacy hosted-URL previews or the richer
+MCP App `ui/initialize` bridge. Both have explicit unsupported states. MCP App
+tools, resources, model context, messages, file-open confirmations and negotiated
+display modes require their own captured view/session owner and must not be
+silently routed through the Canvas prompt channel. Root/transcript integration,
+authoritative script-policy transport and current-build populated native proof
+are separate completion gates, not claims established by source or unit tests.
+
 Queued submissions leave the textbox and remain after the current turn as normal
 right-aligned user bubbles. A transparent `ChatPendingUserBrush`, subtle `ChatStrokeBrush`
 outline, and slightly faded `ChatSecondaryTextBrush` distinguish them from sent messages without

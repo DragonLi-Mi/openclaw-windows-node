@@ -135,6 +135,61 @@ public sealed class GatewayProtocolLiveRoundTripTests : IDisposable
         await client.DisconnectAsync();
     }
 
+    [Fact]
+    public async Task CanvasDocument_UsesExactSessionAndAdvertisedAuthenticatedRpc()
+    {
+        using var server = new LoopbackGatewayServer();
+        server.OnMethod("connect", _ => new
+        {
+            type = "hello-ok", protocol = GatewayProtocolContract.CurrentVersion,
+            features = new { methods = new[] { "canvas.document.view" } }
+        });
+        server.OnMethod("canvas.document.view", parameters =>
+        {
+            Assert.Equal("cv_one", parameters.GetProperty("docId").GetString());
+            Assert.Equal("agent:research:one", parameters.GetProperty("sessionKey").GetString());
+            Assert.Equal(2, parameters.EnumerateObject().Count());
+            return new { html = "<p>authenticated bytes</p>", sandboxUrl = "/mcp-app-sandbox?v=fixture", sandboxPort = 18790 };
+        });
+        using var client = new OpenClawGatewayClient(server.WebSocketUrl, "test-token", identityPath: _identityDir);
+        await ConnectAndWaitAsync(client, server, configureHandshake: false);
+        var document = await client.ViewCanvasDocumentAsync(
+            new("cv_one", "agent:research:one"), client.SessionMutationConnectionEpoch!.Value);
+        Assert.Equal("<p>authenticated bytes</p>", document.Html);
+        Assert.Equal("/mcp-app-sandbox", document.SandboxUrl.AbsolutePath);
+        Assert.DoesNotContain("test-token", document.SandboxUrl.AbsoluteUri);
+        Assert.False(ConversationCanvasBoundary.SameOrigin(document.GatewayOrigin, document.SandboxUrl));
+        await client.DisconnectAsync();
+    }
+
+    [Theory]
+    [InlineData("unadvertised")]
+    [InlineData("stale")]
+    [InlineData("cancelled")]
+    public async Task CanvasDocument_UnsupportedOrSupersededReadNeverReachesWire(string reason)
+    {
+        using var server = new LoopbackGatewayServer();
+        server.OnMethod("connect", _ => new
+        {
+            type = "hello-ok", protocol = GatewayProtocolContract.CurrentVersion,
+            features = new { methods = reason == "unadvertised" ? Array.Empty<string>() : new[] { "canvas.document.view" } }
+        });
+        using var client = new OpenClawGatewayClient(server.WebSocketUrl, "test-token", identityPath: _identityDir);
+        await ConnectAndWaitAsync(client, server, configureHandshake: false);
+        using var cancellation = new CancellationTokenSource();
+        if (reason == "cancelled") cancellation.Cancel();
+        var epoch = client.SessionMutationConnectionEpoch!.Value + (reason == "stale" ? 1 : 0);
+        var request = new CanvasDocumentRequest("cv_one", "agent:research:one");
+        if (reason == "unadvertised")
+            await Assert.ThrowsAsync<NotSupportedException>(() => client.ViewCanvasDocumentAsync(request, epoch));
+        else if (reason == "stale")
+            await Assert.ThrowsAsync<InvalidOperationException>(() => client.ViewCanvasDocumentAsync(request, epoch));
+        else
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => client.ViewCanvasDocumentAsync(request, epoch, cancellation.Token));
+        Assert.False(server.HasFrame("canvas.document.view"));
+        await client.DisconnectAsync();
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
