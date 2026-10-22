@@ -8,7 +8,8 @@ internal sealed record ChatConversationIdentity(
     string SigningDeviceId,
     string SessionKey,
     string? SessionId,
-    string? AgentId);
+    string? AgentId,
+    string? UserId = null);
 
 /// <summary>
 /// Captured from the selected session on the authenticated, manager-owned client.
@@ -19,13 +20,16 @@ internal sealed record ChatConversationContext(
     IOperatorGatewayClient Client,
     long ConnectionEpoch,
     string? ExecNodeId = null,
-    string? WorktreeId = null)
+    string? WorktreeId = null,
+    long AccountRevision = 0)
 {
     internal static ChatConversationContext? Capture(
-        string? gatewayId, IOperatorGatewayClient client, SessionInfo? session)
+        string? gatewayId, IOperatorGatewayClient client, SessionInfo? session,
+        string? userId = null, long accountRevision = 0)
     {
         var signingDeviceId = client.AuthenticatedSigningDeviceId;
         if (string.IsNullOrWhiteSpace(gatewayId) ||
+            string.IsNullOrWhiteSpace(userId) ||
             !client.IsConnectedToGateway ||
             client.SessionMutationConnectionEpoch is not { } epoch ||
             string.IsNullOrWhiteSpace(signingDeviceId) ||
@@ -33,10 +37,10 @@ internal sealed record ChatConversationContext(
             return null;
 
         return new(new(gatewayId, signingDeviceId, session.Key,
-            session.SessionId, session.AgentId), client, epoch, session.ExecNode, session.Worktree?.Id);
+            session.SessionId, session.AgentId, userId), client, epoch, session.ExecNode, session.Worktree?.Id, accountRevision);
     }
 
-    internal bool IsTransportCurrent => Client.IsConnectedToGateway &&
+    internal bool IsTransportCurrent => !string.IsNullOrWhiteSpace(Identity.UserId) && Client.IsConnectedToGateway &&
         Client.SessionMutationConnectionEpoch is { } epoch && epoch == ConnectionEpoch &&
         !string.IsNullOrWhiteSpace(Client.AuthenticatedSigningDeviceId) &&
         string.Equals(Client.AuthenticatedSigningDeviceId, Identity.SigningDeviceId, StringComparison.Ordinal);
@@ -87,6 +91,7 @@ public sealed class ChatConversationPanelState : IDisposable
     internal const double ResizeStep = 16;
     private readonly object _gate = new();
     private readonly Func<string, ChatConversationContext?> _resolveContext;
+    private readonly Func<ChatConversationAccountStatus>? _accountStatus;
     private readonly ChatConversationPanelLayouts _layouts;
     private CancellationTokenSource _cancellation = new();
     private ChatConversationContext? _context;
@@ -98,12 +103,15 @@ public sealed class ChatConversationPanelState : IDisposable
     private long _generation;
     private bool _active = true;
     private bool _disposed;
+    private ChatConversationAccountStatus _currentAccountStatus;
 
     internal ChatConversationPanelState(
-        Func<string, ChatConversationContext?> resolveContext, ChatConversationPanelLayouts? layouts = null)
+        Func<string, ChatConversationContext?> resolveContext, ChatConversationPanelLayouts? layouts = null,
+        Func<ChatConversationAccountStatus>? accountStatus = null)
     {
         _resolveContext = resolveContext;
         _layouts = layouts ?? new();
+        _accountStatus = accountStatus;
     }
 
     internal event Action? Changed;
@@ -111,6 +119,7 @@ public sealed class ChatConversationPanelState : IDisposable
     internal ChatConversationContext? Context { get { lock (_gate) return _context; } }
     internal ChatConversationPanelLayout Layout { get { lock (_gate) return _layout; } }
     internal long Generation { get { lock (_gate) return _generation; } }
+    internal ChatConversationAccountStatus AccountStatus { get { lock (_gate) return _currentAccountStatus; } }
     internal bool IsReady
     {
         get
@@ -146,12 +155,19 @@ public sealed class ChatConversationPanelState : IDisposable
 
     internal void Bind(string? sessionKey)
     {
-        var context = sessionKey is null ? null : _resolveContext(sessionKey);
-        ApplyBinding(sessionKey, context);
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            long generation;
+            lock (_gate) generation = _generation;
+            var context = sessionKey is null ? null : _resolveContext(sessionKey);
+            if (ApplyBinding(sessionKey, context, generation)) return;
+        }
     }
 
     private bool ApplyBinding(string? sessionKey, ChatConversationContext? context, long? expectedGeneration = null)
     {
+        if (context?.IsTransportCurrent != true) context = null;
+        var accountStatus = _accountStatus?.Invoke() ?? ChatConversationAccountStatus.Known;
         CancellationTokenSource? previous;
         lock (_gate)
         {
@@ -161,12 +177,15 @@ public sealed class ChatConversationPanelState : IDisposable
                 return true;
             var selectionPending = _expectedSelection is not null;
             _expectedSelection = null;
-            if (!selectionPending && _sessionKey == sessionKey && Equals(_context, context)) return true;
+            if (!selectionPending && _sessionKey == sessionKey && Equals(_context, context) &&
+                _currentAccountStatus == accountStatus) return true;
             SaveLayout();
-            var retainingOfflineSelection = _sessionKey == sessionKey && context is null;
+            var retainingOfflineSelection = _sessionKey == sessionKey && context is null &&
+                accountStatus == ChatConversationAccountStatus.Known;
             _active = true;
             _sessionKey = sessionKey;
             _context = context;
+            _currentAccountStatus = accountStatus;
             _selectedContent = null;
             _selectedRun = null;
             _layout = context is null
@@ -283,15 +302,17 @@ public sealed class ChatConversationPanelState : IDisposable
         Changed?.Invoke();
     }
 
-    internal ChatConversationPanelOperation? BeginOperation(string panelId, string? runId = null)
+    internal ChatConversationPanelOperation? BeginOperation(
+        string panelId, string? runId = null, string? expectedContentId = null)
     {
         var current = ResolveCurrent();
         lock (_gate)
         {
             if (!IsContextCurrent(current) || _layout.SelectedPanel != panelId) return null;
             if (runId is not null && runId != _selectedRun) return null;
+            if (expectedContentId is not null && expectedContentId != _selectedContent) return null;
             var context = _context!;
-            return new(this, context, panelId, _selectedRun, _generation, _cancellation.Token,
+            return new(this, context, panelId, _selectedContent, _selectedRun, _generation, _cancellation.Token,
                 new WorkspaceSessionOperation(context.Client,
                     () => _resolveContext(context.Identity.SessionKey)?.Client));
         }
@@ -305,6 +326,7 @@ public sealed class ChatConversationPanelState : IDisposable
             return !operation.CancellationToken.IsCancellationRequested &&
                 operation.Generation == _generation &&
                 _layout.SelectedPanel == operation.PanelId &&
+                _selectedContent == operation.ContentId &&
                 _selectedRun == operation.RunId &&
                 Equals(operation.Context, _context) &&
                 connectionCurrent && IsContextCurrent(current);
@@ -352,10 +374,14 @@ public sealed class ChatConversationPanelState : IDisposable
             _generation++;
             _context = null;
         }
-        Cancel(previous);
-        Changed = null;
-        Disposed?.Invoke();
-        Disposed = null;
+        try { Cancel(previous); }
+        finally
+        {
+            Changed = null;
+            var disposed = Disposed;
+            Disposed = null;
+            disposed?.Invoke();
+        }
     }
 }
 
@@ -363,6 +389,7 @@ internal sealed class ChatConversationPanelOperation(
     ChatConversationPanelState owner,
     ChatConversationContext context,
     string panelId,
+    string? contentId,
     string? runId,
     long generation,
     CancellationToken cancellationToken,
@@ -370,6 +397,7 @@ internal sealed class ChatConversationPanelOperation(
 {
     internal ChatConversationContext Context { get; } = context;
     internal string PanelId { get; } = panelId;
+    internal string? ContentId { get; } = contentId;
     internal string? RunId { get; } = runId;
     internal long Generation { get; } = generation;
     internal CancellationToken CancellationToken { get; } = cancellationToken;

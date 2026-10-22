@@ -266,7 +266,9 @@ public sealed class OpenClawReactorChatRoot : Component<OpenClawReactorChatRootP
             mediaResolver = dataProvider is null ? null : dataProvider.ResolveAssistantMediaAsync;
         Func<string, ChatMediaContentInfo, CancellationToken, Task<AssistantFileDownloadStatus>>?
             fileDownloader = dataProvider is null ? null : dataProvider.DownloadAssistantFileAsync;
-        var renderedPanelContext = effectiveThread is not null
+        var renderedPanelContext = effectiveThread is not null &&
+            ChatConversationToolDetails.HasCurrentHistory(nativeProvider is not null,
+                effectiveThread.Id, snapshot.CurrentHistoryThreads)
             ? props.Panels?.Resolve(effectiveThread.Id) : null;
         Action<ChatToolDetailRequest>? openToolDetails = props.Panels is { } detailPanels &&
             renderedPanelContext is { } detailContext

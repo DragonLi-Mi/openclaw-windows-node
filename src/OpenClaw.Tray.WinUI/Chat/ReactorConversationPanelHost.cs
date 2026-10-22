@@ -54,6 +54,16 @@ internal sealed class ReactorConversationPanelHost : Component<ReactorConversati
             ? Math.Min(layout.Width, width - ChatConversationPanelState.MinimumConversationWidth - 12)
             : 0;
         var contextReady = state.IsReady && state.Context?.Identity.SessionKey == props.SessionKey;
+        var accountMessage = Text(state.AccountStatus switch
+        {
+            ChatConversationAccountStatus.Loading => "AccountLoading",
+            ChatConversationAccountStatus.Profileless or ChatConversationAccountStatus.Unavailable => "AccountUnavailable",
+            ChatConversationAccountStatus.Failed => "AccountFailed",
+            ChatConversationAccountStatus.RequiresReconnect => "AccountChanged",
+            _ => "Waiting"
+        });
+        var showAccountNotice = !open && props.SessionKey is not null &&
+            state.AccountStatus != ChatConversationAccountStatus.Known;
 
         void Close()
         {
@@ -80,7 +90,7 @@ internal sealed class ReactorConversationPanelHost : Component<ReactorConversati
                     .Grid(row: 0),
                 (open && contextReady
                     ? props.RenderContent(selected!)
-                    : TextBlock(Text("Waiting"))
+                    : TextBlock(accountMessage)
                         .TextWrapping(TextWrapping.Wrap)
                         .Margin(16)
                         .VAlign(VerticalAlignment.Top))
@@ -128,12 +138,26 @@ internal sealed class ReactorConversationPanelHost : Component<ReactorConversati
                     .Grid(column: 0, row: 1),
                 resize.Grid(row: 1),
                 panel.Grid(column: narrow ? 0 : 2, row: 1),
-                Button(TextBlock(Text("Show")), () => setCompactPanelPresented(true))
-                    .AutomationName(Text("Show"))
-                    .AutomationId("ConversationPanelShow")
-                    .IsVisible(open && narrow && !compactPanelPresented)
-                    .HAlign(HorizontalAlignment.Right)
-                    .Margin(8)
+                Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto],
+                    TextBlock(accountMessage)
+                        .TextWrapping(TextWrapping.Wrap)
+                        .AutomationId("ConversationPanelAccountStatus")
+                        .Set(text =>
+                        {
+                            text.Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"];
+                            AutomationProperties.SetLiveSetting(text, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+                        })
+                        .IsVisible(showAccountNotice)
+                        .Margin(12, 8)
+                        .Grid(column: 0),
+                    Button(TextBlock(Text("Show")), () => setCompactPanelPresented(true))
+                        .AutomationName(Text("Show"))
+                        .AutomationId("ConversationPanelShow")
+                        .IsVisible(open && narrow && !compactPanelPresented)
+                        .HAlign(HorizontalAlignment.Right)
+                        .Margin(8)
+                        .Grid(column: 1))
+                    .IsVisible(showAccountNotice || open && narrow && !compactPanelPresented)
                     .Grid(row: 0))
             .OnMount(control =>
             {

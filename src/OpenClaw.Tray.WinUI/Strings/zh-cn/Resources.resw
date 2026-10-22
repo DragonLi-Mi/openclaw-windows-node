@@ -8090,4 +8090,8 @@
   <data name="Chat_Panel_Waiting" xml:space="preserve"><value>正在等待此对话连接。已保留您的面板选择。</value></data>
   <data name="Chat_Panel_Unavailable" xml:space="preserve"><value>此内容在当前对话中已不可用。</value></data>
   <data name="Chat_Panel_ToolUnavailable" xml:space="preserve"><value>这些详细信息已不是最新状态。请从当前工具重新打开详细信息。</value></data>
+  <data name="Chat_Panel_AccountLoading" xml:space="preserve"><value>正在验证此对话的操作员帐户。</value></data>
+  <data name="Chat_Panel_AccountUnavailable" xml:space="preserve"><value>此 Gateway 无法验证操作员帐户。对话面板不可用。</value></data>
+  <data name="Chat_Panel_AccountFailed" xml:space="preserve"><value>无法验证操作员帐户。请重新连接以重试。</value></data>
+  <data name="Chat_Panel_AccountChanged" xml:space="preserve"><value>操作员帐户已更改。请重新连接后再打开对话面板。</value></data>
 </root>
