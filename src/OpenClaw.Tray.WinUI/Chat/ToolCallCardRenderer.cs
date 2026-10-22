@@ -23,6 +23,8 @@ internal static class ToolCallCardRenderer
 
     private static readonly ConditionalWeakTable<Expander, ActivityExpanderBinding>
         s_activityBindings = new();
+    private static readonly ConditionalWeakTable<ResourceDictionary, CaptionTypography>
+        s_captionTypography = new();
 
     public static Element BuildStandalone(
         ChatTimelinePresentationContext props,
@@ -146,19 +148,8 @@ internal static class ToolCallCardRenderer
 
     private static Element BuildDetailSection(string label, string content)
     {
-        var captionStyle = (Style)Application.Current.Resources["CaptionTextBlockStyle"];
-        var captionWeight = CaptionStyleValue<global::Windows.UI.Text.FontWeight>(
-            captionStyle, Microsoft.UI.Xaml.Controls.TextBlock.FontWeightProperty);
-        var captionFamily = CaptionStyleValue<FontFamily>(
-            captionStyle, Microsoft.UI.Xaml.Controls.TextBlock.FontFamilyProperty);
-        var captionWrapping = CaptionStyleValue<TextWrapping>(
-            captionStyle, Microsoft.UI.Xaml.Controls.TextBlock.TextWrappingProperty);
-        var captionTrimming = CaptionStyleValue<TextTrimming>(
-            captionStyle, Microsoft.UI.Xaml.Controls.TextBlock.TextTrimmingProperty);
-        var captionLineStacking = CaptionStyleValue<LineStackingStrategy>(
-            captionStyle, Microsoft.UI.Xaml.Controls.TextBlock.LineStackingStrategyProperty);
-        var captionLineBounds = CaptionStyleValue<TextLineBounds>(
-            captionStyle, Microsoft.UI.Xaml.Controls.TextBlock.TextLineBoundsProperty);
+        var caption = s_captionTypography.GetValue(Application.Current.Resources, static resources =>
+            ReadCaptionTypography(key => resources.TryGetValue(key, out var value) ? value : null));
 
         var body = RichTextBlock(content)
             .Set(text =>
@@ -175,15 +166,15 @@ internal static class ToolCallCardRenderer
             4,
             TextBlock(label)
                 // Theme.Ref owns a generated style, so keep native typography in the element record.
-                .FontSize(ThemeResource.Double("CaptionTextBlockFontSize"))
-                .FontWeight(captionWeight)
-                .FontFamily(captionFamily)
-                .TextWrapping(captionWrapping)
-                .TextTrimming(captionTrimming)
+                .FontSize(caption.Size)
+                .FontWeight(caption.Weight)
+                .FontFamily(caption.Family)
+                .TextWrapping(caption.Wrapping)
+                .TextTrimming(caption.Trimming)
                 .Set(text =>
                 {
-                    text.LineStackingStrategy = captionLineStacking;
-                    text.TextLineBounds = captionLineBounds;
+                    text.LineStackingStrategy = caption.LineStacking;
+                    text.TextLineBounds = caption.LineBounds;
                 })
                 .Foreground(Theme.Ref("TextFillColorSecondaryBrush")),
             ScrollViewer(body)
@@ -195,22 +186,42 @@ internal static class ToolCallCardRenderer
                 .MaxHeight(240));
     }
 
-    private static T CaptionStyleValue<T>(Style style, DependencyProperty property)
+    internal static CaptionTypography ReadCaptionTypography(Func<string, object?> lookup)
+    {
+        if (lookup("CaptionTextBlockStyle") is not Style style)
+            throw new InvalidOperationException("The native CaptionTextBlockStyle resource is unavailable.");
+        RequireCaptionSetter(style, Microsoft.UI.Xaml.Controls.TextBlock.FontWeightProperty, "FontWeight");
+        RequireCaptionSetter(style, Microsoft.UI.Xaml.Controls.TextBlock.FontSizeProperty, "FontSize");
+        RequireCaptionSetter(style, Microsoft.UI.Xaml.Controls.TextBlock.FontFamilyProperty, "FontFamily");
+        RequireCaptionSetter(style, Microsoft.UI.Xaml.Controls.TextBlock.TextWrappingProperty, "TextWrapping");
+        RequireCaptionSetter(style, Microsoft.UI.Xaml.Controls.TextBlock.TextTrimmingProperty, "TextTrimming");
+        RequireCaptionSetter(style, Microsoft.UI.Xaml.Controls.TextBlock.LineStackingStrategyProperty, "LineStackingStrategy");
+        RequireCaptionSetter(style, Microsoft.UI.Xaml.Controls.TextBlock.TextLineBoundsProperty, "TextLineBounds");
+
+        var native = new Microsoft.UI.Xaml.Controls.TextBlock { Style = style };
+        return new(
+            native.FontSize, native.FontWeight, native.FontFamily, native.TextWrapping,
+            native.TextTrimming, native.LineStackingStrategy, native.TextLineBounds);
+    }
+
+    private static void RequireCaptionSetter(Style style, DependencyProperty property, string name)
     {
         for (Style? current = style; current is not null; current = current.BasedOn)
         {
-            var setter = current.Setters.OfType<Setter>()
-                .LastOrDefault(item => item.Property == property);
-            if (setter is null)
-                continue;
-            return setter.Value is T value
-                ? value
-                : throw new InvalidOperationException(
-                    $"The native caption style has an unsupported {typeof(T).Name} value.");
+            if (current.Setters.OfType<Setter>().Any(item => item.Property == property))
+                return;
         }
-        throw new InvalidOperationException(
-            $"The native caption style does not define {typeof(T).Name}.");
+        throw new InvalidOperationException($"The native caption style does not define {name}.");
     }
+
+    internal sealed record CaptionTypography(
+        double Size,
+        global::Windows.UI.Text.FontWeight Weight,
+        FontFamily Family,
+        TextWrapping Wrapping,
+        TextTrimming Trimming,
+        LineStackingStrategy LineStacking,
+        TextLineBounds LineBounds);
 
     private static string FormatToolDisplayArgs(System.Text.Json.Nodes.JsonObject args)
     {

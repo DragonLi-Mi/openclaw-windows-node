@@ -11,6 +11,7 @@ using Microsoft.UI.Xaml.Media;
 using OpenClaw.Chat;
 using OpenClawTray.Chat;
 using OpenClawTray.Helpers;
+using Xunit.Abstractions;
 using static Microsoft.UI.Reactor.Factories;
 using static OpenClaw.Tray.UITests.TestSupport;
 
@@ -21,8 +22,36 @@ namespace OpenClaw.Tray.UITests;
 public sealed class ReactorToolActivityProofTests
 {
     private readonly UIThreadFixture _ui;
+    private readonly ITestOutputHelper _output;
 
-    public ReactorToolActivityProofTests(UIThreadFixture ui) => _ui = ui;
+    public ReactorToolActivityProofTests(UIThreadFixture ui, ITestOutputHelper output)
+    {
+        _ui = ui;
+        _output = output;
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DetailCaptions_MissingNativeDefinitionFailsVisibly(bool hasEmptyStyle)
+    {
+        await _ui.RunOnUIAsync(() => AssertMissingCaptionDefinition(hasEmptyStyle));
+    }
+
+    private static void AssertMissingCaptionDefinition(bool hasEmptyStyle)
+    {
+        var applicationResources = Application.Current.Resources;
+        var resources = new Dictionary<string, object>();
+        if (hasEmptyStyle)
+            resources["CaptionTextBlockStyle"] = new Style { TargetType = typeof(TextBlock) };
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            ToolCallCardRenderer.ReadCaptionTypography(key => resources.GetValueOrDefault(key)));
+        Assert.Equal(hasEmptyStyle
+                ? "The native caption style does not define FontWeight."
+                : "The native CaptionTextBlockStyle resource is unavailable.",
+            error.Message);
+        Assert.Same(applicationResources, Application.Current.Resources);
+    }
 
     [Fact]
     public async Task DetailCaptions_FollowContainingThemeWithoutRemounting()
@@ -43,7 +72,30 @@ public sealed class ReactorToolActivityProofTests
         {
             await _ui.RunOnUIAsync(() =>
             {
+                if (Environment.GetEnvironmentVariable("OPENCLAW_VISUAL_TEST_DIR") is { Length: > 0 } proofDirectory)
+                {
+                    Directory.CreateDirectory(proofDirectory);
+                    using var process = System.Diagnostics.Process.GetCurrentProcess();
+                    var handle = WinRT.Interop.WindowNative.GetWindowHandle(_ui.TestWindow);
+                    Assert.NotEqual(IntPtr.Zero, handle);
+                    File.WriteAllText(Path.Combine(proofDirectory, "caption-window.json"),
+                        System.Text.Json.JsonSerializer.Serialize(new
+                        {
+                            PID = process.Id,
+                            StartTime = process.StartTime.ToUniversalTime().ToString("O"),
+                            Executable = process.MainModule?.FileName,
+                            CommandLine = Environment.CommandLine,
+                            HWND = handle.ToInt64(),
+                            DataDirectory = Environment.GetEnvironmentVariable("OPENCLAW_TRAY_DATA_DIR"),
+                            RoamingRoot = Environment.GetEnvironmentVariable("OPENCLAW_TRAY_APPDATA_DIR"),
+                            LocalRoot = Environment.GetEnvironmentVariable("OPENCLAW_TRAY_LOCALAPPDATA_DIR"),
+                            LegacyLocalDirectory = Environment.GetEnvironmentVariable("OPENCLAW_TRAY_LOCAL_DATA_DIR"),
+                            RepositoryRoot = Environment.GetEnvironmentVariable("OPENCLAW_REPO_ROOT"),
+                        }));
+                }
                 themeScope = new ChatThemeProofScope("Light");
+                AssertMissingCaptionDefinition(hasEmptyStyle: false);
+                AssertMissingCaptionDefinition(hasEmptyStyle: true);
                 reference = (TextBlock)XamlReader.Load(
                     """<TextBlock xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Reference caption" />""");
                 var baseReference = (TextBlock)XamlReader.Load(
@@ -104,6 +156,7 @@ public sealed class ReactorToolActivityProofTests
                         Assert.Equal(expected.Opacity, actual.Opacity);
                         Assert.Equal(reference.FontSize, caption.FontSize);
                         Assert.Equal(reference.FontWeight, caption.FontWeight);
+                        Assert.Equal(reference.FontWeight.Weight, caption.FontWeight.Weight);
                         Assert.Equal(reference.FontFamily.Source, caption.FontFamily.Source);
                         Assert.Equal(reference.TextTrimming, caption.TextTrimming);
                         Assert.Equal(reference.TextWrapping, caption.TextWrapping);
@@ -124,6 +177,12 @@ public sealed class ReactorToolActivityProofTests
                 await _ui.RunOnUIAsync(() =>
                     VisualTestCapture.CaptureAsync(surface!, $"ToolDetailCaption-{step++}-{theme}"));
             }
+        }
+        catch (Exception error)
+        {
+            for (Exception? current = error; current is not null; current = current.InnerException)
+                _output.WriteLine($"Caption native failure: {current.GetType().FullName}, HRESULT=0x{current.HResult:X8}");
+            throw;
         }
         finally
         {
