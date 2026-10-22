@@ -29,6 +29,9 @@ internal sealed class ReactorConversationPanelHost : Component<ReactorConversati
         var (compactPanelPresented, setCompactPanelPresented) = UseState(true);
         var toggleCompactPanel = UseRef<Action>(() => { });
         toggleCompactPanel.Current = () => setCompactPanelPresented(!compactPanelPresented);
+        var announcedAccount = UseRef<string?>(null);
+        var announcementRevision = UseRef(0L);
+        var pendingAnnouncementLoad = UseRef<RoutedEventHandler?>(null);
         var focus = UseRef<PanelFocusBinding?>(null);
         var grip = UseRef<PanelResizeBinding?>(null);
         UseEffect((Func<Action>)(() =>
@@ -142,10 +145,47 @@ internal sealed class ReactorConversationPanelHost : Component<ReactorConversati
                     TextBlock(accountMessage)
                         .TextWrapping(TextWrapping.Wrap)
                         .AutomationId("ConversationPanelAccountStatus")
+                        .AutomationName(accountMessage)
                         .Set(text =>
                         {
                             text.Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"];
                             AutomationProperties.SetLiveSetting(text, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
+                            var announcement = showAccountNotice ? accountMessage : null;
+                            if (announcedAccount.Current == announcement) return;
+                            if (pendingAnnouncementLoad.Current is { } previous)
+                                text.Loaded -= previous;
+                            pendingAnnouncementLoad.Current = null;
+                            announcedAccount.Current = announcement;
+                            var revision = ++announcementRevision.Current;
+                            if (announcement is null) return;
+                            void Announce()
+                            {
+                                if (revision == announcementRevision.Current && text.IsLoaded &&
+                                    text.Visibility == Visibility.Visible)
+                                    Microsoft.UI.Xaml.Automation.Peers.FrameworkElementAutomationPeer.CreatePeerForElement(text)
+                                        ?.RaiseAutomationEvent(Microsoft.UI.Xaml.Automation.Peers.AutomationEvents.LiveRegionChanged);
+                            }
+                            if (text.IsLoaded) text.DispatcherQueue.TryEnqueue(Announce);
+                            else
+                            {
+                                RoutedEventHandler? loaded = null;
+                                loaded = (_, _) =>
+                                {
+                                    text.Loaded -= loaded;
+                                    pendingAnnouncementLoad.Current = null;
+                                    text.DispatcherQueue.TryEnqueue(Announce);
+                                };
+                                pendingAnnouncementLoad.Current = loaded;
+                                text.Loaded += loaded;
+                            }
+                        })
+                        .OnUnmount(control =>
+                        {
+                            if (pendingAnnouncementLoad.Current is { } loaded)
+                                ((TextBlock)control).Loaded -= loaded;
+                            pendingAnnouncementLoad.Current = null;
+                            announcementRevision.Current++;
+                            announcedAccount.Current = null;
                         })
                         .IsVisible(showAccountNotice)
                         .Margin(12, 8)
@@ -190,6 +230,7 @@ internal sealed class ReactorConversationPanelHost : Component<ReactorConversati
         private bool _narrow;
         private bool _presented;
         private readonly Action _toggleCompact;
+        private long _focusRevision;
 
         internal PanelFocusBinding(Grid root, ChatConversationPanelState state, Action toggleCompact)
         {
@@ -211,20 +252,28 @@ internal sealed class ReactorConversationPanelHost : Component<ReactorConversati
             _selected = selected;
             _presented = presented;
             if (opening)
+            {
+                var revision = ++_focusRevision;
+                var generation = _state.Generation;
                 _root.DispatcherQueue.TryEnqueue(() =>
                 {
-                    if (_selected == selected && _presented && _panel.IsLoaded &&
+                    if (revision == _focusRevision && generation == _state.Generation &&
+                        _selected == selected && _presented && _panel.IsLoaded &&
                         FocusManager.FindFirstFocusableElement(_panel) is Control first)
                         first.Focus(FocusState.Programmatic);
                 });
+            }
         }
 
         internal void Restore()
         {
             var opener = _opener;
-            _root.DispatcherQueue.TryEnqueue(() =>
+            var revision = ++_focusRevision;
+            var generation = _state.Generation;
+            _root.DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
             {
-                if (_root.IsLoaded && opener is { IsLoaded: true, IsEnabled: true })
+                if (revision == _focusRevision && generation == _state.Generation &&
+                    _root.IsLoaded && opener is { IsLoaded: true, IsEnabled: true })
                     opener.Focus(FocusState.Programmatic);
             });
         }
@@ -249,7 +298,10 @@ internal sealed class ReactorConversationPanelHost : Component<ReactorConversati
                 }
                 else if (IsWithin(focused, panel)) Restore();
                 else if (FocusManager.FindFirstFocusableElement(panel) is Control first)
+                {
+                    _focusRevision++;
                     first.Focus(FocusState.Programmatic);
+                }
                 args.Handled = true;
             }
         }
@@ -261,7 +313,11 @@ internal sealed class ReactorConversationPanelHost : Component<ReactorConversati
             return false;
         }
 
-        public void Dispose() => _root.KeyDown -= KeyDown;
+        public void Dispose()
+        {
+            _focusRevision++;
+            _root.KeyDown -= KeyDown;
+        }
     }
 
     private sealed class PanelResizeBinding : IDisposable
