@@ -86,7 +86,9 @@ internal sealed class ConversationFilesController : IDisposable
 
     private (ChatConversationPanelOperation Lease, bool Set, bool Admin)? CaptureEditAuthority()
     {
-        var lease = CaptureLease();
+        var request = View.Document?.Request;
+        if (request is null) return null;
+        var lease = _panels.BeginOperation(PanelId, expectedContentId: FileContentId(request));
         if (lease is null) return null;
         var set = lease.Context.Client.SessionFilesCapabilities.Set;
         var admin = lease.Context.Client.GrantedOperatorScopes.Contains("operator.admin", StringComparer.Ordinal);
@@ -171,7 +173,7 @@ internal sealed class ConversationFilesController : IDisposable
         var retired = EditorTarget;
         _panels.Open(PanelId, FileContentId(request), runId ?? previous.RunId);
         if (retired is not null) _drafts.ReleaseClean(retired);
-        var operation = Begin(runId);
+        var operation = Begin(runId, FileContentId(request));
         if (operation is null) return;
         var (lease, revision) = operation.Value;
         if (request.Scope != Scope(lease))
@@ -227,7 +229,9 @@ internal sealed class ConversationFilesController : IDisposable
         {
             var metadata = new SessionFileContent
             {
-                Key = request.Scope.SessionKey, Path = request.Path, Name = request.Path, PreviewKind = "unsupported",
+                Key = request.Scope.SessionKey, Path = request.Path,
+                Name = request.Path.Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? request.Path,
+                PreviewKind = "unsupported",
                 Size = error.Details is { ValueKind: JsonValueKind.Object } details &&
                     details.TryGetProperty("size", out var size) && size.TryGetInt64(out var bytes) && bytes >= 0 ? bytes : null
             };
@@ -445,7 +449,7 @@ internal sealed class ConversationFilesController : IDisposable
     internal async Task ReloadAsync()
     {
         if (View.Document is not { } document) return;
-        var operation = Begin();
+        var operation = Begin(expectedContentId: FileContentId(document.Request));
         if (operation is null) return;
         var (lease, revision) = operation.Value;
         try
@@ -502,7 +506,7 @@ internal sealed class ConversationFilesController : IDisposable
     internal async Task DownloadAsync(Func<string, CancellationToken, Task<ConversationFileDestination?>> chooseDestination)
     {
         if (View.Document is not { } document) return;
-        var operation = Begin();
+        var operation = Begin(expectedContentId: FileContentId(document.Request));
         if (operation is null) return;
         var (lease, revision) = operation.Value;
         lock (_gate)
@@ -535,9 +539,10 @@ internal sealed class ConversationFilesController : IDisposable
         finally { ReleaseBusy(lease, revision); }
     }
 
-    private (ChatConversationPanelOperation Lease, long Revision)? Begin(string? runId = null)
+    private (ChatConversationPanelOperation Lease, long Revision)? Begin(
+        string? runId = null, string? expectedContentId = null)
     {
-        var lease = _panels.BeginOperation(PanelId, runId);
+        var lease = _panels.BeginOperation(PanelId, runId, expectedContentId);
         if (lease is null || !lease.IsCurrent) return null;
         lock (_gate)
         {

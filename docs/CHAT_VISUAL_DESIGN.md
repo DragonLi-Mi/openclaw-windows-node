@@ -152,6 +152,10 @@ Gateway data, never local filesystem authority. Missing identity or an omitted
 method advertisement remains waiting. A known advertisement can mark an
 individual operation unsupported. The Files client samples the ready epoch
 before and after reading method facts; a reconnect invalidates that sample.
+File editing, reload and download acquire the selected file's exact
+`expectedContentId`. A still-rendered File A cannot reacquire work after the
+root selects File B. Canonical user ID and profile revision come from the
+foundation binding; Files never derives an account from channel metadata.
 The source contract is upstream commit
 `776c8da8f06c6ed244b8ce22ea33165e4463f23b`,
 `packages/gateway-protocol/src/schema/sessions.ts:200-416`.
@@ -177,6 +181,11 @@ text and image bytes are bounded to 1 MiB. Window retention is limited to
 32 buffers and 100,663,296 UTF-16 code units across original, edited and
 uncertain-save text (192 MiB of text data, excluding object overhead).
 These native limits are not claims about the Gateway's own limits.
+The pinned Gateway's `WORKSPACE_PREVIEW_MAX_BYTES` is 256 KiB
+(`src/gateway/workspace-file-limits.ts`); that lower server limit remains
+authoritative. A preview-size rejection still permits a separately authorized
+original-byte download. A permission notice after a dispatched save can coexist
+with an uncertain outcome: the file may already have been written.
 WinUI CR normalization stays inside the editor: saves restore the original
 LF/CRLF/CR convention, BOM and final-newline choice.
 

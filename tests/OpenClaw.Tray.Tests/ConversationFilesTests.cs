@@ -488,6 +488,90 @@ public sealed class ConversationFilesTests
     }
 
     [Fact]
+    public async Task DocumentACannotAcquireFileOperationsAfterRootSelectsContentB()
+    {
+        using var fixture = new Fixture();
+        await fixture.Controller.OpenAsync(Request);
+        fixture.Controller.BeginEdit();
+        fixture.Controller.UpdateNativeText(fixture.Controller.EditorTarget!, "private draft A", 0, 0);
+        var reads = fixture.Proxy.FileReads;
+        var other = Request with { Path = "other.txt" };
+        fixture.Panels.Open("files", ConversationFilesController.FileContentId(other));
+        Assert.False(fixture.Controller.CanEdit);
+        await fixture.Controller.SaveAsync();
+        await fixture.Controller.ReloadAsync();
+        var pickerOpened = false;
+        await fixture.Controller.DownloadAsync((_, _) =>
+        {
+            pickerOpened = true;
+            return Task.FromResult<ConversationFileDestination?>(null);
+        });
+        Assert.Empty(fixture.Proxy.Writes);
+        Assert.Equal(reads, fixture.Proxy.FileReads);
+        Assert.Equal(0, fixture.Proxy.DownloadGrants);
+        Assert.False(pickerOpened);
+        Assert.Equal("private draft A", fixture.Controller.View.Document!.Text);
+    }
+
+    [Fact]
+    public async Task CanonicalUserChangeOnSameDeviceCannotRestorePriorUsersDraft()
+    {
+        using var fixture = new Fixture();
+        await fixture.Controller.OpenAsync(Request);
+        fixture.Controller.BeginEdit();
+        fixture.Controller.UpdateNativeText(fixture.Controller.EditorTarget!, "user-one private draft", 0, 0);
+        fixture.Controller.Dispose();
+        fixture.Context = fixture.Context with
+        {
+            Identity = fixture.Context.Identity with { UserId = "user-two" },
+            AccountRevision = fixture.Context.AccountRevision + 1
+        };
+        fixture.Panels.Refresh();
+        fixture.Panels.Open("files");
+        using var other = new ConversationFilesController(fixture.Panels, fixture.Drafts);
+        await other.OpenAsync(Request);
+        Assert.False(other.View.Document!.Restored);
+        Assert.Equal("original", other.View.Document.Text);
+        Assert.Null(fixture.Drafts.Find(fixture.Context.Identity, Request));
+    }
+
+    [Fact]
+    public async Task UnknownCanonicalUserCannotReadRestoreOrSaveFiles()
+    {
+        using var fixture = new Fixture();
+        await fixture.Controller.OpenAsync(Request);
+        fixture.Controller.BeginEdit();
+        fixture.Controller.UpdateNativeText(fixture.Controller.EditorTarget!, "retained private draft", 0, 0);
+        var reads = fixture.Proxy.FileReads;
+        fixture.Context = fixture.Context with { Identity = fixture.Context.Identity with { UserId = null } };
+        fixture.Panels.Refresh();
+        Assert.False(fixture.Panels.IsReady);
+        Assert.False(fixture.Panels.Open("files"));
+        await fixture.Controller.OpenAsync(Request);
+        await fixture.Controller.SaveAsync();
+        Assert.Null(fixture.Controller.View.Document);
+        Assert.Equal(reads, fixture.Proxy.FileReads);
+        Assert.Empty(fixture.Proxy.Writes);
+    }
+
+    [Fact]
+    public async Task ProfileRevisionRevokesPendingReadWithoutPublishingItsResult()
+    {
+        using var fixture = new Fixture();
+        var pending = new TaskCompletionSource<SessionFileContent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Proxy.PendingRead = pending.Task;
+        var opening = fixture.Controller.OpenAsync(Request);
+        var lease = fixture.Controller.CaptureLease()!;
+        fixture.Context = fixture.Context with { AccountRevision = fixture.Context.AccountRevision + 1 };
+        fixture.Panels.Refresh();
+        Assert.False(lease.IsCurrent);
+        pending.SetResult(Snapshot("old profile revision"));
+        await opening;
+        Assert.Null(fixture.Controller.View.Document);
+        Assert.Empty(fixture.Proxy.Writes);
+    }
+
+    [Fact]
     public async Task SaveShortcutDuringReadDoesNotInvalidatePendingPreview()
     {
         using var fixture = new Fixture();
@@ -541,7 +625,8 @@ public sealed class ConversationFilesTests
             Client = DispatchProxy.Create<IOperatorGatewayClient, GatewayProxy>();
             Proxy = (GatewayProxy)Client;
             Proxy.Snapshot = Snapshot(text);
-            Context = new(new("gateway-one", "device-one", Scope.SessionKey, "session-one", Scope.AgentId), Client, 12);
+            Context = new(new("gateway-one", "device-one", Scope.SessionKey, "session-one", Scope.AgentId, "user-one"),
+                Client, 12, AccountRevision: 1);
             Panels = new(key => key == Scope.SessionKey ? Context : null);
             Panels.Bind(Scope.SessionKey);
             Panels.Open("files");
@@ -561,6 +646,8 @@ public sealed class ConversationFilesTests
         public Task? PendingDownload;
         public GatewayRequestException? WriteError;
         public bool CommitBeforeWriteError;
+        public int FileReads;
+        public int DownloadGrants;
         public List<SessionFileWrite> Writes = [];
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
@@ -573,7 +660,9 @@ public sealed class ConversationFilesTests
                 case "get_GrantedOperatorScopes": return Admin ? new[] { "operator.read", "operator.admin" } : ["operator.read"];
                 case "get_SessionFilesCapabilities": return new SessionFilesCapabilities(SessionFilesReadiness.Ready, true, true, true, true, true);
                 case "ListSessionFilesAsync": return Task.FromResult(new SessionFileList { Key = Scope.SessionKey, Root = "/conversation" });
-                case "GetSessionFileAsync": return PendingRead ?? Task.FromResult(Snapshot);
+                case "GetSessionFileAsync":
+                    FileReads++;
+                    return PendingRead ?? Task.FromResult(Snapshot);
                 case "SetSessionFileAsync":
                     var write = Assert.IsType<SessionFileWrite>(args![0]);
                     Assert.Equal(Epoch, args[1]);
@@ -586,6 +675,7 @@ public sealed class ConversationFilesTests
                     return Task.FromResult(new SessionFileContent { Key = Scope.SessionKey, Root = "/conversation",
                         Source = write.ExpectedSource, Path = write.Path, Name = "notes.txt", Kind = "modified", Hash = HashB });
                 case "GetSessionFileDownloadAsync":
+                    DownloadGrants++;
                     return Task.FromResult(new SessionFileDownload("file.bin", "application/octet-stream",
                         "/api/artifacts/download/test/grant", DateTimeOffset.MaxValue));
                 case "DownloadSessionFileAsync": return PendingDownload ?? Task.CompletedTask;
