@@ -8118,4 +8118,5 @@ Après votre inscription, revenez dans Paramètres &gt; Windows Update et recher
   <data name="Chat_McpApp_Allow" xml:space="preserve"><value>Autoriser</value></data>
   <data name="Chat_McpApp_Cancel" xml:space="preserve"><value>Annuler</value></data>
   <data name="Chat_McpApp_ContentBlocks" xml:space="preserve"><value>Éléments de contenu : {0}</value></data>
+  <data name="Chat_Panel_ToolUnavailable" xml:space="preserve"><value>Ces détails ne sont plus à jour. Rouvrez les détails depuis l'outil actuel.</value></data>
 </root>

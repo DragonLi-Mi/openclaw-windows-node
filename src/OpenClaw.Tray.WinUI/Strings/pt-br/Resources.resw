@@ -8170,4 +8170,5 @@ Após a inscrição, volte para Configurações &gt; Windows Update e verifique 
   <data name="Chat_McpApp_Allow" xml:space="preserve"><value>Permitir</value></data>
   <data name="Chat_McpApp_Cancel" xml:space="preserve"><value>Cancelar</value></data>
   <data name="Chat_McpApp_ContentBlocks" xml:space="preserve"><value>Itens de conteúdo: {0}</value></data>
+  <data name="Chat_Panel_ToolUnavailable" xml:space="preserve"><value>Estes detalhes não estão mais atualizados. Reabra os detalhes na ferramenta atual.</value></data>
 </root>

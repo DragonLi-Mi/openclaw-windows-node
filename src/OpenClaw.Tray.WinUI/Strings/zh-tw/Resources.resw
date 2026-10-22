@@ -8118,4 +8118,5 @@
   <data name="Chat_McpApp_Allow" xml:space="preserve"><value>允許</value></data>
   <data name="Chat_McpApp_Cancel" xml:space="preserve"><value>取消</value></data>
   <data name="Chat_McpApp_ContentBlocks" xml:space="preserve"><value>內容項目數：{0}</value></data>
+  <data name="Chat_Panel_ToolUnavailable" xml:space="preserve"><value>這些詳細資訊已不是最新狀態。請從目前的工具重新開啟詳細資訊。</value></data>
 </root>

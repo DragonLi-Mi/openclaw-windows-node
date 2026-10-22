@@ -8185,4 +8185,5 @@ After enrolling, return to Settings &gt; Windows Update and check for updates. I
   <data name="Chat_McpApp_Allow" xml:space="preserve"><value>Allow</value></data>
   <data name="Chat_McpApp_Cancel" xml:space="preserve"><value>Cancel</value></data>
   <data name="Chat_McpApp_ContentBlocks" xml:space="preserve"><value>Content items: {0}</value></data>
+  <data name="Chat_Panel_ToolUnavailable" xml:space="preserve"><value>These details are no longer current. Reopen details from the current tool.</value></data>
 </root>

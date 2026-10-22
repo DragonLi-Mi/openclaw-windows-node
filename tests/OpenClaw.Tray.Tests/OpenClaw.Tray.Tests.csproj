@@ -102,6 +102,7 @@
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatConversationMcpAppSession.cs" Link="Chat\ChatConversationMcpAppSession.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatConversationMcpAppConfirmationState.cs" Link="Chat\ChatConversationMcpAppConfirmationState.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ConversationCanvasProfile.cs" Link="Chat\ConversationCanvasProfile.cs" />
+    <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatConversationToolDetails.cs" Link="Chat\ChatConversationToolDetails.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatComposerSession.cs" Link="Chat\ChatComposerSession.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\IChatComposerFactory.cs" Link="Chat\IChatComposerFactory.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatComposerFactory.cs" Link="Chat\ChatComposerFactory.cs" />

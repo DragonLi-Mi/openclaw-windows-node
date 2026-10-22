@@ -8119,4 +8119,5 @@ Ga na inschrijving terug naar Instellingen &gt; Windows Update en controleer op 
   <data name="Chat_McpApp_Allow" xml:space="preserve"><value>Toestaan</value></data>
   <data name="Chat_McpApp_Cancel" xml:space="preserve"><value>Annuleren</value></data>
   <data name="Chat_McpApp_ContentBlocks" xml:space="preserve"><value>Inhoudsitems: {0}</value></data>
+  <data name="Chat_Panel_ToolUnavailable" xml:space="preserve"><value>Deze details zijn niet meer actueel. Open de details opnieuw vanuit de huidige tool.</value></data>
 </root>
