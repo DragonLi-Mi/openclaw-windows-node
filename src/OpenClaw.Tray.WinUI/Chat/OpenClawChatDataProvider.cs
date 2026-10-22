@@ -773,7 +773,8 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
                 {
                     Logger.Info($"[Reset] Aborting late pre-reset send runId='{commit.StaleRunIdToAbort}' threadId='{threadId}'");
                     await _bridge.SendChatAbortAtEpochAsync(
-                        commit.StaleRunIdToAbort, threadId, dispatch.TransportEpoch);
+                        commit.StaleRunIdToAbort, threadId, dispatch.TransportEpoch,
+                        () => request.Origin is { } prior && IsInputConnectionCurrent(prior));
                 }
                 catch (Exception abortEx)
                 {
@@ -1575,13 +1576,15 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
             transition.ThreadId,
             transition.OldSessionId,
             transition.ResetGeneration);
-        AbortSubmittedRunsAfterReset(threadId, transition.SubmittedRunIds);
+        AbortSubmittedRunsAfterReset(threadId, transition.SubmittedRunIds, transition.RuntimeGeneration);
     }
 
-    private void AbortSubmittedRunsAfterReset(string threadId, IReadOnlyList<string> runIds)
+    private void AbortSubmittedRunsAfterReset(
+        string threadId, IReadOnlyList<string> runIds, ChatRuntimeGeneration generation)
     {
         if (runIds.Count == 0)
             return;
+        var owner = _bridge.ConnectionOwner;
 
         _ = Task.Run(async () =>
         {
@@ -1593,7 +1596,9 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
                 try
                 {
                     Logger.Info($"[Reset] Sending chat.abort for pre-reset submitted runId='{runId}' threadId='{threadId}'");
-                    await _bridge.SendChatAbortAsync(runId, threadId).ConfigureAwait(false);
+                    await _bridge.SendChatAbortAtEpochAsync(runId, threadId, generation.TransportEpoch,
+                        () => ReferenceEquals(owner, _bridge.ConnectionOwner) && !_state.IsInputAuthorityRetired &&
+                            _state.IsRuntimeGenerationCurrent(threadId, generation)).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {

@@ -65,7 +65,10 @@ internal sealed record ChatResetTransition(
     string? OldSessionId,
     long ResetGeneration,
     string ThreadId,
-    string[] SubmittedRunIds);
+    string[] SubmittedRunIds)
+{
+    internal ChatRuntimeGeneration RuntimeGeneration { get; init; }
+}
 
 internal sealed record ChatAbortStart(
     string? RunId,

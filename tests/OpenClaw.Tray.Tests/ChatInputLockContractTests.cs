@@ -46,4 +46,12 @@ public sealed class ChatInputLockContractTests
         })
             Assert.DoesNotContain(forbidden, source, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void ProviderAbortPathsCannotUseUnscopedTransport()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepositoryPaths.GetRepositoryRoot(),
+            "src", "OpenClaw.Tray.WinUI", "Chat", "OpenClawChatDataProvider.cs"));
+        Assert.DoesNotContain(".SendChatAbortAsync(", source, StringComparison.Ordinal);
+    }
 }

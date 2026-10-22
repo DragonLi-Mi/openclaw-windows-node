@@ -1797,7 +1797,10 @@ internal sealed class ChatConversationState
                 oldSessionId,
                 generation,
                 threadId,
-                submittedRunIds.ToArray());
+                submittedRunIds.ToArray())
+            {
+                RuntimeGeneration = CurrentRuntimeGenerationLocked(threadId),
+            };
         }
     }
 
