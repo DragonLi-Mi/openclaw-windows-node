@@ -660,7 +660,9 @@ public partial class OpenClawGatewayClientTests
             error = new { message = "permission denied" },
             payload = new { ok = false, reason = "permission denied" }
         }));
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => task);
+        var error = payloadRejection
+            ? await Assert.ThrowsAsync<InvalidOperationException>(() => task)
+            : await Assert.ThrowsAsync<GatewayRequestException>(() => task);
         Assert.Equal("permission denied", error.Message);
         Assert.Equal(0, helper.GetPendingRequestCount());
     }
@@ -821,7 +823,7 @@ public partial class OpenClawGatewayClientTests
                 error = new { message = "wizard rejected" }
             }));
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<GatewayRequestException>(
             async () => await responseTask.WaitAsync(TimeSpan.FromSeconds(2)));
 
         Assert.Equal("wizard rejected", exception.Message);
