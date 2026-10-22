@@ -8165,4 +8165,24 @@ After enrolling, return to Settings &gt; Windows Update and check for updates. I
   <data name="Chat_Canvas_Error" xml:space="preserve"><value>Canvas could not load. Check the Gateway connection, then retry.</value></data>
   <data name="Chat_Canvas_ScriptsRestricted" xml:space="preserve"><value>Scripts are disabled because the Gateway policy is strict or unavailable.</value></data>
   <data name="Chat_Canvas_InteractionBlocked" xml:space="preserve"><value>This action is not allowed inside Canvas content.</value></data>
+  <data name="Chat_McpApp_Waiting" xml:space="preserve"><value>Waiting for this conversation's MCP App.</value></data>
+  <data name="Chat_McpApp_Loading" xml:space="preserve"><value>Loading MCP App...</value></data>
+  <data name="Chat_McpApp_Loaded" xml:space="preserve"><value>Initializing MCP App...</value></data>
+  <data name="Chat_McpApp_Ready" xml:space="preserve"><value>MCP App ready</value></data>
+  <data name="Chat_McpApp_Unavailable" xml:space="preserve"><value>MCP Apps are not available in this version.</value></data>
+  <data name="Chat_McpApp_Blocked" xml:space="preserve"><value>The MCP App was blocked. Check Gateway permissions and sandbox configuration.</value></data>
+  <data name="Chat_McpApp_Error" xml:space="preserve"><value>The MCP App action could not complete.</value></data>
+  <data name="Chat_McpApp_Expired" xml:space="preserve"><value>This MCP App view has expired. Request a new view in the conversation.</value></data>
+  <data name="Chat_McpApp_Busy" xml:space="preserve"><value>Finish the current MCP App action first.</value></data>
+  <data name="Chat_McpApp_RateLimited" xml:space="preserve"><value>Too many MCP App actions. Wait a minute before trying again.</value></data>
+  <data name="Chat_McpApp_Rejected" xml:space="preserve"><value>This MCP App action was not accepted.</value></data>
+  <data name="Chat_McpApp_Unknown" xml:space="preserve"><value>The action outcome is unknown. It was not retried. Check the conversation before trying again.</value></data>
+  <data name="Chat_McpApp_ConfirmTitle" xml:space="preserve"><value>Allow this MCP App action?</value></data>
+  <data name="Chat_McpApp_ConfirmMessage" xml:space="preserve"><value>Send this message and its attachments to the conversation?</value></data>
+  <data name="Chat_McpApp_ConfirmNewMessage" xml:space="preserve"><value>Send this message and its attachments to a new conversation?</value></data>
+  <data name="Chat_McpApp_ConfirmFile" xml:space="preserve"><value>Open this Gateway file in the conversation Files panel?</value></data>
+  <data name="Chat_McpApp_ConfirmLink" xml:space="preserve"><value>Open this link outside the MCP App?</value></data>
+  <data name="Chat_McpApp_Allow" xml:space="preserve"><value>Allow</value></data>
+  <data name="Chat_McpApp_Cancel" xml:space="preserve"><value>Cancel</value></data>
+  <data name="Chat_McpApp_ContentBlocks" xml:space="preserve"><value>Content items: {0}</value></data>
 </root>

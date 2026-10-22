@@ -8098,4 +8098,24 @@
   <data name="Chat_Canvas_Error" xml:space="preserve"><value>無法載入 Canvas。請檢查 Gateway 連線，然後重試。</value></data>
   <data name="Chat_Canvas_ScriptsRestricted" xml:space="preserve"><value>Gateway 原則為嚴格模式或無法使用，因此指令碼已停用。</value></data>
   <data name="Chat_Canvas_InteractionBlocked" xml:space="preserve"><value>Canvas 內容中不允許執行此操作。</value></data>
+  <data name="Chat_McpApp_Waiting" xml:space="preserve"><value>正在等候此對話的 MCP App。</value></data>
+  <data name="Chat_McpApp_Loading" xml:space="preserve"><value>正在載入 MCP App...</value></data>
+  <data name="Chat_McpApp_Loaded" xml:space="preserve"><value>正在初始化 MCP App...</value></data>
+  <data name="Chat_McpApp_Ready" xml:space="preserve"><value>MCP App 已就緒</value></data>
+  <data name="Chat_McpApp_Unavailable" xml:space="preserve"><value>此版本不支援 MCP Apps。</value></data>
+  <data name="Chat_McpApp_Blocked" xml:space="preserve"><value>MCP App 已遭封鎖。請檢查 Gateway 權限與沙箱設定。</value></data>
+  <data name="Chat_McpApp_Error" xml:space="preserve"><value>無法完成 MCP App 動作。</value></data>
+  <data name="Chat_McpApp_Expired" xml:space="preserve"><value>此 MCP App 檢視已過期。請在對話中要求新的檢視。</value></data>
+  <data name="Chat_McpApp_Busy" xml:space="preserve"><value>請先完成目前的 MCP App 動作。</value></data>
+  <data name="Chat_McpApp_RateLimited" xml:space="preserve"><value>MCP App 動作過於頻繁。請等候一分鐘後再試。</value></data>
+  <data name="Chat_McpApp_Rejected" xml:space="preserve"><value>此 MCP App 動作未獲接受。</value></data>
+  <data name="Chat_McpApp_Unknown" xml:space="preserve"><value>動作結果不明，系統未重試此動作。請先檢查對話，再決定是否重試。</value></data>
+  <data name="Chat_McpApp_ConfirmTitle" xml:space="preserve"><value>允許此 MCP App 動作？</value></data>
+  <data name="Chat_McpApp_ConfirmMessage" xml:space="preserve"><value>將此訊息及其附件傳送至對話？</value></data>
+  <data name="Chat_McpApp_ConfirmNewMessage" xml:space="preserve"><value>將此訊息及其附件傳送至新對話？</value></data>
+  <data name="Chat_McpApp_ConfirmFile" xml:space="preserve"><value>在對話的「檔案」面板中開啟此 Gateway 檔案？</value></data>
+  <data name="Chat_McpApp_ConfirmLink" xml:space="preserve"><value>在 MCP App 外部開啟此連結？</value></data>
+  <data name="Chat_McpApp_Allow" xml:space="preserve"><value>允許</value></data>
+  <data name="Chat_McpApp_Cancel" xml:space="preserve"><value>取消</value></data>
+  <data name="Chat_McpApp_ContentBlocks" xml:space="preserve"><value>內容項目數：{0}</value></data>
 </root>

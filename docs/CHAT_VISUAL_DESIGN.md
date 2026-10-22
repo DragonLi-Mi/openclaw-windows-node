@@ -155,11 +155,10 @@ malformed, redirected or potentially live profiles remain untouched. A crash
 before the browser identity is recorded can leave an unsweepable profile; it is
 preserved rather than risking a live browser's files.
 
-This consumer slice does not implement legacy hosted-URL previews or the richer
-MCP App `ui/initialize` bridge. Both have explicit unsupported states. MCP App
-tools, resources, model context, messages, file-open confirmations and negotiated
-display modes require their own captured view/session owner and must not be
-silently routed through the Canvas prompt channel. Root/transcript integration,
+This consumer does not implement legacy hosted-URL previews. They retain an
+explicit unsupported state. MCP Apps have their own protocol engine and native
+content surface, but remain explicitly unavailable until the integration gates
+below are satisfied. They never use the Canvas prompt channel. Root/transcript integration,
 authoritative script-policy transport and current-build populated native proof
 are separate completion gates, not claims established by source or unit tests.
 The Shared MCP App transport separately preserves the authenticated view payload
@@ -173,11 +172,88 @@ bridge must not present that as a confirmed failure or automatically retry it.
 view, not a retryable generic error. The view HTML limit follows the existing
 32 Mi UTF-16-character WebSocket envelope ceiling, rather than the separate
 10 MiB UTF-8 saved-Canvas-widget limit.
-This transport seam alone does not enable the native MCP App UI. Message and
-file-open confirmation, parent acceptance, SDK initialization, subscription
-lifetime and native proof are still required.
-In particular, `mcp.app.hostContextChanged` and `mcp.app.resourceUpdated` event
-consumption remain part of the unfinished UI bridge, not transport parity.
+This transport seam alone does not enable the native MCP App UI.
+
+### MCP App native content integration
+
+The content host adapts the reachable web contract at upstream
+`776c8da8f06c6ed244b8ce22ea33165e4463f23b` and its ext-apps 2.0.3
+`2026-01-26` protocol. `ConversationContentWebView` owns the shared audited
+browser lifecycle for both content families. The saved-Canvas adapter retains
+its private prompt grant; `ConversationMcpAppHostDocument` instead forwards
+bounded JSON-RPC only from the current separate-origin proxy iframe. It closes
+offered private ports. Native admission additionally checks exact parent URI,
+nonce, render id and the canonical operation lifetime before parsing requests.
+No Dashboard, settings or chat Web UI is hosted.
+
+`ChatConversationMcpAppSession` requires initialize followed by initialized before
+tool input/result notifications and view operations. Unknown versions negotiate
+the supported 2026 version. Actual operator read/write scopes and authenticated
+view flags gate each operation. String/integer ids are distinct; duplicate
+in-flight ids are rejected without resolving the original request, unknown
+response ids are dropped, and unknown methods return `-32601`. Requests are
+bounded to 32 in flight and 128 resource subscriptions per render.
+
+Messages preserve text/image/resource/resource-link content and active/new
+targets. Named text remains an attachment; untitled command text is rejected.
+Message, Gateway-file and link actions require the focused foreground App,
+native confirmation, a post-confirmation current/focus check, and actual Root
+acceptance. They share an App-specific one-in-flight, ten-per-minute limiter,
+not Canvas's prompt limiter. Files are passed only to the conversation Files
+owner, never an OS path opener. Plugin links are typed navigation targets for
+the authoritative native discovery owner, not arbitrary native URI launches.
+Unlike the web host, this native slice confirms external/plugin links as well.
+Plugin URLs reject extra query fields rather than retaining standalone tickets.
+
+Native status reports loading, initialization, unavailable, blocked, expired,
+busy, rate-limited, rejected, error and unknown-outcome states. A read retry is
+explicit; admitted mutations never retry. Inline/fullscreen requests require
+actual native-owner acceptance, not just a changed context value. Heights clamp
+to 160..1200; theme, container dimensions and display context are updated.
+Ready requires both the proxy's current render receipt and protocol initialization.
+Retirement immediately denies new effects, cancels confirmations/waits, removes
+event subscriptions and releases owned Gateway resource subscriptions only on
+the captured still-current transport epoch. Late subscribe completion gets a
+second exact-scope release. This is hard retirement, not a claim of SDK graceful
+save/teardown parity.
+
+**Integration remains blocked on this foundation.** The
+`ChatConversationMcpAppIntegration.AcquireContentOperation` gate deliberately
+returns no operation. The current panel API lacks `expectedContentId`, and its
+identity lacks the separately pending canonical UserId/AccountRevision extension.
+The controller cannot substitute a run-only operation or invented account id.
+After that dependency is adopted, the integration owner must call the canonical
+operation API with the selected view's expected content id and preserve the
+whole captured conversation identity.
+
+The Root must then supply `IChatConversationMcpAppActions` through
+`ReactorConversationCanvasProps`: actual rich-message acceptance for active/new
+targets, Gateway Files acceptance, vetted external/plugin navigation,
+inline/fullscreen application and focus return. Its native confirmation hook
+can use `ChatConversationMcpAppConfirmationState.ConfirmAsync` and render
+`ConversationMcpAppConfirmationDialog.Render` in the native Reactor tree. The
+state must be observed, disposed with that Root action owner, and its pending id
+must be captured for each dialog response. Callbacks must fence the captured
+operation around every await and restore content focus after the dialog closes,
+before returning.
+No missing hook defaults to success. The Root files are not changed by this slice.
+
+`IChatConversationMcpAppEvents` is the narrow missing delivery contract. The
+central client/event owner must explicitly allocate routing for
+`mcp.app.hostContextChanged` and `mcp.app.resourceUpdated`, plus relevant pending
+conversation-input events. It must capture the subscription's actual owner,
+connection epoch, run and view, deliver on the owning UI dispatcher, and detach
+on disposal. Do not relabel old events with the current selection. The session
+already consumes those typed deliveries, refreshes model context with revision
+fences, and forwards only owned resource updates. No central event cases or
+independent connection registry are added here.
+
+Until account/content binding and both real hooks are supplied, selecting an
+MCP App displays unavailable without a document read or WebView creation.
+Pure protocol/controller tests, loopback transport tests and a native compile
+do not prove that a populated App rendered or that real Root/Files/Gateway
+acceptance worked. Desktop/WebView/Gateway proof and independent final review
+remain separate, explicitly unfulfilled gates. Full MCP Apps parity remains open.
 
 Queued submissions leave the textbox and remain after the current turn as normal
 right-aligned user bubbles. A transparent `ChatPendingUserBrush`, subtle `ChatStrokeBrush`

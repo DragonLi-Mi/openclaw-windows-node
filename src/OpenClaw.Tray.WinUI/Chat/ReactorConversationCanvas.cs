@@ -15,7 +15,9 @@ internal sealed record ReactorConversationCanvasProps(
     ChatConversationPanelState State,
     ChatConversationCanvasSelection Selection,
     Func<ChatConversationCanvasPrompt, CancellationToken, Task<ChatConversationCanvasPromptResult>> SubmitPrompt,
-    Action ReturnToConversation);
+    Action ReturnToConversation,
+    IChatConversationMcpAppActions? McpAppActions = null,
+    IChatConversationMcpAppEvents? McpAppEvents = null);
 
 [GenerateReactorWrapper(typeof(ConversationCanvasMount), AutoDiscover = false, RegisterAssembly = false)]
 internal partial record ConversationCanvasMountElement;
@@ -25,6 +27,9 @@ internal sealed class ReactorConversationCanvas : Component<ReactorConversationC
     public override Element Render()
     {
         var props = Props;
+        if (props.Selection.Content.Kind == ConversationCanvasContentKind.McpApp)
+            return Component<ReactorConversationMcpApp, ReactorConversationMcpAppProps>(new(
+                props.State, props.Selection, props.McpAppActions, props.McpAppEvents, props.ReturnToConversation));
         var owner = UseRef<ChatConversationCanvasController?>(null);
         var (_, setRevision) = UseState(0L, threadSafe: true);
         UseEffect((Func<Action>)(() =>

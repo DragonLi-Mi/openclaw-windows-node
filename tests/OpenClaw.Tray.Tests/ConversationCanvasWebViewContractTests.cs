@@ -7,7 +7,7 @@ public sealed class ConversationCanvasWebViewContractTests
     public void ContentHostCannotAcquireNodeCanvasCredentialsFilesOrNativeHostObjects()
     {
         var source = File.ReadAllText(Path.Combine(TestRepositoryPaths.GetRepositoryRoot(),
-            "src", "OpenClaw.Tray.WinUI", "Chat", "ConversationCanvasWebView.cs"));
+            "src", "OpenClaw.Tray.WinUI", "Chat", "ConversationContentWebView.cs"));
         Assert.DoesNotContain("AddHostObjectToScript", source);
         Assert.DoesNotContain("SetVirtualHostNameToFolderMapping", source);
         Assert.DoesNotContain("ExecuteScriptAsync", source);
@@ -22,11 +22,35 @@ public sealed class ConversationCanvasWebViewContractTests
     public void NativePromptAdmissionRequiresForegroundWindowNotOnlyRetainedXamlFocus()
     {
         var source = File.ReadAllText(Path.Combine(TestRepositoryPaths.GetRepositoryRoot(),
-            "src", "OpenClaw.Tray.WinUI", "Chat", "ConversationCanvasWebView.cs"));
+            "src", "OpenClaw.Tray.WinUI", "Chat", "ConversationContentWebView.cs"));
         Assert.Contains("XamlRoot is { } root && IsForeground(root)", source);
         Assert.Contains("hwnd != 0 && hwnd == GetForegroundWindow()", source);
         Assert.Contains("root.ContentIslandEnvironment is not { } environment", source);
         Assert.Contains("FocusManager.GetFocusedElement(root)", source);
-        Assert.Contains("outcome != ChatConversationCanvasPromptResult.Accepted", source);
+        var canvas = File.ReadAllText(Path.Combine(TestRepositoryPaths.GetRepositoryRoot(),
+            "src", "OpenClaw.Tray.WinUI", "Chat", "ConversationCanvasWebView.cs"));
+        Assert.Contains("outcome != ChatConversationCanvasPromptResult.Accepted", canvas);
+    }
+
+    [Fact]
+    public void BothHostsUseTheSingleAuditedNativeLifecycleButSeparateBridgeGrants()
+    {
+        var root = Path.Combine(TestRepositoryPaths.GetRepositoryRoot(), "src", "OpenClaw.Tray.WinUI", "Chat");
+        var common = File.ReadAllText(Path.Combine(root, "ConversationContentWebView.cs"));
+        var canvas = File.ReadAllText(Path.Combine(root, "ConversationCanvasWebView.cs"));
+        var app = File.ReadAllText(Path.Combine(root, "ConversationMcpAppWebView.cs"));
+        Assert.Contains(": ConversationContentWebView", canvas);
+        Assert.Contains(": ConversationContentWebView", app);
+        Assert.DoesNotContain("CoreWebView2Environment.Create", canvas);
+        Assert.DoesNotContain("CoreWebView2Environment.Create", app);
+        Assert.Contains("if (json.Length > MaximumBridgeMessageCharacters)", common);
+        Assert.Contains("Boundary.IsNativeMessage(args.Source, message)", common);
+        Assert.Contains("render.GetString() != RenderId", common);
+        Assert.Contains("ExclusiveUserDataFolderAccess = true", common);
+        Assert.Contains("options.IsInPrivateModeEnabled = true", common);
+        Assert.Contains("RetiringEnvironments.Add", common);
+        Assert.Contains("_rendered || !_initialized", app);
+        Assert.DoesNotContain("SubmitPromptAsync", app);
+        Assert.DoesNotContain("ReceiveAsync", canvas);
     }
 }

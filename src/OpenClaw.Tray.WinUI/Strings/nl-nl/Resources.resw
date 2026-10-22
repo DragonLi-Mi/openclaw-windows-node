@@ -8099,4 +8099,24 @@ Ga na inschrijving terug naar Instellingen &gt; Windows Update en controleer op 
   <data name="Chat_Canvas_Error" xml:space="preserve"><value>Canvas kon niet worden geladen. Controleer de Gateway-verbinding en probeer het opnieuw.</value></data>
   <data name="Chat_Canvas_ScriptsRestricted" xml:space="preserve"><value>Scripts zijn uitgeschakeld omdat het Gateway-beleid strikt of niet beschikbaar is.</value></data>
   <data name="Chat_Canvas_InteractionBlocked" xml:space="preserve"><value>Deze actie is niet toegestaan binnen Canvas-inhoud.</value></data>
+  <data name="Chat_McpApp_Waiting" xml:space="preserve"><value>Wachten op de MCP App van dit gesprek.</value></data>
+  <data name="Chat_McpApp_Loading" xml:space="preserve"><value>MCP App laden...</value></data>
+  <data name="Chat_McpApp_Loaded" xml:space="preserve"><value>MCP App initialiseren...</value></data>
+  <data name="Chat_McpApp_Ready" xml:space="preserve"><value>MCP App gereed</value></data>
+  <data name="Chat_McpApp_Unavailable" xml:space="preserve"><value>MCP Apps zijn niet beschikbaar in deze versie.</value></data>
+  <data name="Chat_McpApp_Blocked" xml:space="preserve"><value>De MCP App is geblokkeerd. Controleer de Gateway-machtigingen en sandboxconfiguratie.</value></data>
+  <data name="Chat_McpApp_Error" xml:space="preserve"><value>De MCP App-actie kon niet worden voltooid.</value></data>
+  <data name="Chat_McpApp_Expired" xml:space="preserve"><value>Deze MCP App-weergave is verlopen. Vraag een nieuwe weergave aan in het gesprek.</value></data>
+  <data name="Chat_McpApp_Busy" xml:space="preserve"><value>Voltooi eerst de huidige MCP App-actie.</value></data>
+  <data name="Chat_McpApp_RateLimited" xml:space="preserve"><value>Te veel MCP App-acties. Wacht een minuut voordat u het opnieuw probeert.</value></data>
+  <data name="Chat_McpApp_Rejected" xml:space="preserve"><value>Deze MCP App-actie is niet geaccepteerd.</value></data>
+  <data name="Chat_McpApp_Unknown" xml:space="preserve"><value>Het resultaat van de actie is onbekend. De actie is niet herhaald. Controleer het gesprek voordat u het opnieuw probeert.</value></data>
+  <data name="Chat_McpApp_ConfirmTitle" xml:space="preserve"><value>Deze MCP App-actie toestaan?</value></data>
+  <data name="Chat_McpApp_ConfirmMessage" xml:space="preserve"><value>Dit bericht en de bijlagen naar het gesprek verzenden?</value></data>
+  <data name="Chat_McpApp_ConfirmNewMessage" xml:space="preserve"><value>Dit bericht en de bijlagen naar een nieuw gesprek verzenden?</value></data>
+  <data name="Chat_McpApp_ConfirmFile" xml:space="preserve"><value>Dit Gateway-bestand openen in het deelvenster Bestanden van het gesprek?</value></data>
+  <data name="Chat_McpApp_ConfirmLink" xml:space="preserve"><value>Deze koppeling buiten de MCP App openen?</value></data>
+  <data name="Chat_McpApp_Allow" xml:space="preserve"><value>Toestaan</value></data>
+  <data name="Chat_McpApp_Cancel" xml:space="preserve"><value>Annuleren</value></data>
+  <data name="Chat_McpApp_ContentBlocks" xml:space="preserve"><value>Inhoudsitems: {0}</value></data>
 </root>

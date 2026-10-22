@@ -8150,4 +8150,24 @@ Após a inscrição, volte para Configurações &gt; Windows Update e verifique 
   <data name="Chat_Canvas_Error" xml:space="preserve"><value>Não foi possível carregar Canvas. Verifique a conexão com o Gateway e tente novamente.</value></data>
   <data name="Chat_Canvas_ScriptsRestricted" xml:space="preserve"><value>Os scripts estão desativados porque a política do Gateway é restrita ou está indisponível.</value></data>
   <data name="Chat_Canvas_InteractionBlocked" xml:space="preserve"><value>Esta ação não é permitida dentro do conteúdo Canvas.</value></data>
+  <data name="Chat_McpApp_Waiting" xml:space="preserve"><value>Aguardando o MCP App desta conversa.</value></data>
+  <data name="Chat_McpApp_Loading" xml:space="preserve"><value>Carregando MCP App...</value></data>
+  <data name="Chat_McpApp_Loaded" xml:space="preserve"><value>Inicializando MCP App...</value></data>
+  <data name="Chat_McpApp_Ready" xml:space="preserve"><value>MCP App pronto</value></data>
+  <data name="Chat_McpApp_Unavailable" xml:space="preserve"><value>Os MCP Apps não estão disponíveis nesta versão.</value></data>
+  <data name="Chat_McpApp_Blocked" xml:space="preserve"><value>O MCP App foi bloqueado. Verifique as permissões do Gateway e a configuração da sandbox.</value></data>
+  <data name="Chat_McpApp_Error" xml:space="preserve"><value>Não foi possível concluir a ação do MCP App.</value></data>
+  <data name="Chat_McpApp_Expired" xml:space="preserve"><value>Esta visualização do MCP App expirou. Solicite uma nova visualização na conversa.</value></data>
+  <data name="Chat_McpApp_Busy" xml:space="preserve"><value>Conclua primeiro a ação atual do MCP App.</value></data>
+  <data name="Chat_McpApp_RateLimited" xml:space="preserve"><value>Muitas ações do MCP App. Aguarde um minuto antes de tentar novamente.</value></data>
+  <data name="Chat_McpApp_Rejected" xml:space="preserve"><value>Esta ação do MCP App não foi aceita.</value></data>
+  <data name="Chat_McpApp_Unknown" xml:space="preserve"><value>O resultado da ação é desconhecido. A ação não foi repetida. Verifique a conversa antes de tentar novamente.</value></data>
+  <data name="Chat_McpApp_ConfirmTitle" xml:space="preserve"><value>Permitir esta ação do MCP App?</value></data>
+  <data name="Chat_McpApp_ConfirmMessage" xml:space="preserve"><value>Enviar esta mensagem e seus anexos para a conversa?</value></data>
+  <data name="Chat_McpApp_ConfirmNewMessage" xml:space="preserve"><value>Enviar esta mensagem e seus anexos para uma nova conversa?</value></data>
+  <data name="Chat_McpApp_ConfirmFile" xml:space="preserve"><value>Abrir este arquivo do Gateway no painel Arquivos da conversa?</value></data>
+  <data name="Chat_McpApp_ConfirmLink" xml:space="preserve"><value>Abrir este link fora do MCP App?</value></data>
+  <data name="Chat_McpApp_Allow" xml:space="preserve"><value>Permitir</value></data>
+  <data name="Chat_McpApp_Cancel" xml:space="preserve"><value>Cancelar</value></data>
+  <data name="Chat_McpApp_ContentBlocks" xml:space="preserve"><value>Itens de conteúdo: {0}</value></data>
 </root>
