@@ -4,7 +4,7 @@ using OpenClaw.Shared;
 namespace OpenClawTray.Chat;
 
 internal enum ChatConversationMcpAppPhase { Waiting, Loading, Loaded, Ready, Unavailable, Blocked, Error, Expired }
-internal enum ChatConversationMcpAppNotice { None, Busy, RateLimited, Rejected, Error, Unknown }
+internal enum ChatConversationMcpAppNotice { None, Busy, RateLimited, Rejected, Error, Unknown, Queued }
 internal enum ChatConversationMcpAppActionKind { Message, File, Link }
 internal enum ChatConversationMcpAppEventKind { ResourceUpdated, ResourceListChanged, ModelContextChanged, ConversationInputRequested }
 
@@ -30,12 +30,12 @@ internal sealed record ChatConversationMcpAppConfirmation(
 internal interface IChatConversationMcpAppActions
 {
     Task<bool> ConfirmAsync(ChatConversationMcpAppConfirmation request, CancellationToken cancellationToken);
-    Task<bool> AcceptMessageAsync(ChatConversationMcpAppAction owner, ConversationMcpAppMessage message,
+    Task<ChatConversationContentAdmission> AcceptMessageAsync(ChatConversationMcpAppAction owner, ConversationMcpAppMessage message,
         CancellationToken cancellationToken);
-    Task<bool> AcceptFileAsync(ChatConversationMcpAppAction owner, ChatConversationMcpAppFile file,
+    Task<ChatConversationContentAdmission> AcceptFileAsync(ChatConversationMcpAppAction owner, ChatConversationMcpAppFile file,
         CancellationToken cancellationToken);
     // Plugin routes go to the authoritative native discovery/navigation owner, never an OS URI launcher.
-    Task<bool> OpenLinkAsync(ChatConversationMcpAppAction owner, ConversationMcpAppLink link, CancellationToken cancellationToken);
+    Task<ChatConversationContentAdmission> OpenLinkAsync(ChatConversationMcpAppAction owner, ConversationMcpAppLink link, CancellationToken cancellationToken);
     bool SetDisplayMode(ChatConversationMcpAppAction owner, string mode);
     void ReturnToConversation(ChatConversationMcpAppAction owner);
 }
@@ -43,10 +43,11 @@ internal interface IChatConversationMcpAppActions
 /// <summary>Exact authenticated owner delivery, not an independent connection/event registry.</summary>
 internal sealed record ChatConversationMcpAppEvent(
     ChatConversationIdentity Owner, long ConnectionEpoch, string? RunId, string ViewId,
-    ChatConversationMcpAppEventKind Kind, JsonElement Parameters);
+    ChatConversationMcpAppEventKind Kind, JsonElement Parameters, long AccountRevision, GatewayDataReadSource Source);
 
 internal interface IChatConversationMcpAppEvents
 {
+    bool IsAvailable => false;
     IDisposable Subscribe(ChatConversationMcpAppAction owner, string viewId, Action<ChatConversationMcpAppEvent> receive);
 }
 

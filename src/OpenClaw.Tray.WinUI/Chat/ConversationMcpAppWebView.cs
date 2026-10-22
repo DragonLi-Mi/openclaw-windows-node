@@ -22,8 +22,13 @@ internal sealed class ConversationMcpAppWebView : ConversationContentWebView
         _owner = owner;
         _operation = operation;
         _document = document;
-        _session = owner.CreateSession(operation, document, IsInteractable,
-            packet => Post(new { type = "rpc", nonce = MessageNonce, renderId = RenderId, packet }),
+        _session = owner.CreateSession(operation, document, IsInteractable, IsEffectVisible,
+            packet =>
+            {
+                var message = new { type = "rpc", nonce = MessageNonce, renderId = RenderId, packet };
+                if (_session?.Phase == ConversationMcpAppHandshakeState.Retiring) PostRetirement(message);
+                else Post(message);
+            },
             () => { _initialized = true; Ready(); });
         owner.Invalidated += Invalidate;
         HostPresentationChanged();
@@ -40,7 +45,12 @@ internal sealed class ConversationMcpAppWebView : ConversationContentWebView
     protected override void OnDisposing()
     {
         _owner.Invalidated -= Invalidate;
-        _session.Dispose();
+    }
+    protected override Task RetireContentAsync() => _session.RetireAsync();
+    protected override void HandleRetirementMessage(JsonElement message)
+    {
+        if (message.GetProperty("type").GetString() == "rpc" && message.TryGetProperty("packet", out var packet))
+            _session.ReceiveRetirementResponse(packet);
     }
     protected override void HostPresentationChanged() =>
         _session.UpdatePresentation(CurrentTheme, ActualWidth, ActualHeight);

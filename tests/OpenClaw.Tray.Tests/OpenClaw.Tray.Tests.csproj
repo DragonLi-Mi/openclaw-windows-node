@@ -98,6 +98,9 @@
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatConversationPanelBinding.cs" Link="Chat\ChatConversationPanelBinding.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatConversationCanvasController.cs" Link="Chat\ChatConversationCanvasController.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatConversationMcpAppContracts.cs" Link="Chat\ChatConversationMcpAppContracts.cs" />
+    <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatConversationContentAdmission.cs" Link="Chat\ChatConversationContentAdmission.cs" />
+    <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatConversationMcpAppLifetime.cs" Link="Chat\ChatConversationMcpAppLifetime.cs" />
+    <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatConversationMcpAppEvents.cs" Link="Chat\ChatConversationMcpAppEvents.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatConversationMcpAppController.cs" Link="Chat\ChatConversationMcpAppController.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatConversationMcpAppSession.cs" Link="Chat\ChatConversationMcpAppSession.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatConversationMcpAppConfirmationState.cs" Link="Chat\ChatConversationMcpAppConfirmationState.cs" />

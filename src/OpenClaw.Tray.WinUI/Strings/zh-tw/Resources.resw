@@ -8110,6 +8110,7 @@
   <data name="Chat_McpApp_RateLimited" xml:space="preserve"><value>MCP App 動作過於頻繁。請等候一分鐘後再試。</value></data>
   <data name="Chat_McpApp_Rejected" xml:space="preserve"><value>此 MCP App 動作未獲接受。</value></data>
   <data name="Chat_McpApp_Unknown" xml:space="preserve"><value>動作結果不明，系統未重試此動作。請先檢查對話，再決定是否重試。</value></data>
+  <data name="Chat_McpApp_Queued" xml:space="preserve"><value>對話已接管此要求，並將其加入佇列。</value></data>
   <data name="Chat_McpApp_ConfirmTitle" xml:space="preserve"><value>允許此 MCP App 動作？</value></data>
   <data name="Chat_McpApp_ConfirmMessage" xml:space="preserve"><value>將此訊息及其附件傳送至對話？</value></data>
   <data name="Chat_McpApp_ConfirmNewMessage" xml:space="preserve"><value>將此訊息及其附件傳送至新對話？</value></data>

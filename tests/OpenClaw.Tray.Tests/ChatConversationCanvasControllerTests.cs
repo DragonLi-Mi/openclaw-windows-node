@@ -405,7 +405,9 @@ public sealed class ChatConversationCanvasControllerTests
             await fixture.Controller.SubmitPromptAsync("second", () => true, DateTimeOffset.UtcNow));
         fixture.Panels.Bind("agent:research:two");
         accepted.SetResult(ChatConversationCanvasPromptResult.Accepted);
-        Assert.Equal(ChatConversationCanvasPromptResult.Stale, await pending);
+        var retired = await pending;
+        Assert.Equal(ChatConversationContentAdmissionKind.Unconfirmed, retired.Admission.Kind);
+        Assert.True(retired.Admission.OwnsPayload);
     }
 
     [Fact]
@@ -421,6 +423,52 @@ public sealed class ChatConversationCanvasControllerTests
             await fixture.Controller.SubmitPromptAsync("eleventh", () => true, now.AddSeconds(59)));
         Assert.Equal(ChatConversationCanvasPromptResult.Accepted,
             await fixture.Controller.SubmitPromptAsync("next minute", () => true, now.AddMinutes(1)));
+    }
+
+    [Theory]
+    [InlineData("Accepted", true)]
+    [InlineData("Queued", true)]
+    [InlineData("Unconfirmed", false)]
+    [InlineData("Rejected", false)]
+    [InlineData("Stale", false)]
+    public async Task PromptRetainsActualParentCustodyAndErrorWithoutBooleanCollapse(string kind, bool custody)
+    {
+        var receipt = new ChatConversationCanvasPromptResult(
+            new(Enum.Parse<ChatConversationContentAdmissionKind>(kind), "parent detail", custody));
+        using var fixture = new Fixture((_, _) => Task.FromResult(receipt));
+        await fixture.Ready();
+        var result = await fixture.Controller.SubmitPromptAsync("explain", () => true, DateTimeOffset.UtcNow);
+        Assert.Equal(receipt, result);
+        Assert.Equal(receipt, fixture.Controller.Snapshot.PromptAdmission);
+        Assert.Equal("parent detail", result.Admission.Error);
+        Assert.Equal(custody, result.Admission.HasCustody);
+    }
+
+    [Fact]
+    public async Task ReloadReplacesThePolicySubscriptionAndDisposalDetachesIt()
+    {
+        using var fixture = new Fixture();
+        for (var reload = 0; reload < 20; reload++)
+        {
+            await fixture.Controller.LoadAsync();
+            Assert.Single(fixture.Gateway.PolicyChanged!.GetInvocationList());
+        }
+        fixture.Controller.Dispose();
+        Assert.Null(fixture.Gateway.PolicyChanged);
+        Assert.Equal(20, fixture.Gateway.Reads);
+    }
+
+    [Fact]
+    public async Task RetiredOriginalReadSourceClearsTheSurfaceWithoutFailureOrAutomaticRetry()
+    {
+        using var fixture = new Fixture();
+        await fixture.Ready();
+        fixture.Gateway.Read = (_, _, _) => Task.FromException<CanvasDocumentView>(new GatewayDataReadRetiredException());
+        await fixture.Controller.LoadAsync();
+        Assert.Equal(2, fixture.Gateway.Reads);
+        Assert.Equal(ChatConversationCanvasPhase.Waiting, fixture.Controller.Snapshot.Phase);
+        Assert.Null(fixture.Controller.Snapshot.Document);
+        Assert.Null(fixture.Gateway.PolicyChanged);
     }
 
     [Fact]

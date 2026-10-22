@@ -1,9 +1,11 @@
+using OpenClawTray.Presentation;
+
 namespace OpenClawTray.Chat;
 
 internal sealed record ChatConversationMcpAppPendingConfirmation(long Id, ChatConversationMcpAppConfirmation Request);
 
 /// <summary>Root can use this as its ConfirmAsync hook and render the matching controlled native dialog.</summary>
-internal sealed class ChatConversationMcpAppConfirmationState : IDisposable
+internal sealed class ChatConversationMcpAppConfirmationState(IUiDispatcher dispatcher) : IDisposable
 {
     private readonly object _gate = new();
     private TaskCompletionSource<bool>? _completion;
@@ -27,10 +29,17 @@ internal sealed class ChatConversationMcpAppConfirmationState : IDisposable
             _completion = completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
         using var registration = cancellationToken.Register(() => Respond(id, false));
-        using var ownerRegistration = request.Owner.Operation.CancellationToken.Register(() => Respond(id, false));
-        Changed?.Invoke();
-        var accepted = await completion.Task;
-        return accepted && request.Owner.IsCurrent && !cancellationToken.IsCancellationRequested;
+        CancellationTokenRegistration ownerRegistration = default;
+        try
+        {
+            if (!request.Owner.IsCurrent) Respond(id, false);
+            else ownerRegistration = request.Owner.Operation.CancellationToken.Register(() => Respond(id, false));
+            PublishChanged();
+            var accepted = await completion.Task;
+            return accepted && request.Owner.IsCurrent && !cancellationToken.IsCancellationRequested;
+        }
+        catch (ObjectDisposedException) { Respond(id, false); return false; }
+        finally { ownerRegistration.Dispose(); }
     }
 
     internal void Respond(long id, bool accepted)
@@ -45,9 +54,22 @@ internal sealed class ChatConversationMcpAppConfirmationState : IDisposable
             _pending = null;
         }
         completion?.TrySetResult(accepted);
-        Changed?.Invoke();
+        PublishChanged();
     }
 
+    private void PublishChanged()
+    {
+        if (dispatcher.HasThreadAccess) Changed?.Invoke();
+        else if (!dispatcher.TryEnqueue(() => Changed?.Invoke()))
+        {
+            lock (_gate)
+            {
+                _completion?.TrySetResult(false);
+                _completion = null;
+                _pending = null;
+            }
+        }
+    }
     public void Dispose()
     {
         long? id;

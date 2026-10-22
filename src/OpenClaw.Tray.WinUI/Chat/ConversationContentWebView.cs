@@ -33,6 +33,8 @@ internal abstract class ConversationContentWebView : Grid, IDisposable
     private bool _parentPending = true;
     private bool _parentServed;
     private bool _disposed;
+    private bool _retiring;
+    private Task? _retirement;
     private bool _ready;
     private bool _initializing;
     protected ConversationContentWebView(Uri gatewayOrigin, Uri sandboxUrl, string title,
@@ -62,20 +64,28 @@ internal abstract class ConversationContentWebView : Grid, IDisposable
     protected abstract void ClosePanel();
     protected abstract void OnDisposing();
     protected virtual void HostPresentationChanged() { }
+    protected virtual Task RetireContentAsync() => Task.CompletedTask;
+    protected virtual void HandleRetirementMessage(JsonElement message) { }
     protected void MarkReady() { _ready = true; _deadline?.Stop(); }
     protected void Post(object message)
     {
         if (IsCurrent && _view.CoreWebView2 is { } core)
             core.PostWebMessageAsJson(JsonSerializer.Serialize(message));
     }
+    protected void PostRetirement(object message)
+    {
+        if (_retiring && !_disposed && _view.CoreWebView2 is { } core)
+            core.PostWebMessageAsJson(JsonSerializer.Serialize(message));
+    }
     internal string ProfileDirectory => _profile.DirectoryPath;
     [DllImport("user32.dll")]
     private static extern nint GetForegroundWindow();
 
-    protected bool IsCurrent => !_disposed && IsOwnerCurrent;
-    protected bool IsInteractable() => IsCurrent && _ready && IsLoaded &&
+    protected bool IsCurrent => !_disposed && !_retiring && IsOwnerCurrent;
+    protected bool IsEffectVisible() => IsCurrent && _ready && IsLoaded &&
         Visibility == Visibility.Visible && ActualWidth > 0 && ActualHeight > 0 &&
-        XamlRoot is { } root && IsForeground(root) &&
+        XamlRoot is { } root && IsForeground(root);
+    protected bool IsInteractable() => IsEffectVisible() && XamlRoot is { } root &&
         FocusManager.GetFocusedElement(root) is DependencyObject focused && IsWithin(focused, _view);
 
     private static bool IsForeground(XamlRoot root)
@@ -197,7 +207,7 @@ internal abstract class ConversationContentWebView : Grid, IDisposable
 
     private async Task HandleMessageAsync(CoreWebView2 sender, CoreWebView2WebMessageReceivedEventArgs args)
     {
-        if (!IsCurrent || !Boundary.IsParent(args.Source)) return;
+        if (_disposed || !IsCurrent && !_retiring || !Boundary.IsParent(args.Source)) return;
         try
         {
             var json = args.WebMessageAsJson;
@@ -213,7 +223,8 @@ internal abstract class ConversationContentWebView : Grid, IDisposable
                 render.GetString() != RenderId ||
                 !message.TryGetProperty("type", out var type) || type.ValueKind != JsonValueKind.String)
                 return;
-            await HandleBridgeMessageAsync(message);
+            if (_retiring) HandleRetirementMessage(message);
+            else await HandleBridgeMessageAsync(message);
         }
         catch (JsonException ex) { Logger.Warn($"[ConversationCanvas] Invalid host message ({ex.GetType().Name})."); }
         catch (OperationCanceledException) when (!IsCurrent) { }
@@ -315,15 +326,34 @@ internal abstract class ConversationContentWebView : Grid, IDisposable
         lock (RetiringGate) RetiringEnvironments.Remove(sender);
         _profile.DeleteAfterBrowserExit();
         if (IsCurrent) SurfaceFailed();
-        if (!_disposed) Invalidate();
+        if (!_disposed && !_retiring) Invalidate();
     }
 
     public void Dispose()
     {
-        if (_disposed) return;
-        _disposed = true;
+        if (_disposed || _retiring) return;
+        _retiring = true;
         Visibility = Visibility.Collapsed;
         OnDisposing();
+        _retirement = FinishRetirementAsync();
+    }
+
+    private async Task FinishRetirementAsync()
+    {
+        try { await RetireContentAsync(); }
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or AccessViolationException))
+        { Logger.Warn($"[ConversationCanvas] Content retirement ended ({ex.GetType().Name})."); }
+        finally
+        {
+            try { CloseRetiredBrowser(); }
+            catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or AccessViolationException))
+            { Logger.Warn($"[ConversationCanvas] Browser retirement ended ({ex.GetType().Name})."); }
+        }
+    }
+
+    private void CloseRetiredBrowser()
+    {
+        _disposed = true;
         _deadline?.Stop();
         if (_deadline is not null) _deadline.Tick -= Deadline;
         _deadline = null;

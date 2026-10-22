@@ -10,6 +10,8 @@ internal sealed class ChatConversationMcpAppController : IDisposable
     private readonly ChatConversationPanelState _panels;
     private readonly IChatConversationMcpAppActions? _actions;
     private readonly IChatConversationMcpAppEvents? _events;
+    private readonly ChatConversationMcpAppLifetime? _lifetime;
+    private ChatConversationMcpAppMountLease? _mount;
     private readonly object _gate = new();
     private CancellationTokenSource? _read;
     private long _revision;
@@ -18,12 +20,13 @@ internal sealed class ChatConversationMcpAppController : IDisposable
 
     internal ChatConversationMcpAppController(ChatConversationPanelState panels,
         ChatConversationCanvasSelection selection, IChatConversationMcpAppActions? actions,
-        IChatConversationMcpAppEvents? events)
+        IChatConversationMcpAppEvents? events, ChatConversationMcpAppLifetime? lifetime = null)
     {
         _panels = panels;
         Selection = selection;
         _actions = actions;
         _events = events;
+        _lifetime = lifetime;
         panels.Changed += BindingChanged;
         panels.Disposed += Dispose;
     }
@@ -48,6 +51,7 @@ internal sealed class ChatConversationMcpAppController : IDisposable
         Cancel(previous);
         previous?.Dispose();
         Invalidated?.Invoke();
+        RetireUnusedMount();
         if (Selection.Content.Kind != ConversationCanvasContentKind.McpApp ||
             Selection.Content.McpApp is not { ViewId.Length: > 0 })
         {
@@ -56,7 +60,7 @@ internal sealed class ChatConversationMcpAppController : IDisposable
         }
         // No caller can opt out of the account/content gate by supplying a successful callback.
         var operation = ChatConversationMcpAppIntegration.AcquireContentOperation(_panels, Selection);
-        if (operation is null || _actions is null || _events is null)
+        if (operation is null || _actions is null || _events?.IsAvailable != true || _lifetime is null)
         {
             PublishRead(revision, new(ChatConversationMcpAppPhase.Unavailable));
             return;
@@ -76,12 +80,30 @@ internal sealed class ChatConversationMcpAppController : IDisposable
         PublishRead(revision, new(ChatConversationMcpAppPhase.Loading, operation));
         try
         {
+            var mount = await _lifetime.AcquireAsync(new(Selection, operation), token);
+            if (mount is null)
+            {
+                if (Current(revision, operation, token))
+                    PublishRead(revision, new(ChatConversationMcpAppPhase.Unavailable, operation));
+                return;
+            }
+            lock (_gate)
+            {
+                if (!Current(revision, operation, token)) { _ = mount.RetireAsync(); return; }
+                _mount = mount;
+            }
             var scope = new ConversationMcpAppScope(Selection.Owner.SessionKey,
                 Selection.Content.McpApp.ViewId, Selection.Owner.AgentId);
             var view = await operation.Context.Client.ViewConversationMcpAppAsync(scope,
                 operation.Context.ConnectionEpoch, token);
             if (Current(revision, operation, token))
                 PublishRead(revision, new(ChatConversationMcpAppPhase.Loaded, operation, view));
+        }
+        catch (GatewayDataReadRetiredException)
+        {
+            if (Current(revision, operation, token))
+                PublishRead(revision, new(ChatConversationMcpAppPhase.Unavailable));
+            RetireUnusedMount();
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception ex) when (ex is InvalidOperationException or IOException or JsonException or
@@ -95,18 +117,27 @@ internal sealed class ChatConversationMcpAppController : IDisposable
     }
 
     internal ChatConversationMcpAppSession CreateSession(ChatConversationPanelOperation operation,
-        ConversationMcpAppView view, Func<bool> interactable, Action<JsonElement> send, Action initialized)
+        ConversationMcpAppView view, Func<bool> interactable, Func<bool> effectVisible, Action<JsonElement> send, Action initialized)
     {
         if (_disposed || !operation.IsCurrent || !ReferenceEquals(Snapshot.Operation, operation) ||
-            !ReferenceEquals(Snapshot.View, view) || _actions is null || _events is null)
+            !ReferenceEquals(Snapshot.View, view) || _actions is null || _events is null || _mount is null ||
+            _mount.SessionOwned)
             throw new InvalidOperationException("The current App content binding is not available.");
         var session = new ChatConversationMcpAppSession(new(Selection, operation), view, _actions, _events,
-            interactable, send, Notice, Presentation, initialized);
+            interactable, send, Notice, Presentation, initialized, _mount, isEffectVisible: effectVisible);
         session.Expired += () =>
         {
             if (!operation.IsCurrent) return;
             Publish(Snapshot with { Phase = ChatConversationMcpAppPhase.Expired, View = null });
             Invalidated?.Invoke();
+            RetireUnusedMount();
+        };
+        session.SourceRetired += () =>
+        {
+            if (!operation.IsCurrent) return;
+            Publish(Snapshot with { Phase = ChatConversationMcpAppPhase.Unavailable, View = null });
+            Invalidated?.Invoke();
+            RetireUnusedMount();
         };
         return session;
     }
@@ -129,6 +160,7 @@ internal sealed class ChatConversationMcpAppController : IDisposable
         {
             Publish(Snapshot with { Phase = ChatConversationMcpAppPhase.Blocked, View = null });
             Invalidated?.Invoke();
+            RetireUnusedMount();
         }
     }
 
@@ -191,6 +223,7 @@ internal sealed class ChatConversationMcpAppController : IDisposable
         }
         Cancel(read);
         Invalidated?.Invoke();
+        RetireUnusedMount();
         Changed?.Invoke();
     }
 
@@ -211,6 +244,14 @@ internal sealed class ChatConversationMcpAppController : IDisposable
         Cancel(read);
         read?.Dispose();
         Invalidated?.Invoke();
+        RetireUnusedMount();
+    }
+
+    private void RetireUnusedMount()
+    {
+        var mount = _mount;
+        _mount = null;
+        if (mount is { SessionOwned: false }) _ = mount.RetireAsync();
     }
 
     private static void Cancel(CancellationTokenSource? cancellation)

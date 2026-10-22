@@ -228,9 +228,12 @@ bounded to 32 in flight and 128 resource subscriptions per render.
 
 Messages preserve text/image/resource/resource-link content and active/new
 targets. Named text remains an attachment; untitled command text is rejected.
-Message, Gateway-file and link actions require the focused foreground App,
-native confirmation, a post-confirmation current/focus check, and actual Root
-acceptance. They share an App-specific one-in-flight, ten-per-minute limiter,
+Message, Gateway-file and link actions require the focused foreground App
+before native confirmation, then the same current owner and visible foreground
+surface after the actual native Allow decision. Post-confirmation admission
+does not require WebView focus to have restored before the dialog's Closed
+callback. This is not browser user activation. Actual Root acceptance remains
+required. Actions share an App-specific one-in-flight, ten-per-minute limiter,
 not Canvas's prompt limiter. Files are passed only to the conversation Files
 owner, never an OS path opener. Plugin links are typed navigation targets for
 the authoritative native discovery owner, not arbitrary native URI launches.
@@ -238,16 +241,35 @@ Unlike the web host, this native slice confirms external/plugin links as well.
 Plugin URLs reject extra query fields rather than retaining standalone tickets.
 
 Native status reports loading, initialization, unavailable, blocked, expired,
-busy, rate-limited, rejected, error and unknown-outcome states. A read retry is
+busy, rate-limited, queued, rejected, error and unknown-outcome states. A read retry is
 explicit; admitted mutations never retry. Inline/fullscreen requests require
 actual native-owner acceptance, not just a changed context value. Heights clamp
 to 160..1200; theme, container dimensions and display context are updated.
 Ready requires both the proxy's current render receipt and protocol initialization.
-Retirement immediately denies new effects, cancels confirmations/waits, removes
-event subscriptions and releases owned Gateway resource subscriptions only on
-the captured still-current transport epoch. Late subscribe completion gets a
-second exact-scope release. This is hard retirement, not a claim of SDK graceful
-save/teardown parity.
+Retirement immediately denies new effects, cancels confirmations/waits and
+detaches event subscriptions. It sends cancellation notifications and one
+`ui/resource-teardown` request. Only that request's exact response id can finish
+the bounded guest wait; unrelated responses and new guest requests are ignored.
+The native browser closes after the response or the deadline, normally 250 ms.
+`OPENCLAW_MCP_APP_TEARDOWN_TIMEOUT_MS` can select 50..5000 ms. This grace period
+does not reauthorize stale saves or other effects.
+
+`ChatConversationMcpAppLifetime` serializes old subscription completion and
+one confirmed cleanup before any new same-client/epoch/session/view/agent read
+or subscription. Late subscribe responses are drained before cleanup, not
+followed by a second unsubscribe that could remove the replacement's subscription.
+A failed subscribe does not admit resource events or consume a successful
+subscription slot. Cleanup uses the original source-current predicate, never
+another account's authority. Uncertain subscription/cleanup outcomes poison
+same-socket readmission. Local cancellation does not establish server rollback.
+Poisoned scope records stay quarantined for that lifetime. At 128 retained
+scopes, new scope keys are refused rather than evicting an unsafe record or
+growing an unbounded registry. Resolve this state through confirmed connection
+retirement and a new exact-owner lifetime, not a same-socket retry.
+`RetireAsync` revokes the lifetime first and returns `Drained` or
+`RequiresFreshConnection`; an old lifetime cannot admit a different canonical
+context or transport. Root owns confirmation that a new transport is genuinely
+fresh before creating the next lifetime.
 
 **Canonical binding is adopted; real Root integration remains required.**
 `ChatConversationMcpAppIntegration.AcquireContentOperation` uses
@@ -259,26 +281,48 @@ substitutes a run-only operation or an invented account id.
 The Root must then supply `IChatConversationMcpAppActions` through
 `ReactorConversationCanvasProps`: actual rich-message acceptance for active/new
 targets, Gateway Files acceptance, vetted external/plugin navigation,
-inline/fullscreen application and focus return. Its native confirmation hook
+inline/fullscreen application and focus return. Message/file/link callbacks
+return `ChatConversationContentAdmission` with Accepted, Queued, Unconfirmed,
+Rejected or Stale, plus Error and OwnsPayload. Accepted/Queued require actual
+parent custody. Unconfirmed stays an unknown outcome, never an automatic retry
+or a failed-send claim. Canvas prompts preserve the same receipt through
+`ChatConversationCanvasPromptResult.Admission`. A post-response owner change
+turns acknowledged custody into Unconfirmed while preserving OwnsPayload.
+Its native confirmation hook
 can use `ChatConversationMcpAppConfirmationState.ConfirmAsync` and render
 `ConversationMcpAppConfirmationDialog.Render` in the native Reactor tree. The
-state must be observed, disposed with that Root action owner, and its pending id
-must be captured for each dialog response. Callbacks must fence the captured
-operation around every await and restore content focus after the dialog closes,
-before returning.
+state requires the existing `IUiDispatcher`, marshals Changed notifications,
+and must be disposed with that Root action owner. Capture the pending id for
+each dialog response. Callbacks fence the captured operation around every
+await. Root may restore content focus after the dialog closes, but that focus
+transfer is not a substitute for actual Allow or parent custody.
 No missing hook defaults to success. The Root files are not changed by this slice.
 
-`IChatConversationMcpAppEvents` is the narrow missing delivery contract. The
-central client/event owner must explicitly allocate routing for
-`mcp.app.hostContextChanged` and `mcp.app.resourceUpdated`, plus relevant pending
-conversation-input events. It must capture the subscription's actual owner,
-connection epoch, run and view, deliver on the owning UI dispatcher, and detach
-on disposal. Do not relabel old events with the current selection. The session
-already consumes those typed deliveries, refreshes model context with revision
-fences, and forwards only owned resource updates. No central event cases or
-independent connection registry are added here.
+Root passes one retained `ChatConversationMcpAppLifetime` as the optional last
+`McpAppLifetime` prop. Construct it from the exact canonical context, its original
+`GatewayDataReadSource` and the canonical-source-current comparer. Reuse it across controller
+and mount generations for that owner and environment/worktree. Do not store it
+globally or in layout-only retained state.
 
-Until both real hooks are supplied, selecting an
+`ChatConversationMcpAppEvents` supplies a dispatcher adapter for the explicit
+Root-owned `IChatConversationMcpAppEventSource` hook. It captures the subscription's
+whole owner, client, epoch, account revision, run and view, checks before posting
+and again after dispatch, and detaches on disposal. Source availability defaults
+to false. An unavailable subscription is inert, not a deferred attach; create a
+new subscription on an explicit admitted retry. Canonical receipt comparison
+and consumer callbacks run outside the adapter lock, including during reentrant
+disposal. The central client/event producer must still supply original provenance for
+`mcp.app.hostContextChanged` and `mcp.app.resourceUpdated`, plus relevant pending
+conversation-input events through their existing parser. The required producer
+contract is a nonnull `GatewayDataReadSource` captured at original transport
+dispatch and matched to the same accepted canonical lookup receipt. Device id
+and epoch alone are not account provenance. The immutable source type is present,
+but its production capture/publication and canonical binding are not yet
+integrated here, so no central event cases or authenticated-producer proof are
+claimed. Do not enable the Root source or relabel old events with the current
+selection. No independent connection or event registry is added.
+
+Until authentic source provenance, real actions and the retained lifetime are supplied, selecting an
 MCP App displays unavailable without a document read or WebView creation.
 Pure protocol/controller tests, loopback transport tests and a native compile
 do not prove that a populated App rendered or that real Root/Files/Gateway

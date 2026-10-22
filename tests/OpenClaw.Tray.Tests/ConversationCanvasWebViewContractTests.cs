@@ -29,7 +29,8 @@ public sealed class ConversationCanvasWebViewContractTests
         Assert.Contains("FocusManager.GetFocusedElement(root)", source);
         var canvas = File.ReadAllText(Path.Combine(TestRepositoryPaths.GetRepositoryRoot(),
             "src", "OpenClaw.Tray.WinUI", "Chat", "ConversationCanvasWebView.cs"));
-        Assert.Contains("outcome != ChatConversationCanvasPromptResult.Accepted", canvas);
+        Assert.Contains("!outcome.Admission.HasCustody", canvas);
+        Assert.Contains("ChatConversationContentAdmissionKind.Unconfirmed", canvas);
     }
 
     [Fact]
@@ -52,5 +53,21 @@ public sealed class ConversationCanvasWebViewContractTests
         Assert.Contains("_rendered || !_initialized", app);
         Assert.DoesNotContain("SubmitPromptAsync", app);
         Assert.DoesNotContain("ReceiveAsync", canvas);
+    }
+
+    [Fact]
+    public void NativeBrowserClosesOnlyAfterBoundedProtocolRetirementAndKeepsExactResponseAdmission()
+    {
+        var root = Path.Combine(TestRepositoryPaths.GetRepositoryRoot(), "src", "OpenClaw.Tray.WinUI", "Chat");
+        var common = File.ReadAllText(Path.Combine(root, "ConversationContentWebView.cs"));
+        var app = File.ReadAllText(Path.Combine(root, "ConversationMcpAppWebView.cs"));
+        Assert.Contains("try { await RetireContentAsync(); }", common);
+        Assert.Contains("try { CloseRetiredBrowser(); }", common);
+        Assert.Contains("Browser retirement ended", common);
+        Assert.Contains("if (_retiring) HandleRetirementMessage(message)", common);
+        Assert.Contains("Boundary.IsNativeMessage(args.Source, message)", common);
+        Assert.Contains("render.GetString() != RenderId", common);
+        Assert.Contains("_session.ReceiveRetirementResponse(packet)", app);
+        Assert.Contains("IsInteractable, IsEffectVisible", app);
     }
 }

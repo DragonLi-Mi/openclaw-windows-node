@@ -9,19 +9,21 @@ namespace OpenClawTray.Chat;
 internal sealed class ChatConversationMcpAppSession : IDisposable
 {
     private const int MaximumInflightRequests = 32;
-    private const int MaximumSubscriptions = 128;
+    private const int DefaultTeardownTimeoutMilliseconds = 250;
     private readonly ChatConversationMcpAppAction _owner;
     private readonly ConversationMcpAppView _view;
     private readonly ConversationMcpAppScope _scope;
     private readonly IChatConversationMcpAppActions _actions;
     private readonly Func<bool> _isInteractable;
+    private readonly Func<bool> _isEffectVisible;
     private readonly Action<JsonElement> _send;
     private readonly Action<ChatConversationMcpAppNotice> _notice;
     private readonly Action<string, double> _presentation;
     private readonly Action _initialized;
     private readonly CancellationTokenSource _lifetime;
     private readonly Dictionary<string, CancellationTokenSource> _inflight = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _subscriptions = new(StringComparer.Ordinal);
+    private readonly ChatConversationMcpAppMountLease _mount;
+    private readonly Func<TimeSpan, Task> _waitForTeardown;
     private readonly Queue<DateTimeOffset> _effectTimes = new();
     private readonly object _gate = new();
     private IDisposable? _events;
@@ -33,11 +35,18 @@ internal sealed class ChatConversationMcpAppSession : IDisposable
     private long _contextRevision;
     private bool _effectInFlight;
     private bool _disposed;
+    private int _activeHandlers;
+    private bool _retirementFinished;
+    private readonly TaskCompletionSource _retired = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private Task? _retirement;
+    private string? _teardownId;
+    private readonly TaskCompletionSource _teardownResponse = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     internal ChatConversationMcpAppSession(ChatConversationMcpAppAction owner, ConversationMcpAppView view,
         IChatConversationMcpAppActions actions, IChatConversationMcpAppEvents events,
         Func<bool> isInteractable, Action<JsonElement> send, Action<ChatConversationMcpAppNotice> notice,
-        Action<string, double> presentation, Action initialized)
+        Action<string, double> presentation, Action initialized, ChatConversationMcpAppMountLease mount,
+        Func<TimeSpan, Task>? waitForTeardown = null, Func<bool>? isEffectVisible = null)
     {
         _owner = owner;
         _view = view;
@@ -45,10 +54,14 @@ internal sealed class ChatConversationMcpAppSession : IDisposable
             owner.Selection.Owner.AgentId);
         _actions = actions;
         _isInteractable = isInteractable;
+        _isEffectVisible = isEffectVisible ?? isInteractable;
         _send = send;
         _notice = notice;
         _presentation = presentation;
         _initialized = initialized;
+        _mount = mount;
+        _mount.AttachSession(RetireAsync);
+        _waitForTeardown = waitForTeardown ?? (static delay => Task.Delay(delay));
         _hostContext = view.HostContext ?? JsonSerializer.SerializeToElement(new { });
         _lifetime = CancellationTokenSource.CreateLinkedTokenSource(owner.Operation.CancellationToken);
         // Subscribe only after initialized. The seam must deliver on the owning UI dispatcher.
@@ -57,11 +70,29 @@ internal sealed class ChatConversationMcpAppSession : IDisposable
 
     private readonly IChatConversationMcpAppEvents _eventSource;
     internal ConversationMcpAppHandshakeState Phase => _phase;
-    internal bool IsCurrent => !_disposed && !_lifetime.IsCancellationRequested && _owner.IsCurrent;
+    internal bool IsCurrent => !_disposed && !_lifetime.IsCancellationRequested && _owner.IsCurrent && _mount.IsCurrent;
     private ConversationMcpAppAccess Access =>
         ConversationMcpAppAccess.FromScopes(_owner.Operation.Context.Client.GrantedOperatorScopes);
 
     internal async Task ReceiveAsync(JsonElement packet, DateTimeOffset now)
+    {
+        lock (_gate)
+        {
+            if (!IsCurrent) return;
+            _activeHandlers++;
+        }
+        try { await ReceiveCoreAsync(packet, now); }
+        finally
+        {
+            lock (_gate)
+            {
+                _activeHandlers--;
+                if (_retirementFinished && _activeHandlers == 0) _lifetime.Dispose();
+            }
+        }
+    }
+
+    private async Task ReceiveCoreAsync(JsonElement packet, DateTimeOffset now)
     {
         if (!IsCurrent) return;
         if (packet.GetRawText().Length > ConversationMcpAppHostDocument.MaximumPacketCharacters)
@@ -106,7 +137,8 @@ internal sealed class ChatConversationMcpAppSession : IDisposable
                 if (request.Id is { } id) Error(id, ex.Code, ex.Message);
             }
         }
-        catch (Exception ex) when (ex is InvalidOperationException or IOException or TimeoutException or
+        catch (GatewayDataReadRetiredException) { SourceRetired?.Invoke(); Dispose(); }
+        catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or IOException or TimeoutException or
             OperationCanceledException or System.Net.WebSockets.WebSocketException or JsonException or ArgumentException or NotSupportedException)
         {
             var expired = ex is GatewayRequestException { Code: "UNAVAILABLE", Details: { ValueKind: JsonValueKind.Object } details } &&
@@ -129,13 +161,13 @@ internal sealed class ChatConversationMcpAppSession : IDisposable
             if (key is not null) lock (_gate)
             {
                 _inflight.Remove(key);
-                if (_disposed && _inflight.Count == 0) _lifetime.Dispose();
             }
             pending?.Dispose();
         }
     }
 
     internal event Action? Expired;
+    internal event Action? SourceRetired;
 
     private async Task<JsonElement> DispatchAsync(ConversationMcpAppUiRequest request,
         CancellationToken token, DateTimeOffset now)
@@ -191,7 +223,8 @@ internal sealed class ChatConversationMcpAppSession : IDisposable
                     {
                         var result = await InvokeAsync(ConversationMcpAppOperation.OpenFile,
                             ConversationMcpAppProtocol.GatewayParameters(request), token);
-                        if (!IsCurrent || !Access.CanRead || !_isInteractable() || token.IsCancellationRequested) return false;
+                        if (!IsCurrent || !Access.CanRead || !_isEffectVisible() || token.IsCancellationRequested)
+                            return ChatConversationContentAdmission.Stale;
                         var file = new ChatConversationMcpAppFile(String(result, "path"),
                             result.TryGetProperty("name", out var name) && name.ValueKind == JsonValueKind.String ? name.GetString() : null);
                         return await _actions.AcceptFileAsync(_owner, file, token);
@@ -227,37 +260,18 @@ internal sealed class ChatConversationMcpAppSession : IDisposable
         var parameters = ConversationMcpAppProtocol.GatewayParameters(request);
         var uri = operation is ConversationMcpAppOperation.SubscribeResource or ConversationMcpAppOperation.UnsubscribeResource
             ? String(parameters, "uri") : null;
-        if (operation == ConversationMcpAppOperation.SubscribeResource)
-        {
-            lock (_gate)
-            {
-                if (_subscriptions.Count >= MaximumSubscriptions && !_subscriptions.Contains(uri!))
-                    throw new ConversationMcpAppProtocolException(-32000, "The App subscription limit was reached.");
-                _subscriptions.Add(uri!);
-            }
-        }
-        try
-        {
-            // A subscribe must observe late completion so teardown can release its exact owned scope.
-            var result = await InvokeAsync(operation, parameters,
-                operation == ConversationMcpAppOperation.SubscribeResource ? CancellationToken.None : token);
-            if (!IsCurrent) return Empty();
-            ConversationMcpAppProtocol.ValidateGatewayResult(operation, result);
-            if (operation == ConversationMcpAppOperation.UnsubscribeResource)
-                lock (_gate) _subscriptions.Remove(uri!);
-            if (operation == ConversationMcpAppOperation.UpdateModelContext && IsCurrent)
-                await RefreshModelContextAsync();
-            return result;
-        }
-        finally
-        {
-            if (operation == ConversationMcpAppOperation.SubscribeResource && !IsCurrent)
-                await ReleaseSubscriptionAsync(uri!);
-        }
+        var result = uri is not null
+            ? await _mount.SubscriptionAsync(operation, parameters, token)
+            : await InvokeAsync(operation, parameters, token);
+        if (!IsCurrent) return Empty();
+        ConversationMcpAppProtocol.ValidateGatewayResult(operation, result);
+        if (operation == ConversationMcpAppOperation.UpdateModelContext && IsCurrent)
+            await RefreshModelContextAsync();
+        return result;
     }
 
     private async Task<JsonElement> ConfirmedAsync(ChatConversationMcpAppConfirmation confirmation,
-        Func<Task<bool>> accept, CancellationToken token, DateTimeOffset now)
+        Func<Task<ChatConversationContentAdmission>> accept, CancellationToken token, DateTimeOffset now)
     {
         if (!IsCurrent || !_isInteractable()) return Reject();
         lock (_gate)
@@ -271,13 +285,18 @@ internal sealed class ChatConversationMcpAppSession : IDisposable
         try
         {
             if (!await _actions.ConfirmAsync(confirmation, token) || !IsCurrent ||
-                token.IsCancellationRequested || !_isInteractable()) return Reject();
+                token.IsCancellationRequested || !_isEffectVisible()) return Reject();
             if (confirmation.Kind == ChatConversationMcpAppActionKind.Message && !Access.CanWrite)
                 return Reject();
-            var accepted = await accept();
-            if (!IsCurrent || token.IsCancellationRequested) return Rejected();
-            _notice(accepted ? ChatConversationMcpAppNotice.None : ChatConversationMcpAppNotice.Rejected);
-            return accepted ? Empty() : Rejected();
+            var admission = await accept();
+            if (!IsCurrent || token.IsCancellationRequested) admission = admission.AfterOwnerChange();
+            if (IsCurrent)
+                _notice(admission.Kind == ChatConversationContentAdmissionKind.Unconfirmed
+                    ? ChatConversationMcpAppNotice.Unknown : admission.HasCustody
+                    ? admission.Kind == ChatConversationContentAdmissionKind.Queued
+                        ? ChatConversationMcpAppNotice.Queued : ChatConversationMcpAppNotice.None
+                    : ChatConversationMcpAppNotice.Rejected);
+            return AdmissionResult(admission);
         }
         finally { lock (_gate) _effectInFlight = false; }
     }
@@ -333,14 +352,19 @@ internal sealed class ChatConversationMcpAppSession : IDisposable
     private void ReceiveEvent(ChatConversationMcpAppEvent delivery)
     {
         if (!IsCurrent || _phase != ConversationMcpAppHandshakeState.Ready ||
+            delivery.Source is null || !delivery.Source.IsCurrent ||
+            !ReferenceEquals(delivery.Source.Client, _owner.Operation.Context.Client) ||
+            delivery.Source.ConnectionEpoch != _mount.Source.ConnectionEpoch ||
+            delivery.Source.ProfileDataRevision != _mount.Source.ProfileDataRevision ||
             delivery.Owner != _owner.Selection.Owner || delivery.ConnectionEpoch != _owner.Operation.Context.ConnectionEpoch ||
+            delivery.AccountRevision != _owner.Operation.Context.AccountRevision ||
             delivery.RunId != _owner.Selection.RunId || delivery.ViewId != _scope.ViewId ||
             delivery.Parameters.ValueKind != JsonValueKind.Object) return;
         switch (delivery.Kind)
         {
             case ChatConversationMcpAppEventKind.ResourceUpdated when _view.FileResourcesSupported:
                 if (delivery.Parameters.TryGetProperty("uri", out var uri) && uri.ValueKind == JsonValueKind.String &&
-                    _subscriptions.Contains(uri.GetString()!))
+                    _mount.Contains(uri.GetString()!))
                     Notify("notifications/resources/updated", delivery.Parameters);
                 break;
             case ChatConversationMcpAppEventKind.ResourceListChanged when _view.MessageSupported:
@@ -379,25 +403,29 @@ internal sealed class ChatConversationMcpAppSession : IDisposable
         }
     }
 
-    private async Task ReleaseSubscriptionAsync(string uri)
-    {
-        // Cleanup is allowed for this captured scope after panel navigation, never on a new epoch.
-        if (!_owner.Operation.Context.IsTransportCurrent || !_owner.Operation.Connection.IsCurrent) return;
-        try
-        {
-            await _owner.Operation.Context.Client.InvokeConversationMcpAppAsync(_scope,
-                ConversationMcpAppOperation.UnsubscribeResource, JsonSerializer.SerializeToElement(new { uri }),
-                _owner.Operation.Context.ConnectionEpoch, CancellationToken.None);
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or IOException or OperationCanceledException or TimeoutException or NotSupportedException)
-        { Logger.Warn($"[ConversationMcpApp] Subscription release ended ({ex.GetType().Name})."); }
-    }
-
     private void Notify(string method, object parameters) => Send(new { jsonrpc = "2.0", method, @params = parameters });
     private void Error(JsonElement id, int code, string message) => Send(new { jsonrpc = "2.0", id, error = new { code, message } });
     private void Send(object packet) { if (IsCurrent) _send(JsonSerializer.SerializeToElement(packet)); }
     private static JsonElement Empty() => JsonSerializer.SerializeToElement(new { });
     private static JsonElement Rejected() => JsonSerializer.SerializeToElement(new { isError = true });
+    private static JsonElement AdmissionResult(ChatConversationContentAdmission admission)
+    {
+        var result = new JsonObject
+        {
+            ["_meta"] = new JsonObject
+            {
+                ["openclaw/acceptance"] = new JsonObject
+                {
+                    ["status"] = admission.Kind.ToString().ToLowerInvariant(),
+                    ["ownsPayload"] = admission.OwnsPayload,
+                    ["error"] = admission.Kind == ChatConversationContentAdmissionKind.Unconfirmed
+                        ? "The action outcome is unknown. It was not retried." : admission.Error
+                }
+            }
+        };
+        if (!admission.HasCustody) result["isError"] = true;
+        return JsonSerializer.SerializeToElement(result);
+    }
     private JsonElement Reject()
     {
         if (IsCurrent) _notice(ChatConversationMcpAppNotice.Rejected);
@@ -417,24 +445,71 @@ internal sealed class ChatConversationMcpAppSession : IDisposable
         ConversationMcpAppUiMethod.UpdateModelContext or ConversationMcpAppUiMethod.Message or
         ConversationMcpAppUiMethod.OpenFile or ConversationMcpAppUiMethod.OpenLink;
 
-    public void Dispose()
+    internal Task RetireAsync()
     {
-        string[] subscriptions;
         lock (_gate)
         {
-            if (_disposed) return;
+            if (_retirement is not null) return _retirement;
             _phase = ConversationMcpAppHandshakeState.Retiring;
             _disposed = true;
-            subscriptions = _subscriptions.ToArray();
-            _subscriptions.Clear();
+            _retirement = _retired.Task;
+            AsyncEventHandlerGuard.Run(async () =>
+            {
+                try { await RetireCoreAsync(); }
+                finally
+                {
+                    _ = _mount.RetireAsync();
+                    lock (_gate)
+                    {
+                        _retirementFinished = true;
+                        if (_activeHandlers == 0) _lifetime.Dispose();
+                    }
+                    _retired.TrySetResult();
+                }
+            }, operationName: "McpAppTeardown", onError: _ => { });
+            return _retirement;
         }
+    }
+
+    private async Task RetireCoreAsync()
+    {
         _events?.Dispose();
         _events = null;
+        string[] pendingKeys;
+        lock (_gate) pendingKeys = _inflight.Keys.ToArray();
         _lifetime.Cancel();
-        foreach (var uri in subscriptions)
-            AsyncEventHandlerGuard.Run(() => ReleaseSubscriptionAsync(uri),
-                operationName: "McpAppReleaseSubscription", onError: _ => { });
-        lock (_gate) if (_inflight.Count == 0) _lifetime.Dispose();
-        // Admitted requests retain their tokens until completion; cancellation is not a mutation rollback.
+        foreach (var key in pendingKeys)
+        {
+            var id = key.StartsWith("s:", StringComparison.Ordinal)
+                ? JsonSerializer.SerializeToElement(key[2..])
+                : JsonSerializer.Deserialize<JsonElement>(key[2..]);
+            _send(JsonSerializer.SerializeToElement(new
+            { jsonrpc = "2.0", method = "notifications/cancelled", @params = new { requestId = id, reason = "The App is retiring." } }));
+        }
+        _teardownId = "host-teardown-" + Guid.NewGuid().ToString("N");
+        _send(JsonSerializer.SerializeToElement(new
+        { jsonrpc = "2.0", id = _teardownId, method = "ui/resource-teardown", @params = new { } }));
+        await Task.WhenAny(_teardownResponse.Task, _waitForTeardown(TeardownTimeout()));
+        _teardownId = null;
+        // The browser can close now. Same-view readmission still waits for actual subscription cleanup.
     }
+
+    internal void ReceiveRetirementResponse(JsonElement packet)
+    {
+        if (_phase != ConversationMcpAppHandshakeState.Retiring || _teardownId is null ||
+            packet.ValueKind != JsonValueKind.Object || packet.TryGetProperty("method", out _) ||
+            !packet.TryGetProperty("jsonrpc", out var version) || version.ValueKind != JsonValueKind.String || version.GetString() != "2.0" ||
+            !packet.TryGetProperty("id", out var id) || id.ValueKind != JsonValueKind.String ||
+            id.GetString() != _teardownId ||
+            !(packet.TryGetProperty("result", out var result) && result.ValueKind == JsonValueKind.Object ||
+              packet.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.Object)) return;
+        _teardownResponse.TrySetResult();
+    }
+
+    private static TimeSpan TeardownTimeout() => TimeSpan.FromMilliseconds(
+        int.TryParse(Environment.GetEnvironmentVariable("OPENCLAW_MCP_APP_TEARDOWN_TIMEOUT_MS"), out var value) &&
+        value is >= 50 and <= 5000 ? value : DefaultTeardownTimeoutMilliseconds);
+
+    public void Dispose() => AsyncEventHandlerGuard.Run(RetireAsync,
+        operationName: "McpAppRetirement", onError: exception => { _ = _mount.RetireAsync(); });
 }

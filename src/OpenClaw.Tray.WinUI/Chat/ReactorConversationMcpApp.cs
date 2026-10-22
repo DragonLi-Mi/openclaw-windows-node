@@ -13,7 +13,8 @@ namespace OpenClawTray.Chat;
 
 internal sealed record ReactorConversationMcpAppProps(ChatConversationPanelState State,
     ChatConversationCanvasSelection Selection, IChatConversationMcpAppActions? Actions,
-    IChatConversationMcpAppEvents? Events, Action ReturnToConversation);
+    IChatConversationMcpAppEvents? Events, Action ReturnToConversation,
+    ChatConversationMcpAppLifetime? Lifetime = null);
 
 [GenerateReactorWrapper(typeof(ConversationMcpAppMount), AutoDiscover = false, RegisterAssembly = false)]
 internal partial record ConversationMcpAppMountElement;
@@ -27,7 +28,7 @@ internal sealed class ReactorConversationMcpApp : Component<ReactorConversationM
         var (_, setRevision) = UseState(0L, threadSafe: true);
         UseEffect((Func<Action>)(() =>
         {
-            var controller = new ChatConversationMcpAppController(props.State, props.Selection, props.Actions, props.Events);
+            var controller = new ChatConversationMcpAppController(props.State, props.Selection, props.Actions, props.Events, props.Lifetime);
             owner.Current = controller;
             long revision = 0;
             void Changed() => setRevision(Interlocked.Increment(ref revision));
@@ -86,6 +87,7 @@ internal sealed class ConversationMcpAppMount : Control, IDisposable
     private ChatConversationPanelOperation? _operation;
     private ConversationMcpAppView? _document;
     private Action? _return;
+    private bool _needsReadmission;
     public ConversationMcpAppMount()
     {
         Template = (ControlTemplate)Application.Current.Resources["ChatConversationCanvasTemplate"];
@@ -120,10 +122,20 @@ internal sealed class ConversationMcpAppMount : Control, IDisposable
         AsyncEventHandlerGuard.Run(surface.InitializeAsync,
             operationName: "ConversationMcpAppInitialize", onError: surface.ReportFailure);
     }
-    private void OnLoaded(object sender, RoutedEventArgs args) => Start();
+    private void OnLoaded(object sender, RoutedEventArgs args)
+    {
+        if (_needsReadmission && _owner is { } owner)
+        {
+            _needsReadmission = false;
+            AsyncEventHandlerGuard.Run(owner.LoadAsync,
+                operationName: "ConversationMcpAppReadmission", onError: owner.UnexpectedFailure);
+        }
+        else Start();
+    }
     private void OnUnloaded(object sender, RoutedEventArgs args)
     {
         RetireSurface();
+        _needsReadmission = true;
         if (_operation is { } operation) _owner?.SurfaceSuspended(operation);
     }
     private void RetireSurface()

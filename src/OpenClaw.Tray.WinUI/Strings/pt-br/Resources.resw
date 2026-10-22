@@ -8162,6 +8162,7 @@ Após a inscrição, volte para Configurações &gt; Windows Update e verifique 
   <data name="Chat_McpApp_RateLimited" xml:space="preserve"><value>Muitas ações do MCP App. Aguarde um minuto antes de tentar novamente.</value></data>
   <data name="Chat_McpApp_Rejected" xml:space="preserve"><value>Esta ação do MCP App não foi aceita.</value></data>
   <data name="Chat_McpApp_Unknown" xml:space="preserve"><value>O resultado da ação é desconhecido. A ação não foi repetida. Verifique a conversa antes de tentar novamente.</value></data>
+  <data name="Chat_McpApp_Queued" xml:space="preserve"><value>A conversa assumiu esta solicitação e a colocou na fila.</value></data>
   <data name="Chat_McpApp_ConfirmTitle" xml:space="preserve"><value>Permitir esta ação do MCP App?</value></data>
   <data name="Chat_McpApp_ConfirmMessage" xml:space="preserve"><value>Enviar esta mensagem e seus anexos para a conversa?</value></data>
   <data name="Chat_McpApp_ConfirmNewMessage" xml:space="preserve"><value>Enviar esta mensagem e seus anexos para uma nova conversa?</value></data>

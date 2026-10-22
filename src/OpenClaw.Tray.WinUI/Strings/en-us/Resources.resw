@@ -8177,6 +8177,7 @@ After enrolling, return to Settings &gt; Windows Update and check for updates. I
   <data name="Chat_McpApp_RateLimited" xml:space="preserve"><value>Too many MCP App actions. Wait a minute before trying again.</value></data>
   <data name="Chat_McpApp_Rejected" xml:space="preserve"><value>This MCP App action was not accepted.</value></data>
   <data name="Chat_McpApp_Unknown" xml:space="preserve"><value>The action outcome is unknown. It was not retried. Check the conversation before trying again.</value></data>
+  <data name="Chat_McpApp_Queued" xml:space="preserve"><value>The conversation owns this request and has queued it.</value></data>
   <data name="Chat_McpApp_ConfirmTitle" xml:space="preserve"><value>Allow this MCP App action?</value></data>
   <data name="Chat_McpApp_ConfirmMessage" xml:space="preserve"><value>Send this message and its attachments to the conversation?</value></data>
   <data name="Chat_McpApp_ConfirmNewMessage" xml:space="preserve"><value>Send this message and its attachments to a new conversation?</value></data>

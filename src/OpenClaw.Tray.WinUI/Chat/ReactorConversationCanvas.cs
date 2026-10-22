@@ -17,7 +17,8 @@ internal sealed record ReactorConversationCanvasProps(
     Func<ChatConversationCanvasPrompt, CancellationToken, Task<ChatConversationCanvasPromptResult>> SubmitPrompt,
     Action ReturnToConversation,
     IChatConversationMcpAppActions? McpAppActions = null,
-    IChatConversationMcpAppEvents? McpAppEvents = null);
+    IChatConversationMcpAppEvents? McpAppEvents = null,
+    ChatConversationMcpAppLifetime? McpAppLifetime = null);
 
 [GenerateReactorWrapper(typeof(ConversationCanvasMount), AutoDiscover = false, RegisterAssembly = false)]
 internal partial record ConversationCanvasMountElement;
@@ -29,7 +30,7 @@ internal sealed class ReactorConversationCanvas : Component<ReactorConversationC
         var props = Props;
         if (props.Selection.Content.Kind == ConversationCanvasContentKind.McpApp)
             return Component<ReactorConversationMcpApp, ReactorConversationMcpAppProps>(new(
-                props.State, props.Selection, props.McpAppActions, props.McpAppEvents, props.ReturnToConversation));
+                props.State, props.Selection, props.McpAppActions, props.McpAppEvents, props.ReturnToConversation, props.McpAppLifetime));
         var owner = UseRef<ChatConversationCanvasController?>(null);
         var (_, setRevision) = UseState(0L, threadSafe: true);
         UseEffect((Func<Action>)(() =>
@@ -90,8 +91,16 @@ internal sealed class ReactorConversationCanvas : Component<ReactorConversationC
                     snapshot.EmbedSandboxMode, props.Selection.Content))
                 .AutomationId("ConversationCanvasScriptsRestricted")
                 .Grid(row: 1),
-            TextBlock(Text("InteractionBlocked")).TextWrapping(TextWrapping.Wrap)
-                .Margin(16, 0, 16, 8).IsVisible(snapshot.InteractionBlocked)
+            TextBlock(snapshot.PromptAdmission?.Admission.Kind switch
+                {
+                    ChatConversationContentAdmissionKind.Unconfirmed => LocalizationHelper.GetString("Chat_McpApp_Unknown"),
+                    ChatConversationContentAdmissionKind.Queued when snapshot.PromptAdmission.Admission.HasCustody =>
+                        LocalizationHelper.GetString("Chat_McpApp_Queued"),
+                    _ => Text("InteractionBlocked")
+                }).TextWrapping(TextWrapping.Wrap)
+                .Margin(16, 0, 16, 8).IsVisible(snapshot.InteractionBlocked ||
+                    snapshot.PromptAdmission?.Admission.Kind is ChatConversationContentAdmissionKind.Queued or
+                        ChatConversationContentAdmissionKind.Unconfirmed)
                 .AutomationId("ConversationCanvasInteractionBlocked")
                 .Grid(row: 2),
             (hasDocument && controller is not null

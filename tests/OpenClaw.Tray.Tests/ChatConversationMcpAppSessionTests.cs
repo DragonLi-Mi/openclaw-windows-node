@@ -2,12 +2,25 @@ using System.Reflection;
 using System.Text.Json;
 using OpenClaw.Shared;
 using OpenClawTray.Chat;
+using OpenClawTray.Presentation;
 
 namespace OpenClaw.Tray.Tests;
 
 public sealed class ChatConversationMcpAppSessionTests
 {
+    private static readonly TimeSpan DeadlockDeadline = TimeSpan.FromSeconds(10);
     private static JsonElement Json(string json) => JsonSerializer.Deserialize<JsonElement>(json);
+    private sealed class Dispatcher : IUiDispatcher
+    {
+        public bool HasThreadAccess { get; set; } = true;
+        internal readonly System.Collections.Concurrent.ConcurrentQueue<Action> Queue = new();
+        public bool TryEnqueue(Action action) { Queue.Enqueue(action); return true; }
+        internal void Drain()
+        {
+            HasThreadAccess = true;
+            while (Queue.TryDequeue(out var action)) action();
+        }
+    }
     public class Gateway : DispatchProxy
     {
         internal long Epoch = 7;
@@ -60,27 +73,48 @@ public sealed class ChatConversationMcpAppSessionTests
         internal readonly List<ChatConversationMcpAppFile> Files = [];
         internal readonly List<ConversationMcpAppLink> Links = [];
         internal Func<Task<bool>> Confirm = () => Task.FromResult(true);
-        internal bool Accept = true;
+        internal ChatConversationContentAdmission Admission = ChatConversationContentAdmission.Accepted;
+        internal bool Accept { get => Admission.HasCustody; set => Admission = value
+            ? ChatConversationContentAdmission.Accepted : ChatConversationContentAdmission.Rejected; }
         public Task<bool> ConfirmAsync(ChatConversationMcpAppConfirmation request, CancellationToken cancellationToken)
         { Confirmations.Add(request); return Confirm(); }
-        public Task<bool> AcceptMessageAsync(ChatConversationMcpAppAction owner, ConversationMcpAppMessage message, CancellationToken cancellationToken)
-        { Messages.Add(message); return Task.FromResult(Accept); }
-        public Task<bool> AcceptFileAsync(ChatConversationMcpAppAction owner, ChatConversationMcpAppFile file, CancellationToken cancellationToken)
-        { Files.Add(file); return Task.FromResult(Accept); }
-        public Task<bool> OpenLinkAsync(ChatConversationMcpAppAction owner, ConversationMcpAppLink link, CancellationToken cancellationToken)
-        { Links.Add(link); return Task.FromResult(Accept); }
+        public Task<ChatConversationContentAdmission> AcceptMessageAsync(ChatConversationMcpAppAction owner, ConversationMcpAppMessage message, CancellationToken cancellationToken)
+        { Messages.Add(message); return Task.FromResult(Admission); }
+        public Task<ChatConversationContentAdmission> AcceptFileAsync(ChatConversationMcpAppAction owner, ChatConversationMcpAppFile file, CancellationToken cancellationToken)
+        { Files.Add(file); return Task.FromResult(Admission); }
+        public Task<ChatConversationContentAdmission> OpenLinkAsync(ChatConversationMcpAppAction owner, ConversationMcpAppLink link, CancellationToken cancellationToken)
+        { Links.Add(link); return Task.FromResult(Admission); }
         public bool SetDisplayMode(ChatConversationMcpAppAction owner, string mode) => Accept;
         public void ReturnToConversation(ChatConversationMcpAppAction owner) { }
     }
 
     private sealed class Events : IChatConversationMcpAppEvents
     {
+        public bool IsAvailable => true;
         internal Action<ChatConversationMcpAppEvent>? Listener;
         internal bool Disposed;
         public IDisposable Subscribe(ChatConversationMcpAppAction owner, string viewId, Action<ChatConversationMcpAppEvent> receive)
         { Listener = receive; return new Subscription(this); }
         private sealed class Subscription(Events events) : IDisposable
         { public void Dispose() { events.Disposed = true; events.Listener = null; } }
+    }
+
+    private sealed class RootEvents : IChatConversationMcpAppEventSource
+    {
+        public bool IsAvailable { get; set; }
+        internal Action<ChatConversationMcpAppEvent>? Listener;
+        internal ChatConversationMcpAppAction? Captured;
+        internal bool Disposed;
+        public IDisposable Subscribe(ChatConversationMcpAppAction capturedOwner, Action<ChatConversationMcpAppEvent> receive)
+        {
+            Captured = capturedOwner;
+            Listener = receive;
+            return new Subscription(this);
+        }
+        private sealed class Subscription(RootEvents owner) : IDisposable
+        {
+            public void Dispose() { owner.Disposed = true; owner.Listener = null; }
+        }
     }
 
     private sealed class Fixture : IDisposable
@@ -94,23 +128,36 @@ public sealed class ChatConversationMcpAppSessionTests
         internal readonly List<JsonElement> Sent = [];
         internal readonly List<ChatConversationMcpAppNotice> Notices = [];
         internal readonly ChatConversationMcpAppSession Session;
+        internal readonly ChatConversationMcpAppLifetime Lifetime;
+        internal readonly ChatConversationMcpAppMountLease Mount;
+        internal readonly GatewayDataReadScope ReadScope;
+        internal readonly GatewayDataReadSource Source;
         internal bool Focused = true;
+        internal bool VisibleForeground = true;
+        internal long AccountRevision = 1;
+        internal bool ThrowSourceCheck;
         internal int Initialized;
         internal string Mode = "";
         internal double Height;
         internal readonly DateTimeOffset Now = DateTimeOffset.Parse("2026-10-22T12:00:00Z");
-        internal Fixture(bool enabled = true)
+        internal Fixture(bool enabled = true, Func<TimeSpan, Task>? waitForTeardown = null)
         {
             var client = DispatchProxy.Create<IOperatorGatewayClient, Gateway>();
             Gateway = (Gateway)client;
             Panels = new(key => ChatConversationContext.Capture("gateway-record", client,
-                new SessionInfo { Key = key, SessionId = "session-id", AgentId = "agent" }, "profile-one", 1));
+                new SessionInfo { Key = key, SessionId = "session-id", AgentId = "agent" }, "profile-one", AccountRevision));
             Panels.Bind("agent:agent:session");
             Panels.Open("canvas", "view-one", "run-one");
             Selection = new(Panels.Context!.Identity,
                 new(ConversationCanvasContentKind.McpApp, "view-one", null, "App", true,
                     McpApp: new("view-one", "server", "tool", null, "call-one", null, null)), "message-id", "run-one");
             Operation = Panels.BeginOperation("canvas", "run-one", expectedContentId: "view-one")!;
+            ReadScope = new(client, () => Gateway.Epoch);
+            Source = ReadScope.Capture()!;
+            Lifetime = new(Operation.Context, Source, (context, _) => ThrowSourceCheck
+                ? throw new InvalidDataException("The original source is unavailable.")
+                : context.AccountRevision == AccountRevision);
+            Mount = Lifetime.AcquireAsync(new(Selection, Operation), CancellationToken.None).GetAwaiter().GetResult()!;
             Session = new(new(Selection, Operation), new()
             {
                 Html = "<main>App</main>", GatewayOrigin = new("https://gateway.example"),
@@ -118,7 +165,8 @@ public sealed class ChatConversationMcpAppSessionTests
                 MessageSupported = enabled, OpenFilesSupported = enabled, FileResourcesSupported = enabled,
                 UpdateModelContextSupported = enabled, RichModelContextSupported = enabled
             }, Actions, Events, () => Focused, packet => Sent.Add(packet), Notices.Add,
-                (mode, height) => { Mode = mode; Height = height; }, () => Initialized++);
+                (mode, height) => { Mode = mode; Height = height; }, () => Initialized++, Mount,
+                waitForTeardown ?? (_ => Task.CompletedTask), () => VisibleForeground);
         }
         internal Task Request(string method, string parameters = "{}", string id = "1") =>
             Session.ReceiveAsync(Json($$"""{"jsonrpc":"2.0","id":{{id}},"method":"{{method}}","params":{{parameters}}}"""), Now);
@@ -137,7 +185,9 @@ public sealed class ChatConversationMcpAppSessionTests
     public async Task ProductionControllerReadsOnlyTheCanonicalSelectedContentWhenHooksExist()
     {
         using var f = new Fixture();
-        using var controller = new ChatConversationMcpAppController(f.Panels, f.Selection, f.Actions, f.Events);
+        // The fixture's session owns a different mount. Retire it before exercising production admission.
+        await f.Session.RetireAsync();
+        using var controller = new ChatConversationMcpAppController(f.Panels, f.Selection, f.Actions, f.Events, f.Lifetime);
         await controller.LoadAsync();
         Assert.Equal(ChatConversationMcpAppPhase.Loaded, controller.Snapshot.Phase);
         Assert.Equal("view-one", controller.Snapshot.Operation?.ContentId);
@@ -268,7 +318,7 @@ public sealed class ChatConversationMcpAppSessionTests
         await f.Ready();
         f.Actions.Confirm = () =>
         {
-            if (revoke == "focus") f.Focused = false;
+            if (revoke == "focus") f.VisibleForeground = false;
             else f.Gateway.Scopes = ["operator.read"];
             return Task.FromResult(true);
         };
@@ -329,7 +379,7 @@ public sealed class ChatConversationMcpAppSessionTests
         await f.Ready();
         f.Gateway.InvokeOperation = (_, _) =>
         {
-            f.Focused = false;
+            f.VisibleForeground = false;
             return Task.FromResult(Json("""{"path":"workspace/report.md"}"""));
         };
         await f.Request("openai/files/open", """{"path":"workspace/report.md"}""");
@@ -386,10 +436,11 @@ public sealed class ChatConversationMcpAppSessionTests
         await f.Request("resources/subscribe", """{"uri":"gateway:report"}""");
         f.Sent.Clear();
         var delivery = new ChatConversationMcpAppEvent(f.Selection.Owner, 7, "run-one", "view-one",
-            ChatConversationMcpAppEventKind.ResourceUpdated, Json("""{"uri":"gateway:report"}"""));
+            ChatConversationMcpAppEventKind.ResourceUpdated, Json("""{"uri":"gateway:report"}"""), 1, f.Source);
         f.Events.Listener!(delivery with { ConnectionEpoch = 8 });
         f.Events.Listener!(delivery with { ViewId = "elsewhere" });
         f.Events.Listener!(delivery with { RunId = "run-two" });
+        f.Events.Listener!(delivery with { AccountRevision = 2 });
         f.Events.Listener!(delivery with { Owner = f.Selection.Owner with { GatewayId = "another" } });
         Assert.Empty(f.Sent);
         f.Events.Listener!(delivery);
@@ -414,8 +465,9 @@ public sealed class ChatConversationMcpAppSessionTests
         subscribed.SetResult(Json("{}"));
         await request;
         Assert.All(f.Gateway.Calls, c => Assert.Equal(new("agent:agent:session", "view-one", "agent"), c.Scope));
-        Assert.Equal(2, f.Gateway.Calls.Count(c => c.Operation == ConversationMcpAppOperation.UnsubscribeResource));
-        Assert.Empty(f.Sent);
+        await f.Mount.RetireAsync();
+        Assert.Single(f.Gateway.Calls, c => c.Operation == ConversationMcpAppOperation.UnsubscribeResource);
+        Assert.DoesNotContain(f.Sent, p => p.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.Number);
     }
 
     [Fact]
@@ -435,7 +487,7 @@ public sealed class ChatConversationMcpAppSessionTests
     public async Task NativeConfirmationStateCancelsOnOwnerChangeAndRejectsLateDialogDecisions()
     {
         using var f = new Fixture();
-        using var state = new ChatConversationMcpAppConfirmationState();
+        using var state = new ChatConversationMcpAppConfirmationState(new Dispatcher());
         var confirmation = new ChatConversationMcpAppConfirmation(new(f.Selection, f.Operation),
             ChatConversationMcpAppActionKind.File, Path: "workspace/report.md");
         var wait = state.ConfirmAsync(confirmation, CancellationToken.None);
@@ -451,7 +503,7 @@ public sealed class ChatConversationMcpAppSessionTests
     public async Task NativeConfirmationRequiresActualDecisionAndDisposalCannotAccept()
     {
         using var f = new Fixture();
-        using var state = new ChatConversationMcpAppConfirmationState();
+        using var state = new ChatConversationMcpAppConfirmationState(new Dispatcher());
         var confirmation = new ChatConversationMcpAppConfirmation(new(f.Selection, f.Operation),
             ChatConversationMcpAppActionKind.Link, Link: new("https://example.test"));
         var wait = state.ConfirmAsync(confirmation, CancellationToken.None);
@@ -500,7 +552,7 @@ public sealed class ChatConversationMcpAppSessionTests
         using var f = new Fixture();
         await f.Ready();
         var baseline = new ChatConversationMcpAppEvent(f.Selection.Owner, 7, "run-one", "view-one",
-            ChatConversationMcpAppEventKind.ModelContextChanged, Json("{}"));
+            ChatConversationMcpAppEventKind.ModelContextChanged, Json("{}"), 1, f.Source);
         f.Gateway.InvokeOperation = (_, _) => Task.FromResult(Json("""{"state":{"updateId":"new","value":"current"}}"""));
         f.Events.Listener!(baseline);
         Assert.Contains(f.Sent, p => p.TryGetProperty("method", out var method) &&
@@ -540,5 +592,413 @@ public sealed class ChatConversationMcpAppSessionTests
         Assert.True(new ChatConversationMcpAppAction(f.Selection, f.Operation).IsCurrent);
         Assert.False(new ChatConversationMcpAppAction(f.Selection with { RunId = "another-run" }, f.Operation).IsCurrent);
         Assert.False(new ChatConversationMcpAppAction(f.Selection with { RunId = null }, f.Operation).IsCurrent);
+    }
+
+    [Fact]
+    public async Task NativeAllowDoesNotDependOnWebViewFocusRestoringBeforeDialogClosed()
+    {
+        using var f = new Fixture();
+        await f.Ready();
+        f.Actions.Confirm = () =>
+        {
+            f.Focused = false;
+            return Task.FromResult(true);
+        };
+        await f.Request("ui/message", """{"role":"user","content":[{"type":"text","text":"Explain"}]}""");
+        Assert.Single(f.Actions.Messages);
+        Assert.False(f.Reply.GetProperty("result").TryGetProperty("isError", out _));
+    }
+
+    [Theory]
+    [InlineData("Accepted", true, false, "None")]
+    [InlineData("Queued", true, false, "Queued")]
+    [InlineData("Unconfirmed", false, true, "Unknown")]
+    [InlineData("Rejected", false, true, "Rejected")]
+    [InlineData("Stale", false, true, "Rejected")]
+    [InlineData("Accepted", false, true, "Rejected")]
+    public async Task ActualAdmissionPreservesFiveOutcomesAndCustody(
+        string kindName, bool ownsPayload, bool isError, string noticeName)
+    {
+        using var f = new Fixture();
+        await f.Ready();
+        var kind = Enum.Parse<ChatConversationContentAdmissionKind>(kindName);
+        var notice = Enum.Parse<ChatConversationMcpAppNotice>(noticeName);
+        f.Actions.Admission = new(kind, "parent detail", ownsPayload);
+        await f.Request("ui/message", """{"role":"user","content":[{"type":"text","text":"Explain"}]}""");
+        var result = f.Reply.GetProperty("result");
+        Assert.Equal(isError, result.TryGetProperty("isError", out var error) && error.GetBoolean());
+        var receipt = result.GetProperty("_meta").GetProperty("openclaw/acceptance");
+        Assert.Equal(kind.ToString().ToLowerInvariant(), receipt.GetProperty("status").GetString());
+        Assert.Equal(ownsPayload, receipt.GetProperty("ownsPayload").GetBoolean());
+        Assert.Contains(notice, f.Notices);
+        Assert.Single(f.Actions.Messages);
+        Assert.Empty(f.Gateway.Calls);
+    }
+
+    [Fact]
+    public async Task RetirementCancelsLocalEffectsThenWaitsOnlyForItsExactTeardownResponse()
+    {
+        var deadline = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var f = new Fixture(waitForTeardown: _ => deadline.Task);
+        await f.Ready();
+        var confirmation = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Actions.Confirm = () => confirmation.Task;
+        var message = f.Request("ui/message", """{"role":"user","content":[{"type":"text","text":"Explain"}]}""");
+        var retirement = f.Session.RetireAsync();
+        Assert.Equal(ConversationMcpAppHandshakeState.Retiring, f.Session.Phase);
+        Assert.True(f.Events.Disposed);
+        Assert.False(retirement.IsCompleted);
+        Assert.Contains(f.Sent, p => p.TryGetProperty("method", out var m) && m.GetString() == "notifications/cancelled");
+        var teardown = f.Sent.Single(p => p.TryGetProperty("method", out var m) && m.GetString() == "ui/resource-teardown");
+        f.Session.ReceiveRetirementResponse(Json("""{"jsonrpc":"2.0","id":"unknown","result":{}}"""));
+        Assert.False(retirement.IsCompleted);
+        await f.Request("tools/call", """{"name":"denied"}""");
+        Assert.Empty(f.Gateway.Calls);
+        confirmation.SetResult(true);
+        await message;
+        Assert.Empty(f.Actions.Messages);
+        f.Session.ReceiveRetirementResponse(JsonSerializer.SerializeToElement(new
+        { jsonrpc = "2.0", id = teardown.GetProperty("id").GetString(), result = new { } }));
+        await retirement;
+        Assert.False(deadline.Task.IsCompleted);
+    }
+
+    [Fact]
+    public async Task RetirementDeadlineAllowsBrowserCloseWithoutGuestCooperation()
+    {
+        var deadline = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        TimeSpan actualBudget = default;
+        using var f = new Fixture(waitForTeardown: budget => { actualBudget = budget; return deadline.Task; });
+        await f.Ready();
+        var retiring = f.Session.RetireAsync();
+        Assert.False(retiring.IsCompleted);
+        Assert.InRange(actualBudget.TotalMilliseconds, 50, 5000);
+        deadline.SetResult();
+        await retiring;
+        Assert.False(f.Session.IsCurrent);
+    }
+
+    [Fact]
+    public async Task SameViewCannotReadmitBeforeLateSubscribeAndItsSingleUnsubscribeComplete()
+    {
+        using var f = new Fixture();
+        await f.Ready();
+        var subscribed = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var unsubscribed = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cleanupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Gateway.InvokeOperation = (op, _) =>
+        {
+            if (op == ConversationMcpAppOperation.SubscribeResource) return subscribed.Task;
+            cleanupStarted.TrySetResult();
+            return unsubscribed.Task;
+        };
+        var request = f.Request("resources/subscribe", """{"uri":"gateway:report"}""");
+        await f.Session.RetireAsync();
+        var next = f.Lifetime.AcquireAsync(new(f.Selection, f.Operation), CancellationToken.None);
+        Assert.False(next.IsCompleted);
+        Assert.Single(f.Gateway.Calls);
+        subscribed.SetResult(Json("{}"));
+        await request;
+        await cleanupStarted.Task;
+        Assert.False(next.IsCompleted);
+        unsubscribed.SetResult(Json("{}"));
+        var mount = await next;
+        Assert.NotNull(mount);
+        Assert.Single(f.Gateway.Calls, c => c.Operation == ConversationMcpAppOperation.UnsubscribeResource);
+        await mount.RetireAsync();
+    }
+
+    [Fact]
+    public async Task UnconfirmedCleanupPoisonsSameSocketReadmissionInsteadOfTouchingANewAccount()
+    {
+        using var f = new Fixture();
+        await f.Ready();
+        await f.Request("resources/subscribe", """{"uri":"gateway:report"}""");
+        f.AccountRevision++;
+        f.Panels.Refresh();
+        await f.Session.RetireAsync();
+        Assert.False(await f.Mount.RetireAsync());
+        Assert.DoesNotContain(f.Gateway.Calls, c => c.Operation == ConversationMcpAppOperation.UnsubscribeResource);
+        var selection = f.Selection with { Owner = f.Panels.Context!.Identity };
+        f.Panels.Open("canvas", "view-one", "run-one");
+        var operation = f.Panels.BeginOperation("canvas", "run-one", expectedContentId: "view-one")!;
+        Assert.Null(await f.Lifetime.AcquireAsync(new(selection, operation), CancellationToken.None));
+        f.Gateway.Epoch++;
+        f.Panels.Refresh();
+        f.Panels.Open("canvas", "view-one", "run-one");
+        operation = f.Panels.BeginOperation("canvas", "run-one", expectedContentId: "view-one")!;
+        Assert.Null(await f.Lifetime.AcquireAsync(new(selection, operation), CancellationToken.None));
+        var freshLifetime = new ChatConversationMcpAppLifetime(operation.Context, f.ReadScope.Capture()!,
+            (context, _) => context.AccountRevision == f.AccountRevision);
+        var fresh = await freshLifetime.AcquireAsync(new(selection, operation), CancellationToken.None);
+        Assert.NotNull(fresh);
+        await fresh.RetireAsync();
+    }
+
+    [Fact]
+    public async Task FailedSubscriptionNeitherAdmitsUpdatesNorConsumesTheSubscriptionLimit()
+    {
+        using var f = new Fixture();
+        await f.Ready();
+        f.Gateway.InvokeOperation = (_, _) => Task.FromException<JsonElement>(new GatewayRequestException("denied", "INVALID_REQUEST"));
+        for (var i = 0; i < 129; i++) await f.Request("resources/subscribe", $$"""{"uri":"gateway:{{i}}"}""");
+        Assert.Equal(129, f.Gateway.Calls.Count);
+        f.Sent.Clear();
+        f.Events.Listener!(new(f.Selection.Owner, 7, "run-one", "view-one",
+            ChatConversationMcpAppEventKind.ResourceUpdated, Json("""{"uri":"gateway:0"}"""), 1, f.Source));
+        Assert.Empty(f.Sent);
+        await f.Session.RetireAsync();
+        Assert.DoesNotContain(f.Gateway.Calls, c => c.Operation == ConversationMcpAppOperation.UnsubscribeResource);
+    }
+
+    [Fact]
+    public async Task OffThreadConfirmationCancellationPublishesOnlyThroughInjectedDispatcher()
+    {
+        using var f = new Fixture();
+        var dispatcher = new Dispatcher();
+        using var state = new ChatConversationMcpAppConfirmationState(dispatcher);
+        var changes = 0;
+        state.Changed += () => { Assert.True(dispatcher.HasThreadAccess); changes++; };
+        using var cancel = new CancellationTokenSource();
+        var wait = state.ConfirmAsync(new(new(f.Selection, f.Operation), ChatConversationMcpAppActionKind.Link), cancel.Token);
+        Assert.Equal(1, changes);
+        dispatcher.HasThreadAccess = false;
+        await Task.Run(cancel.Cancel);
+        Assert.False(await wait);
+        Assert.Equal(1, changes);
+        dispatcher.Drain();
+        Assert.Equal(2, changes);
+        Assert.Null(state.Pending);
+    }
+
+    [Fact]
+    public async Task InitializedNotificationRetainsItsTokenUntilCancelledRefreshActuallyDrains()
+    {
+        using var f = new Fixture();
+        await f.Request("ui/initialize", """{"protocolVersion":"2026-01-26","appInfo":{"name":"App","version":"1"},"appCapabilities":{}}""");
+        var refresh = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Gateway.InvokeOperation = (_, _) => refresh.Task;
+        var initialized = f.Session.ReceiveAsync(Json("""{"jsonrpc":"2.0","method":"ui/notifications/initialized"}"""), f.Now);
+        await f.Session.RetireAsync();
+        refresh.SetResult(Json("""{"state":{"updateId":"late"}}"""));
+        await initialized;
+        Assert.False(f.Session.IsCurrent);
+        Assert.DoesNotContain(f.Sent, p => p.TryGetProperty("params", out var pms) &&
+            pms.TryGetProperty("openai/modelContext", out var context) && context.ValueKind == JsonValueKind.Object);
+    }
+
+    [Fact]
+    public async Task RootEventAdapterCapturesOwnerAndMarshalsOffThreadDeliveryBeforeAndAfterChecks()
+    {
+        using var f = new Fixture();
+        var source = new RootEvents { IsAvailable = true };
+        var dispatcher = new Dispatcher { HasThreadAccess = false };
+        var adapter = new ChatConversationMcpAppEvents(source, dispatcher, f.Source,
+            (owner, _) => owner.Operation.Context.AccountRevision == f.AccountRevision);
+        var received = new List<ChatConversationMcpAppEvent>();
+        using var subscription = adapter.Subscribe(new(f.Selection, f.Operation), "view-one", delivery =>
+        { Assert.True(dispatcher.HasThreadAccess); received.Add(delivery); });
+        Assert.Equal(f.Selection.Owner, source.Captured!.Selection.Owner);
+        var original = new ChatConversationMcpAppEvent(f.Selection.Owner, 7, "run-one", "view-one",
+            ChatConversationMcpAppEventKind.ResourceUpdated, Json("""{"uri":"gateway:owned","unknown":{"literal":"data"}}"""), 1, f.Source);
+        await Task.Run(() =>
+        {
+            source.Listener!(original with { AccountRevision = 2 });
+            source.Listener!(original with { ViewId = "other" });
+            source.Listener!(original with { ConnectionEpoch = 8 });
+            source.Listener!(original);
+        });
+        Assert.Empty(received);
+        Assert.Single(dispatcher.Queue);
+        dispatcher.Drain();
+        Assert.Equal("data", Assert.Single(received).Parameters.GetProperty("unknown").GetProperty("literal").GetString());
+        received.Clear();
+        dispatcher.HasThreadAccess = false;
+        source.Listener!(original);
+        f.AccountRevision++;
+        f.Panels.Refresh();
+        dispatcher.Drain();
+        Assert.Empty(received);
+        subscription.Dispose();
+        Assert.True(source.Disposed);
+    }
+
+    [Fact]
+    public async Task MissingOriginalSourceProvenanceDoesNotSubscribeOrAdmitProductionRead()
+    {
+        using var f = new Fixture();
+        await f.Session.RetireAsync();
+        var source = new RootEvents();
+        var adapter = new ChatConversationMcpAppEvents(source, new Dispatcher(), f.Source,
+            (owner, _) => owner.Operation.Context.AccountRevision == f.AccountRevision);
+        using var subscription = adapter.Subscribe(new(f.Selection, f.Operation), "view-one", _ => Assert.Fail("No source authority."));
+        Assert.Null(source.Listener);
+        using var controller = new ChatConversationMcpAppController(f.Panels, f.Selection, f.Actions, adapter, f.Lifetime);
+        await controller.LoadAsync();
+        Assert.Equal(ChatConversationMcpAppPhase.Unavailable, controller.Snapshot.Phase);
+        Assert.Equal(0, f.Gateway.ViewReads);
+    }
+
+    [Fact]
+    public async Task OriginalSourceRetirementDropsQueuedEventsWithoutRebindingTheCurrentRevision()
+    {
+        using var f = new Fixture();
+        var source = new RootEvents { IsAvailable = true };
+        var dispatcher = new Dispatcher { HasThreadAccess = false };
+        var adapter = new ChatConversationMcpAppEvents(source, dispatcher, f.Source,
+            (owner, original) => owner.Operation.Context.AccountRevision == 1 &&
+                original.ProfileDataRevision == f.Source.ProfileDataRevision);
+        var deliveries = 0;
+        using var subscription = adapter.Subscribe(new(f.Selection, f.Operation), "view-one", _ => deliveries++);
+        var delivery = new ChatConversationMcpAppEvent(f.Selection.Owner, 7, "run-one", "view-one",
+            ChatConversationMcpAppEventKind.ResourceUpdated, Json("""{"uri":"gateway:report"}"""), 1, f.Source);
+        await Task.Run(() => source.Listener!(delivery));
+        Assert.Single(dispatcher.Queue);
+        f.ReadScope.Invalidate();
+        var latest = f.ReadScope.Capture()!;
+        Assert.True(latest.IsCurrent);
+        source.Listener!(delivery with { Source = latest });
+        dispatcher.Drain();
+        Assert.Equal(0, deliveries);
+        Assert.False(adapter.IsAvailable);
+        Assert.False(f.Session.IsCurrent);
+    }
+
+    [Fact]
+    public async Task LifetimeRetirementRevokesEffectsAndConfirmationBeforeReportingItsTypedDrain()
+    {
+        using var f = new Fixture();
+        await f.Ready();
+        var allow = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Actions.Confirm = () => allow.Task;
+        var message = f.Request("ui/message", """{"role":"user","content":[{"type":"text","text":"Explain"}]}""");
+        var retirement = f.Lifetime.RetireAsync();
+        Assert.False(f.Session.IsCurrent);
+        Assert.Null(await f.Lifetime.AcquireAsync(new(f.Selection, f.Operation), CancellationToken.None));
+        allow.SetResult(true);
+        await message;
+        Assert.Empty(f.Actions.Messages);
+        Assert.Equal(ChatConversationMcpAppRetirement.Drained, await retirement);
+    }
+
+    [Fact]
+    public async Task SourceRetiredExceptionIsNotReportedAsUserCancellationOrRetryableFailure()
+    {
+        using var f = new Fixture();
+        await f.Ready();
+        f.Gateway.InvokeOperation = (_, _) => Task.FromException<JsonElement>(new GatewayDataReadRetiredException());
+        await f.Request("tools/list");
+        Assert.False(f.Session.IsCurrent);
+        Assert.Single(f.Gateway.Calls);
+        Assert.DoesNotContain(ChatConversationMcpAppNotice.Error, f.Notices);
+        Assert.DoesNotContain(ChatConversationMcpAppNotice.Unknown, f.Notices);
+    }
+
+    [Theory]
+    [InlineData("malformed")]
+    [InlineData("source-error")]
+    public async Task CleanupFailureAlwaysPoisonsAndCompletesSameViewReadmissionInsteadOfHanging(string failure)
+    {
+        using var f = new Fixture();
+        await f.Ready();
+        await f.Request("resources/subscribe", """{"uri":"gateway:report"}""");
+        if (failure == "malformed")
+            f.Gateway.InvokeOperation = (_, _) => Task.FromResult(Json("[]"));
+        else f.ThrowSourceCheck = true;
+        await f.Session.RetireAsync().WaitAsync(DeadlockDeadline);
+        Assert.False(await f.Mount.RetireAsync().WaitAsync(DeadlockDeadline));
+        f.ThrowSourceCheck = false;
+        Assert.Null(await f.Lifetime.AcquireAsync(new(f.Selection, f.Operation), CancellationToken.None)
+            .WaitAsync(DeadlockDeadline));
+        Assert.Equal(ChatConversationMcpAppRetirement.RequiresFreshConnection,
+            await f.Lifetime.RetireAsync().WaitAsync(DeadlockDeadline));
+        Assert.Equal(failure == "malformed" ? 1 : 0,
+            f.Gateway.Calls.Count(call => call.Operation == ConversationMcpAppOperation.UnsubscribeResource));
+    }
+
+    [Fact]
+    public async Task MalformedMutationResultRepliesUnknownAndNeverRetries()
+    {
+        using var f = new Fixture();
+        await f.Ready();
+        f.Gateway.InvokeOperation = (_, _) => Task.FromResult(Json("[]"));
+        await f.Request("tools/call", """{"name":"mutate"}""");
+        Assert.Single(f.Gateway.Calls);
+        Assert.Contains(ChatConversationMcpAppNotice.Unknown, f.Notices);
+        Assert.Equal(-32000, f.Reply.GetProperty("error").GetProperty("code").GetInt32());
+        Assert.Contains("unknown", f.Reply.GetProperty("error").GetProperty("message").GetString());
+    }
+
+    [Theory]
+    [InlineData("qualifier")]
+    [InlineData("receiver")]
+    public async Task EventCallbacksCanReentrantlyDisposeFromAnotherThreadWithoutHoldingAdapterGate(string stage)
+    {
+        using var f = new Fixture();
+        var source = new RootEvents { IsAvailable = true };
+        var dispatcher = new Dispatcher { HasThreadAccess = false };
+        IDisposable? owned = null;
+        var adapter = new ChatConversationMcpAppEvents(source, dispatcher, f.Source, (_, _) =>
+        {
+            if (stage == "qualifier" && owned is not null)
+                Task.Run(owned.Dispose).WaitAsync(DeadlockDeadline).GetAwaiter().GetResult();
+            return true;
+        });
+        var received = 0;
+        using var subscription = adapter.Subscribe(new(f.Selection, f.Operation), "view-one", _ =>
+        {
+            Task.Run(owned!.Dispose).WaitAsync(DeadlockDeadline).GetAwaiter().GetResult();
+            received++;
+        });
+        owned = subscription;
+        var delivery = new ChatConversationMcpAppEvent(f.Selection.Owner, 7, "run-one", "view-one",
+            ChatConversationMcpAppEventKind.ResourceUpdated, Json("""{"uri":"gateway:report"}"""), 1, f.Source);
+        var listener = source.Listener!;
+        await Task.Run(() => listener(delivery)).WaitAsync(DeadlockDeadline);
+        dispatcher.Drain();
+        Assert.True(source.Disposed);
+        Assert.Equal(stage == "receiver" ? 1 : 0, received);
+    }
+
+    [Fact]
+    public void UnavailableSubscriptionNeverSilentlyAttachesWhenTheSourceBecomesAvailable()
+    {
+        using var f = new Fixture();
+        var source = new RootEvents();
+        var adapter = new ChatConversationMcpAppEvents(source, new Dispatcher(), f.Source, (_, _) => true);
+        using var unavailable = adapter.Subscribe(new(f.Selection, f.Operation), "view-one", _ => { });
+        Assert.Null(source.Listener);
+        source.IsAvailable = true;
+        Assert.Null(source.Listener);
+        using var admitted = adapter.Subscribe(new(f.Selection, f.Operation), "view-one", _ => { });
+        Assert.NotNull(source.Listener);
+    }
+
+    [Fact]
+    public async Task PoisonedScopeBoundRefusesThe129thKeyWithoutEvictingUnsafeHistory()
+    {
+        using var f = new Fixture();
+        await f.Session.RetireAsync();
+        f.Gateway.InvokeOperation = (operation, _) => Task.FromResult(
+            operation == ConversationMcpAppOperation.UnsubscribeResource ? Json("[]") : Json("{}"));
+        ChatConversationMcpAppAction Select(int index)
+        {
+            var id = "view-" + index;
+            f.Panels.Open("canvas", id, "run-one");
+            var content = f.Selection.Content with { DocumentId = id, McpApp = f.Selection.Content.McpApp! with { ViewId = id } };
+            var selection = f.Selection with { Content = content };
+            return new(selection, f.Panels.BeginOperation("canvas", "run-one", expectedContentId: id)!);
+        }
+        for (var index = 0; index < 128; index++)
+        {
+            var mount = await f.Lifetime.AcquireAsync(Select(index), CancellationToken.None).WaitAsync(DeadlockDeadline);
+            Assert.NotNull(mount);
+            await mount.SubscriptionAsync(ConversationMcpAppOperation.SubscribeResource,
+                Json("""{"uri":"gateway:report"}"""), CancellationToken.None);
+            Assert.False(await mount.RetireAsync().WaitAsync(DeadlockDeadline));
+        }
+        Assert.Null(await f.Lifetime.AcquireAsync(Select(128), CancellationToken.None).WaitAsync(DeadlockDeadline));
+        Assert.Null(await f.Lifetime.AcquireAsync(Select(0), CancellationToken.None).WaitAsync(DeadlockDeadline));
+        Assert.Equal(256, f.Gateway.Calls.Count);
     }
 }

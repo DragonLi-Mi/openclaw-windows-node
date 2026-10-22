@@ -11,7 +11,14 @@ internal sealed record ChatConversationCanvasSelection(
 internal sealed record ChatConversationCanvasPrompt(
     ChatConversationCanvasSelection Selection, long Generation, string Text);
 
-internal enum ChatConversationCanvasPromptResult { Accepted, Rejected, Stale }
+internal sealed record ChatConversationCanvasPromptResult(ChatConversationContentAdmission Admission)
+{
+    internal static ChatConversationCanvasPromptResult Accepted { get; } = new(ChatConversationContentAdmission.Accepted);
+    internal static ChatConversationCanvasPromptResult Queued { get; } = new(ChatConversationContentAdmission.Queued);
+    internal static ChatConversationCanvasPromptResult Unconfirmed { get; } = new(ChatConversationContentAdmission.Unconfirmed);
+    internal static ChatConversationCanvasPromptResult Rejected { get; } = new(ChatConversationContentAdmission.Rejected);
+    internal static ChatConversationCanvasPromptResult Stale { get; } = new(ChatConversationContentAdmission.Stale);
+}
 internal enum ChatConversationCanvasPhase { Waiting, Loading, Loaded, Ready, Unsupported, Blocked, Error }
 
 internal sealed record ChatConversationCanvasSnapshot(
@@ -19,7 +26,8 @@ internal sealed record ChatConversationCanvasSnapshot(
     ChatConversationPanelOperation? Operation = null,
     CanvasDocumentView? Document = null,
     string? EmbedSandboxMode = null,
-    bool InteractionBlocked = false);
+    bool InteractionBlocked = false,
+    ChatConversationCanvasPromptResult? PromptAdmission = null);
 
 /// <summary>One selected document lifetime, subordinate to the foundation's current operation lease.</summary>
 internal sealed class ChatConversationCanvasController : IDisposable
@@ -132,6 +140,7 @@ internal sealed class ChatConversationCanvasController : IDisposable
                 Publish(revision, new(ChatConversationCanvasPhase.Loaded, operation, document, document.EmbedSandboxMode));
                 return;
             }
+            catch (GatewayDataReadRetiredException) { RetireForPolicy(revision, operation, cancellation); return; }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
             catch (CanvasDocumentPendingException ex) { retryError = ex; }
             catch (GatewayRequestException ex) when (
@@ -219,7 +228,17 @@ internal sealed class ChatConversationCanvasController : IDisposable
             if (!operation.IsCurrent || !isInteractable()) return ChatConversationCanvasPromptResult.Stale;
             var result = await _submitPrompt(new(_selection, operation.Generation, text),
                 operation.CancellationToken).ConfigureAwait(false);
-            return operation.IsCurrent ? result : ChatConversationCanvasPromptResult.Stale;
+            if (!operation.IsCurrent) return new(result.Admission.AfterOwnerChange());
+            PublishCurrent(Snapshot with { PromptAdmission = result });
+            return result;
+        }
+        catch (GatewayDataReadRetiredException) { return ChatConversationCanvasPromptResult.Stale; }
+        catch (Exception ex) when (ex is OperationCanceledException or TimeoutException or IOException or
+            InvalidOperationException or WebSocketException)
+        {
+            if (operation.IsCurrent)
+                PublishCurrent(Snapshot with { PromptAdmission = ChatConversationCanvasPromptResult.Unconfirmed });
+            return ChatConversationCanvasPromptResult.Unconfirmed;
         }
         finally
         {

@@ -57,7 +57,8 @@ internal sealed class ConversationCanvasWebView : ConversationContentWebView
             case "prompt" when _rendered && message.TryGetProperty("text", out var text) &&
                                     text.ValueKind == JsonValueKind.String:
                 var outcome = await _owner.SubmitPromptAsync(text.GetString(), IsInteractable, DateTimeOffset.UtcNow);
-                if (IsCurrent && outcome != ChatConversationCanvasPromptResult.Accepted)
+                if (IsCurrent && !outcome.Admission.HasCustody &&
+                    outcome.Admission.Kind != ChatConversationContentAdmissionKind.Unconfirmed)
                     _owner.InteractionBlocked();
                 break;
         }

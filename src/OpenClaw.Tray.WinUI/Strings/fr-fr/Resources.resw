@@ -8110,6 +8110,7 @@ Après votre inscription, revenez dans Paramètres &gt; Windows Update et recher
   <data name="Chat_McpApp_RateLimited" xml:space="preserve"><value>Trop d’actions MCP App. Attendez une minute avant de réessayer.</value></data>
   <data name="Chat_McpApp_Rejected" xml:space="preserve"><value>Cette action MCP App n’a pas été acceptée.</value></data>
   <data name="Chat_McpApp_Unknown" xml:space="preserve"><value>Le résultat de l’action est inconnu. Aucune nouvelle tentative n’a été effectuée. Vérifiez la conversation avant de réessayer.</value></data>
+  <data name="Chat_McpApp_Queued" xml:space="preserve"><value>La conversation a pris en charge cette demande et l’a mise en attente.</value></data>
   <data name="Chat_McpApp_ConfirmTitle" xml:space="preserve"><value>Autoriser cette action MCP App ?</value></data>
   <data name="Chat_McpApp_ConfirmMessage" xml:space="preserve"><value>Envoyer ce message et ses pièces jointes à la conversation ?</value></data>
   <data name="Chat_McpApp_ConfirmNewMessage" xml:space="preserve"><value>Envoyer ce message et ses pièces jointes à une nouvelle conversation ?</value></data>
