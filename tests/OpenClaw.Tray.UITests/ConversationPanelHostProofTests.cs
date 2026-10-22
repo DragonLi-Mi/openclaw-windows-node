@@ -27,6 +27,8 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
     private Window? _proofWindow;
     private uint? _inputTick;
     private nint _activationForeground;
+    private nint _beforeCloseForeground;
+    private nint _ownWindowHandle;
     private string? _caseName;
 
     private static bool OnScreen => Environment.GetEnvironmentVariable("OPENCLAW_UITEST_ONSCREEN") == "1";
@@ -180,7 +182,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
             await ui.RunOnUIAsync(() =>
             {
                 positioner?.Dispose();
-                window?.Close();
+                CloseOwnedWindow(window);
                 _proofWindow = null;
             });
             VerifyNoInputCollision(proofCompleted);
@@ -382,7 +384,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 composer?.Dispose();
                 if (surface is not null) surface.Child = null;
                 host?.Dispose();
-                window?.Close();
+                CloseOwnedWindow(window);
                 _proofWindow = null;
                 theme?.Dispose();
             });
@@ -412,7 +414,15 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
         window.Activate();
         _activationForeground = GetForegroundWindow();
         var own = WinRT.Interop.WindowNative.GetWindowHandle(window);
+        _ownWindowHandle = own;
         Console.WriteLine($"Owned native activation: case={_caseName},own={own},foreground={_activationForeground},matched={own == _activationForeground}");
+    }
+
+    private void CloseOwnedWindow(Window? window)
+    {
+        if (window is null) return;
+        _beforeCloseForeground = GetForegroundWindow();
+        window.Close();
     }
 
     private void VerifyNoInputCollision(bool proofCompleted)
@@ -426,7 +436,12 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
         {
             Case = _caseName, Before = before, After = input.Tick,
             OnScreen, BodyPassed = proofCompleted, ReadSucceeded = read, Win32Error = error,
-            Collision = read && before != input.Tick
+            Collision = read && before != input.Tick,
+            OwnWindow = _ownWindowHandle.ToInt64(),
+            ActivationForeground = _activationForeground.ToInt64(),
+            BeforeCloseForeground = _beforeCloseForeground.ToInt64(),
+            ActivationMatchedOwnWindow = _activationForeground == _ownWindowHandle,
+            BeforeCloseMatchedOwnWindow = _beforeCloseForeground == _ownWindowHandle
         };
         var json = System.Text.Json.JsonSerializer.Serialize(audit);
         Console.WriteLine($"Owned native input audit: {json}");
