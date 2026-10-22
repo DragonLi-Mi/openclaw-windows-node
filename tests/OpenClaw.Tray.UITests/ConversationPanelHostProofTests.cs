@@ -452,9 +452,11 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
     private Task WaitForInitialTailAsync(Border surface, ScrollView scroll, bool requireScrollable = true, string? finalMessage = null) =>
         WaitForStablePositionAsync(surface, scroll,
             () => (!requireScrollable || scroll.ScrollableHeight > 160) &&
-                scroll.ScrollableHeight - scroll.VerticalOffset <= 60 &&
-                (finalMessage is null || FindDescendants<RichTextBlock>(surface).Any(text =>
-                    MessageText(text) == finalMessage && IsVisibleInScroll(text, scroll))),
+                (finalMessage is null
+                    ? Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight) <= 1
+                    : scroll.ScrollableHeight - scroll.VerticalOffset <= 60 &&
+                        FindDescendants<RichTextBlock>(surface).Any(text =>
+                            MessageText(text) == finalMessage && IsVisibleInScroll(text, scroll))),
             $"initial tail (requiresScrollableOver160={requireScrollable})");
 
     private sealed record ReaderAnchor(string Message, double Top);

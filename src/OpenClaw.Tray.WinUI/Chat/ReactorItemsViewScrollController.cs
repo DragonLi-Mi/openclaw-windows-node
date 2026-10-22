@@ -94,6 +94,7 @@ internal sealed class InitialTailPositioner : IDisposable
     private int _tailIndex;
     private int _itemCount;
     private int _version;
+    private int? _initialDispatchVersion;
     private bool _valid;
     private bool _initialTailPending;
     private WinUIScrollView? _awaitingScrollView;
@@ -178,9 +179,14 @@ internal sealed class InitialTailPositioner : IDisposable
 
         StopWaitingForScrollView();
         var version = _version;
+        if (_initialDispatchVersion == version)
+            return;
+        _initialDispatchVersion = version;
         // Native navigation must leave reconciliation, but must not wait for another layout event.
         if (!itemsView.DispatcherQueue.TryEnqueue(() =>
         {
+            if (_initialDispatchVersion == version)
+                _initialDispatchVersion = null;
             if (_disposed || !_valid || version != _version)
                 return;
 
@@ -199,6 +205,7 @@ internal sealed class InitialTailPositioner : IDisposable
                 _initialTailPending = false;
         }))
         {
+            _initialDispatchVersion = null;
             _following = false;
             Logger.Warn("[ChatScroll] Initial timeline positioning dispatcher is unavailable.");
         }
@@ -283,6 +290,7 @@ internal sealed class InitialTailPositioner : IDisposable
     private void OnUnloaded(object sender, RoutedEventArgs args)
     {
         _version++;
+        _initialDispatchVersion = null;
         _tailNavigationQueue.Clear();
         StopWaitingForScrollView();
         DetachScrollView();
@@ -315,6 +323,7 @@ internal sealed class InitialTailPositioner : IDisposable
 
         _disposed = true;
         _version++;
+        _initialDispatchVersion = null;
         _tailNavigationQueue.Clear();
         StopWaitingForScrollView();
         DetachScrollView();

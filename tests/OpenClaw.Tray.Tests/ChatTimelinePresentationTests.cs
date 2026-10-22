@@ -142,6 +142,8 @@ public sealed class ChatTimelinePresentationTests
         Assert.Contains("itemsView.ScrollView is not { IsLoaded: true }", initial[..capture]);
         Assert.Contains("!_initialTailPending", initial);
         Assert.Contains("_initialTailPending = false", initial);
+        Assert.Contains("if (_initialDispatchVersion == version)", initial);
+        Assert.Contains("_initialDispatchVersion = null", initial);
         Assert.DoesNotContain("AwaitLayout", binding);
         Assert.DoesNotContain("LayoutUpdated", binding);
     }
