@@ -15604,24 +15604,18 @@ public class OpenClawChatDataProviderTests
     }
 
     [Fact]
-    public async Task SendMessageAsync_PreHandshake_GatewayClientRefusesViaProvider()
+    public async Task SendMessageAsync_PreHandshake_RefusesMissingSessionBeforeAdmission()
     {
-        // Provider-level proof that the upstream guard fires: SendMessageAsync
-        // bubbles the InvalidOperationException raised by the gateway client's
-        // ResolveEffectiveSessionKey when no canonical sessionKey is known.
-        // (The pure-function unit test for the helper itself lives in
-        //  OpenClawGatewayClientSessionKeyTests in OpenClaw.Shared.Tests.)
-        var (bridge, provider, _, _) = CreateProvider();
-        bridge.IsConnected = true;
-        bridge.SendBehavior = (_, key, _) =>
+        var (bridge, provider, snapshots, _) = CreateProvider();
+        await using (provider)
         {
-            if (string.IsNullOrWhiteSpace(key))
-                throw new InvalidOperationException(
-                    "chat.send requires a sessionKey, but the gateway handshake has not resolved one yet.");
-            return Task.CompletedTask;
-        };
-        await Assert.ThrowsAsync<InvalidOperationException>(
-            async () => await provider.SendMessageAsync("", "hi"));
+            bridge.IsConnected = true;
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(
+                async () => await provider.SendMessageAsync("", "hi"));
+            Assert.Contains("explicit sessionKey", error.Message);
+            Assert.Empty(bridge.SentMessages);
+            Assert.Empty(snapshots);
+        }
     }
 
     [Fact]
