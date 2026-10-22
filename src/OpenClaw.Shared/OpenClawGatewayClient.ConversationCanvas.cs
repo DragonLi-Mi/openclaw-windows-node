@@ -2,6 +2,20 @@ namespace OpenClaw.Shared;
 
 public partial class OpenClawGatewayClient
 {
+    private long _canvasPolicyRevision;
+    public long CanvasPolicyRevision => Volatile.Read(ref _canvasPolicyRevision);
+    public event EventHandler<CanvasPolicyInvalidation>? CanvasPolicyInvalidated;
+
+    private void PublishCanvasPolicyInvalidation()
+    {
+        var epoch = SessionMutationConnectionEpoch;
+        var signingIdentity = AuthenticatedSigningDeviceId;
+        if (epoch is null || string.IsNullOrWhiteSpace(signingIdentity)) return;
+        var revision = Interlocked.Increment(ref _canvasPolicyRevision);
+        if (SessionMutationConnectionEpoch != epoch || AuthenticatedSigningDeviceId != signingIdentity) return;
+        CanvasPolicyInvalidated?.Invoke(this, new(epoch.Value, revision, signingIdentity));
+    }
+
     public async Task<CanvasDocumentView> ViewCanvasDocumentAsync(
         CanvasDocumentRequest request, long connectionEpoch,
         CancellationToken cancellationToken = default, int timeoutMs = 30000)

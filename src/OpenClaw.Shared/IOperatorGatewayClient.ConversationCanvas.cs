@@ -2,6 +2,9 @@ namespace OpenClaw.Shared;
 
 public partial interface IOperatorGatewayClient
 {
+    event EventHandler<CanvasPolicyInvalidation>? CanvasPolicyInvalidated { add { } remove { } }
+    long CanvasPolicyRevision => 0;
+
     /// <summary>Reads one saved document for the captured conversation and authenticated connection.</summary>
     Task<CanvasDocumentView> ViewCanvasDocumentAsync(
         CanvasDocumentRequest request, long connectionEpoch,

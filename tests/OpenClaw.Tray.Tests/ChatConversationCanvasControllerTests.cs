@@ -12,6 +12,8 @@ public sealed class ChatConversationCanvasControllerTests
         public long Epoch = 12;
         public bool Connected = true;
         public int Reads;
+        public long PolicyRevision;
+        public EventHandler<CanvasPolicyInvalidation>? PolicyChanged;
         public Func<CanvasDocumentRequest, long, CancellationToken, Task<CanvasDocumentView>> Read = (_, _, _) =>
             Task.FromResult(Document("default"));
 
@@ -22,6 +24,9 @@ public sealed class ChatConversationCanvasControllerTests
                 case "get_SessionMutationConnectionEpoch": return (long?)Epoch;
                 case "get_IsConnectedToGateway": return Connected;
                 case "get_AuthenticatedSigningDeviceId": return "signing-one";
+                case "get_CanvasPolicyRevision": return PolicyRevision;
+                case "add_CanvasPolicyInvalidated": PolicyChanged += (EventHandler<CanvasPolicyInvalidation>)args![0]!; return null;
+                case "remove_CanvasPolicyInvalidated": PolicyChanged -= (EventHandler<CanvasPolicyInvalidation>)args![0]!; return null;
                 case "ViewCanvasDocumentAsync":
                     Reads++;
                     return Read((CanvasDocumentRequest)args![0]!, (long)args[1]!, (CancellationToken)args[2]!);
@@ -39,6 +44,8 @@ public sealed class ChatConversationCanvasControllerTests
         internal readonly ChatConversationPanelState Panels;
         internal readonly ChatConversationCanvasSelection Selection;
         internal readonly ChatConversationCanvasController Controller;
+        internal string ProfileId = "profile-one";
+        internal long AccountRevision = 1;
 
         internal Fixture(Func<ChatConversationCanvasPrompt, CancellationToken, Task<ChatConversationCanvasPromptResult>>? submit = null,
             Func<TimeSpan, CancellationToken, Task>? waitForRetry = null)
@@ -46,7 +53,8 @@ public sealed class ChatConversationCanvasControllerTests
             var client = DispatchProxy.Create<IOperatorGatewayClient, GatewayProxy>();
             Gateway = (GatewayProxy)client;
             Panels = new(key => ChatConversationContext.Capture("gateway-one", client,
-                new SessionInfo { Key = key, SessionId = key + "-id", AgentId = "research" }));
+                new SessionInfo { Key = key, SessionId = key + "-id", AgentId = "research" },
+                ProfileId, AccountRevision));
             Panels.Bind("agent:research:one");
             Panels.Open("canvas", "cv_one", "run-one");
             Selection = new(Panels.Context!.Identity,
@@ -91,6 +99,8 @@ public sealed class ChatConversationCanvasControllerTests
     [InlineData("panel")]
     [InlineData("close")]
     [InlineData("dispose")]
+    [InlineData("account")]
+    [InlineData("account-revision")]
     public async Task StaleReadCompletionCannotPaintAfterOwnerChanges(string change)
     {
         using var fixture = new Fixture();
@@ -105,6 +115,8 @@ public sealed class ChatConversationCanvasControllerTests
             case "panel": fixture.Panels.Open("files"); break;
             case "close": fixture.Panels.Close("canvas"); break;
             case "dispose": fixture.Controller.Dispose(); break;
+            case "account": fixture.ProfileId = "profile-two"; fixture.Panels.Refresh(); break;
+            case "account-revision": fixture.AccountRevision++; fixture.Panels.Refresh(); break;
         }
         result.SetResult(Document("stale bytes"));
         await read;
@@ -244,6 +256,73 @@ public sealed class ChatConversationCanvasControllerTests
     }
 
     [Fact]
+    public async Task CurrentPolicySignalRetiresDocumentAndOnlyAnExplicitRetryRevalidatesIt()
+    {
+        using var fixture = new Fixture();
+        await fixture.Ready();
+        fixture.Gateway.PolicyRevision++;
+        fixture.Gateway.PolicyChanged!(fixture.Gateway, new(12, fixture.Gateway.PolicyRevision, "signing-one"));
+        Assert.Equal(ChatConversationCanvasPhase.Waiting, fixture.Controller.Snapshot.Phase);
+        Assert.Null(fixture.Controller.Snapshot.Document);
+        Assert.Null(fixture.Controller.Snapshot.EmbedSandboxMode);
+        Assert.Equal(1, fixture.Gateway.Reads);
+        await fixture.Ready();
+        Assert.Equal(2, fixture.Gateway.Reads);
+    }
+
+    [Theory]
+    [InlineData("old-epoch")]
+    [InlineData("old-principal")]
+    [InlineData("old-revision")]
+    public async Task StalePolicyDeliveryCannotRetireTheCurrentDocument(string stale)
+    {
+        using var fixture = new Fixture();
+        await fixture.Ready();
+        fixture.Gateway.PolicyChanged!(fixture.Gateway, new(
+            stale == "old-epoch" ? 11 : 12,
+            stale == "old-revision" ? 0 : 1,
+            stale == "old-principal" ? "another-signing-device" : "signing-one"));
+        Assert.Equal(ChatConversationCanvasPhase.Ready, fixture.Controller.Snapshot.Phase);
+        Assert.NotNull(fixture.Controller.Snapshot.Document);
+    }
+
+    [Fact]
+    public async Task PolicyChangeDuringReadRejectsLateBytesAndDetachesOnRetirement()
+    {
+        using var fixture = new Fixture();
+        var result = new TaskCompletionSource<CanvasDocumentView>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Gateway.Read = (_, _, _) => result.Task;
+        var pending = fixture.Controller.LoadAsync();
+        fixture.Gateway.PolicyRevision++;
+        fixture.Gateway.PolicyChanged!(fixture.Gateway, new(12, fixture.Gateway.PolicyRevision, "signing-one"));
+        result.SetResult(Document("old policy bytes"));
+        await pending;
+        Assert.Null(fixture.Controller.Snapshot.Document);
+        Assert.Null(fixture.Gateway.PolicyChanged);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    public async Task GenericUnavailableRetriesOnlyAnExplicitEnvelopeGrant(bool? retryable, bool expectedRetry)
+    {
+        var waits = new List<TimeSpan>();
+        using var fixture = new Fixture(waitForRetry: (delay, _) => { waits.Add(delay); return Task.CompletedTask; });
+        var calls = 0;
+        fixture.Gateway.Read = (_, _, _) => ++calls == 1
+            ? Task.FromException<CanvasDocumentView>(new GatewayRequestException(
+                "Unavailable", "UNAVAILABLE", retryable: retryable, retryAfterMs: 2500))
+            : Task.FromResult(Document("recovered"));
+        await fixture.Controller.LoadAsync();
+        Assert.Equal(expectedRetry ? 2 : 1, calls);
+        Assert.Equal(expectedRetry ? ChatConversationCanvasPhase.Loaded : ChatConversationCanvasPhase.Error,
+            fixture.Controller.Snapshot.Phase);
+        if (expectedRetry) Assert.True(Assert.Single(waits) >= TimeSpan.FromMilliseconds(2500));
+        else Assert.Empty(waits);
+    }
+
+    [Fact]
     public async Task SuspendedSurfaceRetainsDocumentButCannotAcceptPromptsUntilRenderedAgain()
     {
         using var fixture = new Fixture();
@@ -268,6 +347,16 @@ public sealed class ChatConversationCanvasControllerTests
         await wrong.LoadAsync();
         Assert.Equal(0, fixture.Gateway.Reads);
         Assert.Equal(ChatConversationCanvasPhase.Waiting, wrong.Snapshot.Phase);
+    }
+
+    [Fact]
+    public async Task OldDocumentCannotReacquireTheSamePanelAndRunAfterAnotherDocumentOpens()
+    {
+        using var fixture = new Fixture();
+        fixture.Panels.Open("canvas", "cv_other", "run-one");
+        await fixture.Controller.LoadAsync();
+        Assert.Equal(0, fixture.Gateway.Reads);
+        Assert.Equal(ChatConversationCanvasPhase.Waiting, fixture.Controller.Snapshot.Phase);
     }
 
     [Fact]

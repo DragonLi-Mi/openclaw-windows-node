@@ -249,14 +249,12 @@ the captured still-current transport epoch. Late subscribe completion gets a
 second exact-scope release. This is hard retirement, not a claim of SDK graceful
 save/teardown parity.
 
-**Integration remains blocked on this foundation.** The
-`ChatConversationMcpAppIntegration.AcquireContentOperation` gate deliberately
-returns no operation. The current panel API lacks `expectedContentId`, and its
-identity lacks the separately pending canonical UserId/AccountRevision extension.
-The controller cannot substitute a run-only operation or invented account id.
-After that dependency is adopted, the integration owner must call the canonical
-operation API with the selected view's expected content id and preserve the
-whole captured conversation identity.
+**Canonical binding is adopted; real Root integration remains required.**
+`ChatConversationMcpAppIntegration.AcquireContentOperation` uses
+`BeginOperation` with the selected view's `expectedContentId`, compares the
+whole accepted owner including canonical UserId, and keeps the operation's
+AccountRevision, ready epoch, environment and run fences. The controller never
+substitutes a run-only operation or an invented account id.
 
 The Root must then supply `IChatConversationMcpAppActions` through
 `ReactorConversationCanvasProps`: actual rich-message acceptance for active/new
@@ -280,7 +278,7 @@ already consumes those typed deliveries, refreshes model context with revision
 fences, and forwards only owned resource updates. No central event cases or
 independent connection registry are added here.
 
-Until account/content binding and both real hooks are supplied, selecting an
+Until both real hooks are supplied, selecting an
 MCP App displays unavailable without a document read or WebView creation.
 Pure protocol/controller tests, loopback transport tests and a native compile
 do not prove that a populated App rendered or that real Root/Files/Gateway

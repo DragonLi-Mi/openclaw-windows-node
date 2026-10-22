@@ -3644,6 +3644,9 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
                 _ = RequestSessionsAsync();
                 break;
             case "config.changed":
+                PublishCanvasPolicyInvalidation();
+                ModelCatalogInvalidated?.Invoke(this, EventArgs.Empty);
+                break;
             case "chat.metadata.changed":
                 ModelCatalogInvalidated?.Invoke(this, EventArgs.Empty);
                 break;

@@ -13,7 +13,8 @@ internal sealed record ChatConversationMcpAppAction(
 {
     internal long Generation => Operation.Generation;
     internal bool IsCurrent => Operation.IsCurrent && Operation.Context.Identity == Selection.Owner &&
-        Operation.RunId == Selection.RunId && Operation.PanelId == ChatConversationCanvasController.PanelId;
+        Operation.RunId == Selection.RunId && Operation.PanelId == ChatConversationCanvasController.PanelId &&
+        Operation.ContentId == Selection.Content.McpApp?.ViewId;
 }
 
 internal sealed record ChatConversationMcpAppFile(string Path, string? Name);
@@ -58,8 +59,16 @@ internal sealed record ChatConversationMcpAppSnapshot(
 
 internal static class ChatConversationMcpAppIntegration
 {
-    // Intentionally no fallback to BeginOperation(panelId, runId). That API cannot bind the selected view.
-    // Replace only after the canonical UserId/AccountRevision/ContentId foundation is adopted.
     internal static ChatConversationPanelOperation? AcquireContentOperation(
-        ChatConversationPanelState panels, ChatConversationCanvasSelection selection) => null;
+        ChatConversationPanelState panels, ChatConversationCanvasSelection selection)
+    {
+        if (selection.Content.Kind != ConversationCanvasContentKind.McpApp ||
+            selection.Content.McpApp is not { ViewId.Length: > 0 } app ||
+            selection.Content.DocumentId != app.ViewId || string.IsNullOrWhiteSpace(selection.Owner.UserId))
+            return null;
+        var operation = panels.BeginOperation(ChatConversationCanvasController.PanelId, selection.RunId,
+            expectedContentId: app.ViewId);
+        return operation is { IsCurrent: true } && operation.ContentId == app.ViewId &&
+            operation.Context.Identity == selection.Owner ? operation : null;
+    }
 }

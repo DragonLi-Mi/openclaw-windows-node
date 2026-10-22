@@ -136,6 +136,9 @@ public sealed record CanvasDocumentRequest(string DocumentId, string SessionKey)
 /// <summary>HTML arrived over authenticated RPC; the public sandbox URL carries no credential.</summary>
 public sealed record CanvasDocumentView(string Html, Uri GatewayOrigin, Uri SandboxUrl, string? EmbedSandboxMode = null);
 
+/// <summary>An observed config event, not a receipt that a new policy has been applied.</summary>
+public sealed record CanvasPolicyInvalidation(long ConnectionEpoch, long SourceRevision, string SigningDeviceId);
+
 public sealed class CanvasDocumentPendingException : InvalidOperationException
 {
     public CanvasDocumentPendingException()

@@ -69,7 +69,8 @@ internal sealed class ChatConversationCanvasController : IDisposable
     internal async Task LoadAsync()
     {
         CancellationTokenSource? previous;
-        var operation = _panels.BeginOperation(PanelId, _selection.RunId);
+        var operation = _panels.BeginOperation(PanelId, _selection.RunId,
+            expectedContentId: _selection.Content.DocumentId);
         long revision;
         CancellationTokenSource cancellation;
         CancellationToken token;
@@ -97,26 +98,45 @@ internal sealed class ChatConversationCanvasController : IDisposable
             Publish(revision, new(ChatConversationCanvasPhase.Unsupported, operation));
             return;
         }
+        var policySource = operation.Context.Client;
+        var policyRevision = policySource.CanvasPolicyRevision;
+        void PolicyChanged(object? sender, CanvasPolicyInvalidation invalidation)
+        {
+            if (!ReferenceEquals(sender, policySource) || invalidation.ConnectionEpoch != operation.Context.ConnectionEpoch ||
+                invalidation.SigningDeviceId != operation.Context.Identity.SigningDeviceId ||
+                invalidation.SourceRevision <= policyRevision || !IsReadCurrent(revision, operation, token))
+                return;
+            RetireForPolicy(revision, operation, cancellation);
+        }
+        policySource.CanvasPolicyInvalidated += PolicyChanged;
+        _ = token.Register(() => policySource.CanvasPolicyInvalidated -= PolicyChanged);
+        if (policySource.CanvasPolicyRevision != policyRevision)
+        {
+            RetireForPolicy(revision, operation, cancellation);
+            return;
+        }
         Publish(revision, new(ChatConversationCanvasPhase.Loading, operation));
         var backoffMilliseconds = int.TryParse(Environment.GetEnvironmentVariable("OPENCLAW_CANVAS_RETRY_DELAY_MS"),
             out var configuredDelay) && configuredDelay is >= 100 and <= MaximumRetryDelayMilliseconds
                 ? configuredDelay : DefaultRetryDelayMilliseconds;
         for (var attempt = 0; attempt < MaximumAutomaticAttempts; attempt++)
         {
-            if (!IsReadCurrent(revision, operation, token)) return;
+            if (!IsReadCurrent(revision, operation, token, policyRevision)) return;
             Exception retryError;
             try
             {
                 var document = await operation.Context.Client.ViewCanvasDocumentAsync(
                     new(_selection.Content.DocumentId!, operation.Context.Identity.SessionKey),
                     operation.Context.ConnectionEpoch, token).ConfigureAwait(false);
-                if (!IsReadCurrent(revision, operation, token)) return;
+                if (!IsReadCurrent(revision, operation, token, policyRevision)) return;
                 Publish(revision, new(ChatConversationCanvasPhase.Loaded, operation, document, document.EmbedSandboxMode));
                 return;
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
             catch (CanvasDocumentPendingException ex) { retryError = ex; }
-            catch (GatewayRequestException ex) when (ex.DetailType == "canvas_widget_pending") { retryError = ex; }
+            catch (GatewayRequestException ex) when (
+                ex.Retryable != false && ex.DetailType == "canvas_widget_pending" ||
+                ex.Code == "UNAVAILABLE" && ex.Retryable == true) { retryError = ex; }
             catch (TimeoutException ex) { retryError = ex; }
             catch (OperationCanceledException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Error, ex); return; }
             catch (NotSupportedException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Unsupported, ex); return; }
@@ -126,7 +146,7 @@ internal sealed class ChatConversationCanvasController : IDisposable
             catch (JsonException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Blocked, ex); return; }
             catch (UriFormatException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Blocked, ex); return; }
             catch (WebSocketException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Error, ex); return; }
-            if (!IsReadCurrent(revision, operation, token)) return;
+            if (!IsReadCurrent(revision, operation, token, policyRevision)) return;
             if (attempt + 1 == MaximumAutomaticAttempts)
             {
                 Fail(revision, operation, ChatConversationCanvasPhase.Error, retryError);
@@ -134,7 +154,9 @@ internal sealed class ChatConversationCanvasController : IDisposable
             }
             Publish(revision, new(ChatConversationCanvasPhase.Waiting, operation));
             var delayMilliseconds = backoffMilliseconds;
-            if (retryError is GatewayRequestException { Details: { ValueKind: JsonValueKind.Object } details } &&
+            if (retryError is GatewayRequestException { RetryAfterMs: { } envelopeHint })
+                delayMilliseconds = Math.Max(delayMilliseconds, Math.Min(envelopeHint, MaximumServerRetryMilliseconds));
+            else if (retryError is GatewayRequestException { Details: { ValueKind: JsonValueKind.Object } details } &&
                 details.TryGetProperty("retryAfterMs", out var retryAfter) && retryAfter.ValueKind == JsonValueKind.Number &&
                 retryAfter.TryGetInt32(out var hint) && hint > 0)
                 delayMilliseconds = Math.Max(delayMilliseconds, Math.Min(hint, MaximumServerRetryMilliseconds));
@@ -227,10 +249,26 @@ internal sealed class ChatConversationCanvasController : IDisposable
         if (operation.IsCurrent) Publish(revision, new(phase, operation));
     }
 
-    private bool IsReadCurrent(long revision, ChatConversationPanelOperation operation, CancellationToken token)
+    private bool IsReadCurrent(long revision, ChatConversationPanelOperation operation, CancellationToken token,
+        long? policyRevision = null)
     {
-        if (token.IsCancellationRequested || !operation.IsCurrent) return false;
+        if (token.IsCancellationRequested || !operation.IsCurrent ||
+            policyRevision.HasValue && operation.Context.Client.CanvasPolicyRevision != policyRevision.Value)
+            return false;
         lock (_gate) return !_disposed && revision == _revision;
+    }
+
+    private void RetireForPolicy(long revision, ChatConversationPanelOperation operation, CancellationTokenSource cancellation)
+    {
+        lock (_gate)
+        {
+            if (_disposed || revision != _revision || !operation.IsCurrent) return;
+            _revision++;
+            Volatile.Write(ref _snapshot, new(ChatConversationCanvasPhase.Waiting));
+        }
+        Cancel(cancellation);
+        Invalidated?.Invoke();
+        Changed?.Invoke();
     }
 
     private static void Cancel(CancellationTokenSource? cancellation)

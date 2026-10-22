@@ -12,6 +12,7 @@ public sealed class ChatConversationMcpAppSessionTests
     {
         internal long Epoch = 7;
         internal string[] Scopes = ["operator.write"];
+        internal int ViewReads;
         internal readonly List<(ConversationMcpAppScope Scope, ConversationMcpAppOperation Operation, JsonElement Parameters, long Epoch)> Calls = [];
         internal Func<ConversationMcpAppOperation, JsonElement, Task<JsonElement>> InvokeOperation = (operation, _) =>
             Task.FromResult(Json(operation switch
@@ -30,8 +31,18 @@ public sealed class ChatConversationMcpAppSessionTests
             "get_AuthenticatedSigningDeviceId" => "signing-device",
             "get_GrantedOperatorScopes" => Scopes,
             "InvokeConversationMcpAppAsync" => InvokeOperationAsync(args!),
+            "ViewConversationMcpAppAsync" => ReadView(),
             _ => throw new NotSupportedException(method?.Name)
         };
+        private Task<ConversationMcpAppView> ReadView()
+        {
+            ViewReads++;
+            return Task.FromResult(new ConversationMcpAppView
+            {
+                Html = "<main>owned App</main>", GatewayOrigin = new("https://gateway.example"),
+                SandboxUrl = new("https://sandbox.example/mcp-app-sandbox")
+            });
+        }
         private Task<JsonElement> InvokeOperationAsync(object?[] args)
         {
             var scope = (ConversationMcpAppScope)args[0]!;
@@ -93,14 +104,13 @@ public sealed class ChatConversationMcpAppSessionTests
             var client = DispatchProxy.Create<IOperatorGatewayClient, Gateway>();
             Gateway = (Gateway)client;
             Panels = new(key => ChatConversationContext.Capture("gateway-record", client,
-                new SessionInfo { Key = key, SessionId = "session-id", AgentId = "agent" }));
+                new SessionInfo { Key = key, SessionId = "session-id", AgentId = "agent" }, "profile-one", 1));
             Panels.Bind("agent:agent:session");
             Panels.Open("canvas", "view-one", "run-one");
             Selection = new(Panels.Context!.Identity,
                 new(ConversationCanvasContentKind.McpApp, "view-one", null, "App", true,
                     McpApp: new("view-one", "server", "tool", null, "call-one", null, null)), "message-id", "run-one");
-            // Exercise the scoped protocol engine, not the blocked production content-acquisition gate.
-            Operation = Panels.BeginOperation("canvas", "run-one")!;
+            Operation = Panels.BeginOperation("canvas", "run-one", expectedContentId: "view-one")!;
             Session = new(new(Selection, Operation), new()
             {
                 Html = "<main>App</main>", GatewayOrigin = new("https://gateway.example"),
@@ -124,15 +134,40 @@ public sealed class ChatConversationMcpAppSessionTests
     }
 
     [Fact]
-    public async Task ProductionControllerCannotBypassMissingExactContentGateEvenWithAllHooks()
+    public async Task ProductionControllerReadsOnlyTheCanonicalSelectedContentWhenHooksExist()
     {
         using var f = new Fixture();
         using var controller = new ChatConversationMcpAppController(f.Panels, f.Selection, f.Actions, f.Events);
         await controller.LoadAsync();
+        Assert.Equal(ChatConversationMcpAppPhase.Loaded, controller.Snapshot.Phase);
+        Assert.Equal("view-one", controller.Snapshot.Operation?.ContentId);
+        Assert.Equal("profile-one", controller.Snapshot.Operation?.Context.Identity.UserId);
+        Assert.Equal(1, controller.Snapshot.Operation?.Context.AccountRevision);
+        Assert.Equal(1, f.Gateway.ViewReads);
+        Assert.NotNull(controller.Snapshot.View);
+        Assert.Empty(f.Gateway.Calls);
+    }
+
+    [Fact]
+    public async Task ProductionControllerCannotReacquireAnotherViewOnTheSamePanelAndRun()
+    {
+        using var f = new Fixture();
+        f.Panels.Open("canvas", "view-other", "run-one");
+        using var controller = new ChatConversationMcpAppController(f.Panels, f.Selection, f.Actions, f.Events);
+        await controller.LoadAsync();
         Assert.Equal(ChatConversationMcpAppPhase.Unavailable, controller.Snapshot.Phase);
         Assert.Null(controller.Snapshot.Operation);
-        Assert.Null(controller.Snapshot.View);
-        Assert.Empty(f.Gateway.Calls);
+        Assert.Equal(0, f.Gateway.ViewReads);
+    }
+
+    [Fact]
+    public async Task ProductionControllerCannotReadWithoutRealRootActionsAndEventHooks()
+    {
+        using var f = new Fixture();
+        using var controller = new ChatConversationMcpAppController(f.Panels, f.Selection, null, null);
+        await controller.LoadAsync();
+        Assert.Equal(ChatConversationMcpAppPhase.Unavailable, controller.Snapshot.Phase);
+        Assert.Equal(0, f.Gateway.ViewReads);
     }
 
     [Fact]
