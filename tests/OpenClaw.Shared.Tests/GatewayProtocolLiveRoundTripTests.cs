@@ -30,7 +30,7 @@ namespace OpenClaw.Shared.Tests;
 /// receive → response → parse → typed-DTO stack end-to-end. The captured frames
 /// are written to test output so they can serve as redacted behavior proof.
 /// </summary>
-public sealed class GatewayProtocolLiveRoundTripTests : IDisposable
+public sealed partial class GatewayProtocolLiveRoundTripTests : IDisposable
 {
     private readonly ITestOutputHelper _output;
     private readonly string _identityDir;
@@ -406,7 +406,7 @@ public sealed class GatewayProtocolLiveRoundTripTests : IDisposable
         {
             await ConnectAndWaitAsync(client, server);
 
-            var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            var exception = await Assert.ThrowsAsync<GatewayRequestException>(
                 () => client.GetUpdateStatusAsync(timeoutMs: 20_000));
 
             Assert.Contains("unauthorized update.status", exception.Message);
@@ -1104,7 +1104,7 @@ public sealed class GatewayProtocolLiveRoundTripTests : IDisposable
         }
     }
 
-    private sealed record LoopbackResponse(bool Ok, object? Payload = null, string? Error = null)
+    private sealed record LoopbackResponse(bool Ok, object? Payload = null, object? Error = null)
     {
         public static LoopbackResponse Fail(string error) => new(false, Error: error);
     }
