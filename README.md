@@ -197,6 +197,12 @@ The default local gateway URL is `ws://localhost:18789`.
 .\scripts\setup-dev.ps1 -RunValidation
 ```
 
+Local x64 app builds also need Visual Studio's **C++ Redistributable Update**
+component (`Microsoft.VisualStudio.Component.VC.Redist.14.Latest`). Install or
+update it through the Visual Studio Installer. The standalone VC++ Redistributable
+does not provide the app-local DLLs that these builds copy. `-CheckOnly` checks
+the same runtime resolver as the app build and rejects a missing or outdated component.
+
 ### Build
 
 ```powershell
