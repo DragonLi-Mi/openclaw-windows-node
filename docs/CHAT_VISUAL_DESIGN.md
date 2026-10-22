@@ -134,14 +134,16 @@ Files requires the selected session's Gateway-provided source and conflict-safe
 save contract. Hosted Canvas content requires its separate isolated content
 boundary; a native panel alone does not establish Canvas parity.
 
-Tool input/output captions use the native `CaptionTextBlockStyle` (12-pixel
-regular text instead of the former 11-pixel semibold helper) and a
-`TextFillColorSecondaryBrush` theme reference on the caption control. Inline
-disclosures and the tool-details panel share that renderer, so a containing
-surface's Light or Dark theme is honored without capturing the application's
-default-theme brush or remounting the caption. Applying the style clears
-Reactor's local font size and weight defaults so the native caption typography
-also survives subsequent detail updates.
+Tool input/output captions project the native `CaptionTextBlockFontSize`
+resource and `CaptionTextBlockStyle` setters, including its inherited family,
+wrapping, trimming and line layout, into Reactor element
+properties (12-pixel regular text instead of the former 11-pixel semibold
+helper). A `TextFillColorSecondaryBrush` theme reference follows the caption's
+containing surface without capturing the application's default-theme brush.
+Reactor's theme binding installs its own style, so typography stays in the
+element record rather than a separately assigned style that reconciliation
+could replace. Inline disclosures and the tool-details panel share this
+renderer; local theme changes and output updates retain the same captions.
 
 Queued submissions leave the textbox and remain after the current turn as normal
 right-aligned user bubbles. A transparent `ChatPendingUserBrush`, subtle `ChatStrokeBrush`
