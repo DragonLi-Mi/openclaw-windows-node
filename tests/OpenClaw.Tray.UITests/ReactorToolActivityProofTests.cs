@@ -46,6 +46,9 @@ public sealed class ReactorToolActivityProofTests
                 themeScope = new ChatThemeProofScope("Light");
                 reference = (TextBlock)XamlReader.Load(
                     """<TextBlock xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Reference caption" />""");
+                var baseReference = (TextBlock)XamlReader.Load(
+                    """<TextBlock xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Style="{StaticResource BaseTextBlockStyle}" />""");
+                Assert.NotEqual(baseReference.FontWeight, reference.FontWeight);
                 bodyReference = (TextBlock)XamlReader.Load(
                     """<TextBlock xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Foreground="{ThemeResource ChatTextBrush}" Text="Reference body" />""");
                 appTheme = Application.Current.RequestedTheme == ApplicationTheme.Dark
@@ -101,6 +104,11 @@ public sealed class ReactorToolActivityProofTests
                         Assert.Equal(expected.Opacity, actual.Opacity);
                         Assert.Equal(reference.FontSize, caption.FontSize);
                         Assert.Equal(reference.FontWeight, caption.FontWeight);
+                        Assert.Equal(reference.FontFamily.Source, caption.FontFamily.Source);
+                        Assert.Equal(reference.TextTrimming, caption.TextTrimming);
+                        Assert.Equal(reference.TextWrapping, caption.TextWrapping);
+                        Assert.Equal(reference.LineStackingStrategy, caption.LineStackingStrategy);
+                        Assert.Equal(reference.TextLineBounds, caption.TextLineBounds);
                     }
                     if (originalCaptions is not null)
                     {

@@ -146,6 +146,20 @@ internal static class ToolCallCardRenderer
 
     private static Element BuildDetailSection(string label, string content)
     {
+        var captionStyle = (Style)Application.Current.Resources["CaptionTextBlockStyle"];
+        var captionWeight = CaptionStyleValue<global::Windows.UI.Text.FontWeight>(
+            captionStyle, Microsoft.UI.Xaml.Controls.TextBlock.FontWeightProperty);
+        var captionFamily = CaptionStyleValue<FontFamily>(
+            captionStyle, Microsoft.UI.Xaml.Controls.TextBlock.FontFamilyProperty);
+        var captionWrapping = CaptionStyleValue<TextWrapping>(
+            captionStyle, Microsoft.UI.Xaml.Controls.TextBlock.TextWrappingProperty);
+        var captionTrimming = CaptionStyleValue<TextTrimming>(
+            captionStyle, Microsoft.UI.Xaml.Controls.TextBlock.TextTrimmingProperty);
+        var captionLineStacking = CaptionStyleValue<LineStackingStrategy>(
+            captionStyle, Microsoft.UI.Xaml.Controls.TextBlock.LineStackingStrategyProperty);
+        var captionLineBounds = CaptionStyleValue<TextLineBounds>(
+            captionStyle, Microsoft.UI.Xaml.Controls.TextBlock.TextLineBoundsProperty);
+
         var body = RichTextBlock(content)
             .Set(text =>
             {
@@ -160,13 +174,17 @@ internal static class ToolCallCardRenderer
         return VStack(
             4,
             TextBlock(label)
+                // Theme.Ref owns a generated style, so keep native typography in the element record.
+                .FontSize(ThemeResource.Double("CaptionTextBlockFontSize"))
+                .FontWeight(captionWeight)
+                .FontFamily(captionFamily)
+                .TextWrapping(captionWrapping)
+                .TextTrimming(captionTrimming)
                 .Set(text =>
                 {
-                    text.Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"];
-                    text.ClearValue(Microsoft.UI.Xaml.Controls.TextBlock.FontSizeProperty);
-                    text.ClearValue(Microsoft.UI.Xaml.Controls.TextBlock.FontWeightProperty);
+                    text.LineStackingStrategy = captionLineStacking;
+                    text.TextLineBounds = captionLineBounds;
                 })
-                .TextWrapping(TextWrapping.Wrap)
                 .Foreground(Theme.Ref("TextFillColorSecondaryBrush")),
             ScrollViewer(body)
                 .Set(scrollViewer =>
@@ -175,6 +193,23 @@ internal static class ToolCallCardRenderer
                     scrollViewer.HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled;
                 })
                 .MaxHeight(240));
+    }
+
+    private static T CaptionStyleValue<T>(Style style, DependencyProperty property)
+    {
+        for (Style? current = style; current is not null; current = current.BasedOn)
+        {
+            var setter = current.Setters.OfType<Setter>()
+                .LastOrDefault(item => item.Property == property);
+            if (setter is null)
+                continue;
+            return setter.Value is T value
+                ? value
+                : throw new InvalidOperationException(
+                    $"The native caption style has an unsupported {typeof(T).Name} value.");
+        }
+        throw new InvalidOperationException(
+            $"The native caption style does not define {typeof(T).Name}.");
     }
 
     private static string FormatToolDisplayArgs(System.Text.Json.Nodes.JsonObject args)
