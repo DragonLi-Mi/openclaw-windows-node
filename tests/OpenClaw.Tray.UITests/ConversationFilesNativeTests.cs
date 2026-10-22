@@ -8,6 +8,20 @@ public sealed class ConversationFilesNativeTests(UIThreadFixture ui)
 {
     [Theory]
     [Trait("Category", "NativeConversationFiles")]
+    [InlineData("notes.txt")]
+    [InlineData("LICENSE")]
+    public async Task NativeSavePickerAcceptsConcreteFileExtension(string filename)
+    {
+        await ui.RunOnUIAsync(() =>
+        {
+            var picker = new Windows.Storage.Pickers.FileSavePicker();
+            var extension = ConversationFilesController.DownloadExtension(filename);
+            picker.FileTypeChoices.Add("File", [extension]);
+            Assert.NotEqual("*", Assert.Single(picker.FileTypeChoices["File"]));
+        });
+    }
+    [Theory]
+    [Trait("Category", "NativeConversationFiles")]
     [InlineData("one\ntwo\n")]
     [InlineData("one\r\ntwo\r\n")]
     [InlineData("\uFEFFone\ntwo")]

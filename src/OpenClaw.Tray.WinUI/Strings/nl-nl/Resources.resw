@@ -8102,6 +8102,7 @@ Ga na inschrijving terug naar Instellingen &gt; Windows Update en controleer op 
   <data name="Chat_Files_RemoteRoot" xml:space="preserve"><value>Gespreksbestanden bepaald door de Gateway. Er wordt geen lokale hoofdmap aangenomen.</value></data>
   <data name="Chat_Files_Truncated" xml:space="preserve"><value>Dit resultaat is afgekapt. Verfijn de zoekopdracht of download het oorspronkelijke bestand.</value></data>
   <data name="Chat_Files_ChooseFile" xml:space="preserve"><value>Kies een bestand om te bekijken.</value></data>
+  <data name="Chat_Files_Empty" xml:space="preserve"><value>Geen gespreksbestanden in dit resultaat.</value></data>
   <data name="Chat_Files_Edit" xml:space="preserve"><value>Bewerken</value></data>
   <data name="Chat_Files_Save" xml:space="preserve"><value>Opslaan</value></data>
   <data name="Chat_Files_Discard" xml:space="preserve"><value>Bewerkingen verwijderen</value></data>
@@ -8112,7 +8113,7 @@ Ga na inschrijving terug naar Instellingen &gt; Windows Update en controleer op 
   <data name="Chat_Files_Conflict" xml:space="preserve"><value>Het bestand is gewijzigd. Uw concept blijft behouden. Bekijk de huidige servertekst hieronder voordat u opnieuw laadt of overschrijft.</value></data>
   <data name="Chat_Files_Reload" xml:space="preserve"><value>Serverversie opnieuw laden</value></data>
   <data name="Chat_Files_Overwrite" xml:space="preserve"><value>Gecontroleerde versie overschrijven</value></data>
-  <data name="Chat_Files_Counts" xml:space="preserve"><value>+{0} / -{1}</value></data>
+  <data name="Chat_Files_Counts" xml:space="preserve"><value>{0} toevoegingen, {1} verwijderingen</value></data>
   <data name="Chat_Files_Binary" xml:space="preserve"><value>Binair bestand. Er is geen tekstpatch beschikbaar.</value></data>
   <data name="Chat_Files_UnavailablePatch" xml:space="preserve"><value>Er is geen patch voor dit bestand geleverd.</value></data>
   <data name="Chat_Files_Patch" xml:space="preserve"><value>Uniforme patch</value></data>
@@ -8136,7 +8137,8 @@ Ga na inschrijving terug naar Instellingen &gt; Windows Update en controleer op 
   <data name="Chat_Files_DraftLimit" xml:space="preserve"><value>De limiet voor concepten in het geheugen is bereikt. Sla een ander concept op of verwijder het voordat u bewerkt.</value></data>
   <data name="Chat_Files_Restored" xml:space="preserve"><value>Niet-opgeslagen concept hersteld. De oorspronkelijke bestandsbron is opnieuw gecontroleerd.</value></data>
   <data name="Chat_Files_Saved" xml:space="preserve"><value>Opgeslagen door de Gateway.</value></data>
-  <data name="Chat_Files_DownloadFailed" xml:space="preserve"><value>Download mislukt of verbinding gewijzigd. Er is geen bestand vastgelegd. Probeer opnieuw voor een nieuwe machtiging.</value></data>
+  <data name="Chat_Files_PendingEdits" xml:space="preserve"><value>De laatste opslag is bevestigd. Nieuwere bewerkingen zijn nog niet opgeslagen.</value></data>
+  <data name="Chat_Files_DownloadFailed" xml:space="preserve"><value>De download is niet voltooid of de verbinding is gewijzigd. Controleer de bestemming voordat u het opnieuw probeert met een nieuwe machtiging.</value></data>
   <data name="Chat_Files_Downloaded" xml:space="preserve"><value>Oorspronkelijk bestand gedownload.</value></data>
   <data name="Chat_Files_Uncertain" xml:space="preserve"><value>De bewerking is onderbroken of verlopen. Uw concept blijft behouden. Controleer opnieuw voordat u het opnieuw probeert.</value></data>
 </root>

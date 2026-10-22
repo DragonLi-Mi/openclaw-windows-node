@@ -36,7 +36,9 @@ internal sealed class ReactorConversationFilesPanel : Component<ReactorConversat
         var lease = controller.CaptureLease();
         var scope = controller.CurrentScope;
         var (_, invalidate) = UseState(0L, threadSafe: true);
-        var (search, setSearch) = UseState("");
+        var (searchDraft, setSearchDraft) = UseState<(ChatConversationIdentity? Identity, string Text)>((null, ""));
+        var search = searchDraft.Identity == lease?.Context.Identity ? searchDraft.Text : initialView.Search;
+        void SetSearch(string text) => setSearchDraft((lease?.Context.Identity, text));
         var root = UseRef<FrameworkElement?>(null);
         UseEffect((Func<Action>)(() =>
         {
@@ -75,7 +77,7 @@ internal sealed class ReactorConversationFilesPanel : Component<ReactorConversat
                     TextBlock(file.Directory ? Text("Directory") : Text("File")),
                     TextBlock(file.Name).TextTrimming(TextTrimming.CharacterEllipsis)),
                 () => { if (lease?.IsCurrent == true) Open(file); })
-                .AutomationName(file.Name)
+                .AutomationName($"{Text(file.Directory ? "Directory" : "File")}: {file.Name}")
                 .AutomationId("ConversationFileEntry")
                 .ToolTip(file.Path)
                 .IsEnabled(!file.Missing && !view.Busy)
@@ -87,6 +89,7 @@ internal sealed class ReactorConversationFilesPanel : Component<ReactorConversat
             .AutomationId("ConversationFileEditor")
             .AutomationName(document?.Request.Path ?? Text("Preview"))
             .MinHeight(128)
+            .MaxHeight(480)
             .Set(box => editor.Current?.Apply(document, controller.CanEdit))
             .OnMount(control =>
             {
@@ -105,44 +108,54 @@ internal sealed class ReactorConversationFilesPanel : Component<ReactorConversat
                 .Select(artifact => renderArtifact(artifact)
                     .WithKey(JsonSerializer.Serialize(new[] { artifact.ArtifactId, artifact.AgentId, artifact.GatewayMessageId }))).ToArray()
             : [];
-        var browser = Grid([GridSize.Star()], [GridSize.Auto, GridSize.Auto, GridSize.Auto, GridSize.Auto,
+        var browser = ScrollViewer(Grid([GridSize.Star()], [GridSize.Auto, GridSize.Auto, GridSize.Auto, GridSize.Auto,
             GridSize.Px(160), GridSize.Auto, GridSize.Star()],
             TextBlock(sourceName ?? Text("RemoteRoot"))
                 .TextWrapping(TextWrapping.Wrap).IsTextSelectionEnabled(true).Grid(row: 0),
-            HStack(8,
-                TextBox(search, setSearch, Text("Search"))
+            Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto],
+                TextBox(search, SetSearch, Text("Search"))
                     .AutomationName(Text("Search"))
                     .OnPreviewKeyDown((_, args) =>
                     {
                         if (args.Key != VirtualKey.Enter) return;
                         args.Handled = true;
-                        _ = controller.LoadListingAsync("", search);
-                    }),
-                ActionButton("Search", () => _ = controller.LoadListingAsync("", search), capabilities.List && !view.Busy))
+                        if (lease?.IsCurrent == true && !view.Busy)
+                            _ = controller.LoadListingAsync("", search);
+                    }).Grid(column: 0),
+                ActionButton("Search", () => _ = controller.LoadListingAsync("", search), capabilities.List && !view.Busy)
+                    .Grid(column: 1))
                 .IsVisible(view.Tab == ConversationFilesTab.Browse).Grid(row: 1),
-            HStack(8,
+            Grid([GridSize.Star(), GridSize.Star()], [GridSize.Auto],
                 ActionButton("Parent", () => _ = controller.LoadListingAsync(view.Listing?.Browser?.ParentPath ?? ""),
-                    view.Listing?.Browser?.ParentPath is not null && !view.Busy),
-                ActionButton("Refresh", () => _ = controller.RefreshAsync(), !view.Busy))
+                    view.Listing?.Browser?.ParentPath is not null && !view.Busy).Grid(column: 0),
+                ActionButton("Refresh", () => _ = controller.RefreshAsync(), !view.Busy).Grid(column: 1))
                 .Grid(row: 2),
             TextBlock(Text("Truncated")).TextWrapping(TextWrapping.Wrap)
                 .IsVisible(view.Listing?.Browser?.Truncated == true).Grid(row: 3),
             files.Grid(row: 4).AutomationName(Text("Files")),
+            TextBlock(Text("Empty")).TextWrapping(TextWrapping.Wrap)
+                .IsVisible(view.Status == ConversationFilesStatus.Ready && entries.Length == 0 && artifactElements.Length == 0)
+                .Grid(row: 4),
             VStack(8, artifactElements).IsVisible(view.Tab == ConversationFilesTab.Outputs).Grid(row: 5),
             Grid([GridSize.Star()], [GridSize.Auto, GridSize.Auto, GridSize.Auto, GridSize.Star(), GridSize.Auto],
                 TextBlock(document?.Request.Path ?? Text("ChooseFile")).TextWrapping(TextWrapping.Wrap)
                     .IsTextSelectionEnabled(true).Grid(row: 0),
-                HStack(8,
-                    ActionButton("Edit", controller.BeginEdit, controller.CanEdit && document?.Editing != true),
+                Grid([GridSize.Star(), GridSize.Star()], [GridSize.Auto, GridSize.Auto],
+                    ActionButton("Edit", controller.BeginEdit, controller.CanEdit && document?.Editing != true).Grid(column: 0),
                     ActionButton("Save", () => _ = controller.SaveAsync(),
-                        controller.CanEdit && document is { Dirty: true } && view.Notice != ConversationFilesNotice.Conflict),
-                    ActionButton("Discard", controller.Discard, document?.Editing == true && !view.Busy),
+                        controller.CanEdit && (document is { Dirty: true } || document?.PendingSaveText is not null) &&
+                            view.Notice != ConversationFilesNotice.Conflict).Grid(column: 1),
+                    ActionButton("Discard", controller.Discard, document?.Editing == true && !view.Busy).Grid(row: 1, column: 0),
                     ActionButton("Download", () => _ = controller.DownloadAsync(ChooseDestination),
-                        document is not null && capabilities.Download && !view.Busy))
+                        document is not null && capabilities.Download && !view.Busy).Grid(row: 1, column: 1))
                     .Grid(row: 1),
-                TextBlock(Text(document?.Request.MessageEntryId is not null ? "Historical" : "ReadOnly"))
-                    .TextWrapping(TextWrapping.Wrap)
-                    .IsVisible(document is not null && !controller.CanEdit && !view.Busy).Grid(row: 2),
+                VStack(4,
+                    TextBlock(Text(document?.Request.MessageEntryId is not null ? "Historical" : "ReadOnly"))
+                        .TextWrapping(TextWrapping.Wrap)
+                        .IsVisible(document is not null && !controller.CanEdit && !view.Busy),
+                    TextBlock(Text("Uncertain")).TextWrapping(TextWrapping.Wrap)
+                        .IsVisible(document?.PendingSaveText is not null && view.Notice != ConversationFilesNotice.Uncertain))
+                    .Grid(row: 2),
                 nativeEditor.IsVisible(document?.Text is not null).Grid(row: 3),
                 image.Current.Content.IsVisible(document?.Snapshot.PreviewKind == "image").Grid(row: 3),
                 TextBlock(Text("UnsupportedPreview")).TextWrapping(TextWrapping.Wrap)
@@ -152,21 +165,21 @@ internal sealed class ReactorConversationFilesPanel : Component<ReactorConversat
                     TextBlock(Text("Conflict")).TextWrapping(TextWrapping.Wrap),
                     ScrollViewer(TextBlock(document?.LatestText ?? "").IsTextSelectionEnabled(true)
                         .TextWrapping(TextWrapping.Wrap)).MaxHeight(160),
-                    HStack(8,
-                        ActionButton("Reload", () => _ = controller.ReloadAsync(), !view.Busy),
+                    Grid([GridSize.Star(), GridSize.Star()], [GridSize.Auto],
+                        ActionButton("Reload", () => _ = controller.ReloadAsync(), !view.Busy).Grid(column: 0),
                         ActionButton("Overwrite", () => _ = controller.SaveAsync(overwrite: true),
-                            controller.CanEdit && document?.LatestHash is not null)))
+                            controller.CanEdit && document?.LatestHash is not null).Grid(column: 1)))
                     .IsVisible(view.Notice == ConversationFilesNotice.Conflict).Grid(row: 4))
-                .Grid(row: 6))
+                .IsVisible(document is not null || entries.Length > 0).Grid(row: 6)))
             .IsVisible(view.Tab != ConversationFilesTab.Changes);
 
         return Grid([GridSize.Star()], [GridSize.Auto, GridSize.Auto, GridSize.Auto, GridSize.Star()],
-            HStack(8,
-                ActionButton("Files", () => controller.SelectTab(ConversationFilesTab.Browse)),
-                ActionButton("Outputs", () => controller.SelectTab(ConversationFilesTab.Outputs)),
-                ActionButton("Changes", () => controller.SelectTab(ConversationFilesTab.Changes), capabilities.Diff))
+            Grid([GridSize.Star(), GridSize.Star(), GridSize.Star()], [GridSize.Auto],
+                ActionButton("Files", () => controller.SelectTab(ConversationFilesTab.Browse)).Grid(column: 0),
+                ActionButton("Outputs", () => controller.SelectTab(ConversationFilesTab.Outputs)).Grid(column: 1),
+                ActionButton("Changes", () => controller.SelectTab(ConversationFilesTab.Changes), capabilities.Diff).Grid(column: 2))
                 .Grid(row: 0),
-            TextBlock(Text(view.Status.ToString())).TextWrapping(TextWrapping.Wrap)
+            TextBlock(view.Status == ConversationFilesStatus.Ready ? "" : Text(view.Status.ToString())).TextWrapping(TextWrapping.Wrap)
                 .IsVisible(view.Status != ConversationFilesStatus.Ready).Grid(row: 1),
             TextBlock(view.Notice == ConversationFilesNotice.None ? "" : Text(view.Notice.ToString()))
                 .TextWrapping(TextWrapping.Wrap)
@@ -184,27 +197,34 @@ internal sealed class ReactorConversationFilesPanel : Component<ReactorConversat
             var host = root.Current;
             if (host is null || !host.DispatcherQueue.TryEnqueue(async () =>
             {
+                StorageStreamTransaction? transaction = null;
+                Stream? stream = null;
+                var transferred = false;
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var handle = Props.WindowHandle();
                     if (!host.IsLoaded || handle == 0) throw new InvalidOperationException("The file picker has no active owner.");
                     var picker = new FileSavePicker { SuggestedFileName = filename };
-                    picker.FileTypeChoices.Add(Text("File"), ["*"]);
+                    picker.FileTypeChoices.Add(Text("File"), [ConversationFilesController.DownloadExtension(filename)]);
                     WinRT.Interop.InitializeWithWindow.Initialize(picker, handle);
                     var file = await picker.PickSaveFileAsync();
                     if (file is null) { completion.TrySetResult(null); return; }
                     cancellationToken.ThrowIfCancellationRequested();
-                    var transaction = await file.OpenTransactedWriteAsync();
-                    var stream = transaction.Stream.AsStreamForWrite();
+                    transaction = await file.OpenTransactedWriteAsync();
+                    stream = transaction.Stream.AsStreamForWrite();
                     stream.SetLength(0);
-                    completion.TrySetResult(new(stream,
+                    transferred = completion.TrySetResult(new(stream,
                         async () => { await stream.FlushAsync(); await transaction.CommitAsync(); },
                         () => { stream.Dispose(); transaction.Dispose(); return ValueTask.CompletedTask; }));
                 }
                 catch (Exception error) when (error is OperationCanceledException or IOException or
                     UnauthorizedAccessException or InvalidOperationException or COMException or ArgumentException)
                 { completion.TrySetException(error); }
+                finally
+                {
+                    if (!transferred) { stream?.Dispose(); transaction?.Dispose(); }
+                }
             })) completion.TrySetException(new InvalidOperationException("The file picker owner is unavailable."));
             return completion.Task;
         }
@@ -237,20 +257,23 @@ internal sealed class ReactorConversationFilesPanel : Component<ReactorConversat
                 TextBlock(file.Binary ? "" : file.Patch ?? "").IsTextSelectionEnabled(true).TextWrapping(TextWrapping.NoWrap))))
             with { SelectionMode = ItemsViewSelectionMode.None, IsItemInvokedEnabled = false };
         return Grid([GridSize.Star()], [GridSize.Auto, GridSize.Auto, GridSize.Auto, GridSize.Star()],
-            HStack(8,
-                ActionButton("AllChanges", () => _ = controller.LoadDiffAsync()),
-                ActionButton("Uncommitted", () => _ = controller.LoadDiffAsync(SessionDiffScope.Uncommitted)),
-                ActionButton("Refresh", () => _ = controller.LoadDiffAsync(view.DiffScope, view.Commit)))
+            Grid([GridSize.Star(), GridSize.Star(), GridSize.Star()], [GridSize.Auto],
+                ActionButton("AllChanges", () => _ = controller.LoadDiffAsync()).Grid(column: 0),
+                ActionButton("Uncommitted", () => _ = controller.LoadDiffAsync(SessionDiffScope.Uncommitted)).Grid(column: 1),
+                ActionButton("Refresh", () => _ = controller.LoadDiffAsync(view.DiffScope, view.Commit)).Grid(column: 2))
                 .Grid(row: 0),
-            VStack(4, (diff?.Commits ?? []).Select(commit =>
-                Button(commit.Subject, () => _ = controller.LoadDiffAsync(SessionDiffScope.Commit, commit.Sha))
-                    .AutomationName(commit.Subject).ToolTip(commit.Sha).WithKey(commit.Sha)).ToArray()).Grid(row: 1),
+            ScrollViewer(VStack(4, (diff?.Commits ?? []).Select(commit =>
+                Button(string.IsNullOrWhiteSpace(commit.Subject) ? commit.Sha : commit.Subject, () =>
+                    { if (lease?.IsCurrent == true && !view.Busy) _ = controller.LoadDiffAsync(SessionDiffScope.Commit, commit.Sha); })
+                    .IsEnabled(!view.Busy && lease?.IsCurrent == true)
+                    .AutomationName(string.IsNullOrWhiteSpace(commit.Subject) ? commit.Sha : commit.Subject)
+                    .ToolTip(commit.Sha).WithKey(commit.Sha)).ToArray())).MaxHeight(128).Grid(row: 1),
             TextBlock(diff?.Computing == true ? Text("Computing") :
                 diff?.UnavailableReason is { } reason ? Text("Diff_" + reason) :
                 diff?.Truncated == true ? Text("Truncated") :
                 diff is not null && diff.Files.Length == 0 ? Text("NoChanges") : diff?.Branch ?? "")
                 .TextWrapping(TextWrapping.Wrap).Grid(row: 2),
-            rows.Grid(row: 3).AutomationName(Text("Changes")));
+            rows.IsVisible(view.Status != ConversationFilesStatus.Loading).Grid(row: 3).AutomationName(Text("Changes")));
     }
 
     private static Element BuildImage(ConversationFileDocument? document)
@@ -272,7 +295,8 @@ internal sealed class ReactorConversationFilesPanel : Component<ReactorConversat
     }
 
     private static Element ActionButton(string key, Action action, bool enabled = true) =>
-        Button(Text(key), action).AutomationName(Text(key)).MinHeight(32).IsEnabled(enabled);
+        Button(TextBlock(Text(key)).TextWrapping(TextWrapping.Wrap), action).AutomationName(Text(key))
+            .MinHeight(32).HAlign(HorizontalAlignment.Stretch).IsEnabled(enabled);
 
     internal static string Text(string key) => LocalizationHelper.GetString("Chat_Files_" + key);
     private sealed record FileRow(string Path, string Name, bool Directory, bool Missing);
@@ -286,6 +310,9 @@ internal sealed class ReactorConversationFilesPanel : Component<ReactorConversat
         private SessionFileRequest? _request;
         private ConversationFileDraftKey? _target;
         private Microsoft.UI.Xaml.Controls.ScrollViewer? _scroll;
+        private string? _lastModelText;
+        private string? _lastNativeText;
+        private bool _capturing;
 
         internal EditorBinding(TextBox editor, ConversationFilesController controller)
         {
@@ -307,11 +334,12 @@ internal sealed class ReactorConversationFilesPanel : Component<ReactorConversat
         {
             _editor.IsReadOnly = document?.Editing != true || !canEdit;
             _editor.MaxLength = _editor.IsReadOnly ? int.MaxValue : SessionFileLimits.NativeEditorCharacters;
-            var text = document?.Text is { } value ? document.Format?.ToNative(value) ?? value : "";
             if (_composing) return;
-            _target = _controller.EditorTarget;
+            var target = _controller.EditorTarget;
+            if (target == _target && (_capturing || document?.Text == _lastModelText)) return;
+            _target = target;
+            var text = document?.Text is { } value ? document.Format?.ToNative(value) ?? value : "";
             var newRequest = _request != document?.Request;
-            if (_editor.Text == text && !newRequest) return;
             _applying = true;
             try
             {
@@ -323,6 +351,8 @@ internal sealed class ReactorConversationFilesPanel : Component<ReactorConversat
                     _scroll?.ChangeView(null, document.ScrollOffset, null, disableAnimation: true);
                 }
                 _request = document?.Request;
+                _lastModelText = document?.Text;
+                _lastNativeText = _editor.Text;
             }
             finally { _applying = false; }
         }
@@ -331,9 +361,22 @@ internal sealed class ReactorConversationFilesPanel : Component<ReactorConversat
         private void SelectionChanged(object sender, RoutedEventArgs args) => Capture();
         private void Capture()
         {
-            if (!_applying && !_composing && _target is { } target)
-                _controller.UpdateNativeText(target, _editor.Text, _editor.SelectionStart, _editor.SelectionLength,
+            if (_applying || _composing || _target is not { } target) return;
+            var text = _editor.Text;
+            if (text == _lastNativeText)
+            {
+                _controller.UpdateEditorPosition(target, _editor.SelectionStart, _editor.SelectionLength,
                     _scroll?.VerticalOffset ?? 0);
+                return;
+            }
+            _capturing = true;
+            try
+            {
+                var accepted = _controller.UpdateNativeText(target, text, _editor.SelectionStart, _editor.SelectionLength,
+                    _scroll?.VerticalOffset ?? 0);
+                if (accepted is not null) { _lastModelText = accepted; _lastNativeText = text; }
+            }
+            finally { _capturing = false; }
         }
         private void CompositionStarted(TextBox sender, TextCompositionStartedEventArgs args) => _composing = true;
         private void CompositionEnded(TextBox sender, TextCompositionEndedEventArgs args)

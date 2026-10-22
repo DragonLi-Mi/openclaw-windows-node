@@ -1,4 +1,5 @@
 using System.Net.Http;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using OpenClaw.Shared;
@@ -9,7 +10,7 @@ internal enum ConversationFilesStatus { Waiting, Loading, Ready, Unsupported, Er
 internal enum ConversationFilesNotice
 {
     None, Offline, Rejected, Permission, Conflict, SourceChanged, InvalidContent, DraftLimit,
-    Restored, Saved, DownloadFailed, Downloaded, Uncertain
+    Restored, Saved, PendingEdits, DownloadFailed, Downloaded, Uncertain
 }
 internal enum ConversationFilesTab { Browse, Outputs, Changes }
 
@@ -19,7 +20,8 @@ internal sealed record ConversationFileDocument(
     string? ExpectedHash = null,
     bool Editing = false, bool Dirty = false, bool Restored = false,
     string? LatestText = null, string? LatestHash = null, bool SourceChanged = false,
-    int SelectionStart = 0, int SelectionLength = 0, double ScrollOffset = 0)
+    int SelectionStart = 0, int SelectionLength = 0, double ScrollOffset = 0, int NativeLength = 0,
+    string? PendingSaveText = null)
 {
     internal ConversationFileDraftKey Key(ChatConversationIdentity identity) => new(identity, Request, Origin);
 }
@@ -48,6 +50,8 @@ internal sealed class ConversationFilesController : IDisposable
     private readonly ConversationFileDrafts _drafts;
     private ChatConversationContext? _binding;
     private long _revision;
+    private long _observedGeneration;
+    private long? _busyRevision;
     private bool _disposed;
     private ConversationFilesView _view = new();
 
@@ -75,34 +79,57 @@ internal sealed class ConversationFilesController : IDisposable
     {
         get
         {
-            lock (_gate)
-                return _panels.IsReady && _panels.Context == _binding && !_view.Busy &&
-                    _view.Notice != ConversationFilesNotice.Permission &&
-                    Capabilities.Set && _binding!.Client.GrantedOperatorScopes.Contains("operator.admin", StringComparer.Ordinal) &&
-                    _view.Document is { Request.MessageEntryId: null, SourceChanged: false, Format.Uniform: true,
-                        Snapshot.Source: not null, Snapshot.PreviewKind: "text", Snapshot.ContentEncoding: "utf8",
-                        ExpectedHash: { } hash, Text: not null } &&
-                    SessionFileLimits.IsContentHash(hash) &&
-                    _view.Document.Format.ToNative(_view.Document.Text).Length <= SessionFileLimits.NativeEditorCharacters;
+            var authority = CaptureEditAuthority();
+            lock (_gate) return authority is { } current && IsEditable(current);
         }
     }
+
+    private (ChatConversationPanelOperation Lease, bool Set, bool Admin)? CaptureEditAuthority()
+    {
+        var lease = CaptureLease();
+        if (lease is null) return null;
+        var set = lease.Context.Client.SessionFilesCapabilities.Set;
+        var admin = lease.Context.Client.GrantedOperatorScopes.Contains("operator.admin", StringComparer.Ordinal);
+        return lease.IsCurrent ? (lease, set, admin) : null;
+    }
+
+    private bool IsEditable((ChatConversationPanelOperation Lease, bool Set, bool Admin) authority) =>
+        !_disposed && authority.Lease.Context == _binding && !_view.Busy && authority.Set && authority.Admin &&
+        _view.Notice != ConversationFilesNotice.Permission &&
+        _view.Document is { Request.MessageEntryId: null, SourceChanged: false, Format.Uniform: true,
+            Snapshot.Source: not null, Snapshot.PreviewKind: "text", Snapshot.ContentEncoding: "utf8",
+            ExpectedHash: { } hash, Text: not null } &&
+        SessionFileLimits.IsContentHash(hash) && _view.Document.NativeLength <= SessionFileLimits.NativeEditorCharacters;
 
     private void BindingChanged()
     {
         var context = _panels.IsReady ? _panels.Context : null;
+        var active = context is not null && _panels.Layout.SelectedPanel == PanelId;
+        var generation = _panels.Generation;
+        ConversationFileDraftKey? retired = null;
         bool load;
         lock (_gate)
         {
             if (_disposed) return;
-            var active = context is not null && _panels.Layout.SelectedPanel == PanelId;
             load = active && (_binding != context || _view.Status == ConversationFilesStatus.Waiting);
             if (!active || _binding != context)
             {
+                if (_binding is not null && _view.Document is { } document)
+                    retired = document.Key(_binding.Identity);
                 _revision++;
+                _busyRevision = null;
                 _binding = active ? context : null;
                 _view = new(Notice: context is null ? ConversationFilesNotice.Offline : ConversationFilesNotice.None);
             }
+            else if (generation != _observedGeneration && _busyRevision.HasValue)
+            {
+                _revision++;
+                _busyRevision = null;
+                _view = _view with { Busy = false, Notice = ConversationFilesNotice.Uncertain };
+            }
+            _observedGeneration = generation;
         }
+        if (retired is not null) _drafts.ReleaseClean(retired);
         Changed?.Invoke();
         if (load) _ = RefreshAsync();
     }
@@ -141,7 +168,9 @@ internal sealed class ConversationFilesController : IDisposable
         lock (_gate) { if (_disposed || _view.Busy) return; }
         var previous = _panels.BeginOperation(PanelId, runId);
         if (previous is null || request.Scope != Scope(previous)) return;
+        var retired = EditorTarget;
         _panels.Open(PanelId, FileContentId(request), runId ?? previous.RunId);
+        if (retired is not null) _drafts.ReleaseClean(retired);
         var operation = Begin(runId);
         if (operation is null) return;
         var (lease, revision) = operation.Value;
@@ -158,11 +187,12 @@ internal sealed class ConversationFilesController : IDisposable
                 lease.CancellationToken).ConfigureAwait(false);
             var text = ReadText(snapshot);
             var origin = new ConversationFileOrigin(snapshot.Root, snapshot.Source);
+            var format = text is null ? null : ConversationFileText.Inspect(text);
             var document = new ConversationFileDocument(request, snapshot, origin, text, text,
-                text is null ? null : ConversationFileText.Inspect(text), snapshot.Hash);
+                format, snapshot.Hash, NativeLength: text is null ? 0 : format!.ToNative(text).Length);
             var draft = _drafts.Find(lease.Context.Identity, request);
             var notice = ConversationFilesNotice.None;
-            if (draft is not null && draft.Text != draft.SavedText)
+            if (draft is not null && (draft.Text != draft.SavedText || draft.PendingSaveText is not null))
             {
                 var sourceChanged = draft.Key.Origin != origin;
                 var conflict = sourceChanged || draft.Hash != snapshot.Hash && draft.Text != text;
@@ -174,10 +204,12 @@ internal sealed class ConversationFilesController : IDisposable
                     Snapshot = snapshot, LatestText = conflict && !sourceChanged ? text : null,
                     LatestHash = conflict && !sourceChanged ? snapshot.Hash : null,
                     SelectionStart = draft.SelectionStart, SelectionLength = draft.SelectionLength,
-                    ScrollOffset = draft.ScrollOffset
+                    ScrollOffset = draft.ScrollOffset, NativeLength = draft.Format.ToNative(draft.Text).Length,
+                    PendingSaveText = draft.PendingSaveText
                 };
                 notice = sourceChanged ? ConversationFilesNotice.SourceChanged :
-                    conflict ? ConversationFilesNotice.Conflict : ConversationFilesNotice.Restored;
+                    conflict ? ConversationFilesNotice.Conflict : draft.PendingSaveText is not null
+                        ? ConversationFilesNotice.Uncertain : ConversationFilesNotice.Restored;
             }
             if (Apply(lease, revision, v => v with { Status = ConversationFilesStatus.Ready, Document = document, Notice = notice }))
                 _drafts.Select(lease.Context.Identity, request);
@@ -194,31 +226,29 @@ internal sealed class ConversationFilesController : IDisposable
 
     internal void BeginEdit()
     {
+        var authority = CaptureEditAuthority();
         lock (_gate)
         {
-            if (!CanEdit || _view.Document is not { } document) return;
+            if (authority is not { } current || !IsEditable(current) || _view.Document is not { } document) return;
             if (!_drafts.Retain(Draft(document, _binding!.Identity)))
-            {
                 _view = _view with { Notice = ConversationFilesNotice.DraftLimit };
-                Changed?.Invoke();
-                return;
-            }
-            _view = _view with { Document = document with { Editing = true } };
+            else _view = _view with { Document = document with { Editing = true } };
         }
         Changed?.Invoke();
     }
 
-    internal void UpdateNativeText(ConversationFileDraftKey target, string text, int selectionStart, int selectionLength,
+    internal string? UpdateNativeText(ConversationFileDraftKey target, string text, int selectionStart, int selectionLength,
         double scrollOffset = 0)
     {
+        string content;
         lock (_gate)
         {
             if (_disposed || _view.Document is not { Editing: true, Format.Uniform: true } document ||
-                _binding is null || document.Key(_binding.Identity) != target) return;
-            var content = document.Format.FromNative(text);
+                _binding is null || document.Key(_binding.Identity) != target) return null;
+            content = document.Format.FromNative(text);
             var dirty = content != document.SavedText;
             var next = document with { Text = content, Dirty = dirty, SelectionStart = selectionStart,
-                SelectionLength = selectionLength, ScrollOffset = scrollOffset };
+                SelectionLength = selectionLength, ScrollOffset = scrollOffset, NativeLength = text.Length };
             var draft = Draft(next, _binding.Identity);
             if (!_drafts.Retain(draft))
             {
@@ -231,21 +261,37 @@ internal sealed class ConversationFilesController : IDisposable
             }
         }
         Changed?.Invoke();
+        return content;
+    }
+
+    internal void UpdateEditorPosition(ConversationFileDraftKey target, int start, int length, double scroll)
+    {
+        lock (_gate)
+        {
+            if (_disposed || _binding is null || _view.Document is not { } document ||
+                document.Key(_binding.Identity) != target) return;
+            _view = _view with { Document = document with { SelectionStart = start, SelectionLength = length, ScrollOffset = scroll } };
+            _drafts.UpdatePosition(target, start, length, scroll);
+        }
     }
 
     internal async Task SaveAsync(bool overwrite = false)
     {
         ConversationFileDocument document;
-        (ChatConversationPanelOperation Lease, long Revision)? operation;
+        var authority = CaptureEditAuthority();
+        if (authority is not { } currentAuthority) return;
+        var lease = currentAuthority.Lease;
+        long revision;
         lock (_gate)
         {
-            if (!CanEdit || _view.Document is not { Dirty: true, Text: not null } current) return;
-            operation = Begin();
-            if (operation is null) return;
+            if (!IsEditable(currentAuthority) || _view.Document is not { Text: not null } current ||
+                !current.Dirty && current.PendingSaveText is null) return;
+            revision = ++_revision;
+            _busyRevision = revision;
             document = current;
-            _view = _view with { Busy = true, Notice = ConversationFilesNotice.None };
+            _view = _view with { Busy = true, Notice = current.PendingSaveText is null
+                ? ConversationFilesNotice.None : ConversationFilesNotice.Uncertain };
         }
-        var (lease, revision) = operation.Value;
         Changed?.Invoke();
         var capturedText = document.Text!;
         try
@@ -264,6 +310,22 @@ internal sealed class ConversationFilesController : IDisposable
             if (latestText is null || !ConversationFileText.Inspect(latestText).Uniform ||
                 !SessionFileLimits.IsContentHash(latest.Hash))
                 throw new InvalidOperationException("The current file cannot be edited safely.");
+            if (document.PendingSaveText is { } pendingText && latestText == pendingText)
+            {
+                ApplySaved(lease, revision, latest, pendingText);
+                return;
+            }
+            if (document.PendingSaveText is not null && !overwrite)
+            {
+                Apply(lease, revision, view => view with { Notice = ConversationFilesNotice.Conflict,
+                    Document = view.Document! with { LatestText = latestText, LatestHash = latest.Hash } });
+                return;
+            }
+            if (latestText == capturedText)
+            {
+                ApplySaved(lease, revision, latest, capturedText);
+                return;
+            }
             // Overwrite is valid only after the user saw this exact latest version alongside the draft.
             var expectedHash = document.ExpectedHash;
             if (latest.Hash != expectedHash && !overwrite ||
@@ -275,20 +337,17 @@ internal sealed class ConversationFilesController : IDisposable
             }
             if (!IsCurrent(lease, revision)) return;
             lease.Connection.RequireCurrent();
+            if (!Apply(lease, revision, view =>
+            {
+                var pending = view.Document! with { PendingSaveText = capturedText };
+                _drafts.Retain(Draft(pending, lease.Context.Identity));
+                return view with { Document = pending };
+            })) return;
             var saved = await lease.Context.Client.SetSessionFileAsync(
                 new(document.Request.Scope, document.Request.Path, capturedText, latest.Hash!, document.Origin.Source!),
                 lease.Context.ConnectionEpoch, lease.CancellationToken).ConfigureAwait(false);
             if (!IsCurrent(lease, revision)) return;
-            Apply(lease, revision, v =>
-            {
-                var current = v.Document!;
-                var dirty = current.Text != capturedText;
-                var next = current with { Snapshot = saved, ExpectedHash = saved.Hash,
-                    SavedText = capturedText, Dirty = dirty, Restored = false,
-                    LatestText = null, LatestHash = null };
-                _drafts.Retain(Draft(next, lease.Context.Identity));
-                return v with { Busy = false, Document = next, Notice = ConversationFilesNotice.Saved };
-            });
+            ApplySaved(lease, revision, saved, capturedText);
         }
         catch (GatewayRequestException error) when (error.DetailType == "session_file_conflict")
         {
@@ -296,7 +355,20 @@ internal sealed class ConversationFilesController : IDisposable
             await FetchLatestAsync(lease, revision, document).ConfigureAwait(false);
         }
         catch (Exception error) when (IsFileError(error)) { Fail(lease, revision, error); }
+        finally { ReleaseBusy(lease, revision); }
     }
+
+    private void ApplySaved(ChatConversationPanelOperation lease, long revision, SessionFileContent snapshot, string text) =>
+        Apply(lease, revision, view =>
+        {
+            var document = view.Document!;
+            var next = document with { Snapshot = snapshot, ExpectedHash = snapshot.Hash, SavedText = text,
+                Dirty = document.Text != text, Restored = false, LatestText = null, LatestHash = null,
+                PendingSaveText = null };
+            _drafts.Retain(Draft(next, lease.Context.Identity));
+            return view with { Busy = false, Document = next,
+                Notice = next.Dirty ? ConversationFilesNotice.PendingEdits : ConversationFilesNotice.Saved };
+        });
 
     private async Task FetchLatestAsync(ChatConversationPanelOperation lease, long revision, ConversationFileDocument document)
     {
@@ -331,11 +403,13 @@ internal sealed class ConversationFilesController : IDisposable
                 return;
             }
             var text = ReadText(latest);
+            var format = text is null ? null : ConversationFileText.Inspect(text);
             Apply(lease, revision, v =>
             {
                 _drafts.Remove(document.Key(lease.Context.Identity));
                 return v with { Document = new(document.Request, latest, document.Origin, text, text,
-                    text is null ? null : ConversationFileText.Inspect(text), latest.Hash), Notice = ConversationFilesNotice.None };
+                    format, latest.Hash, NativeLength: text is null ? 0 : format!.ToNative(text).Length),
+                    Notice = ConversationFilesNotice.None };
             });
         }
         catch (Exception error) when (IsFileError(error)) { Fail(lease, revision, error); }
@@ -348,7 +422,7 @@ internal sealed class ConversationFilesController : IDisposable
             if (_binding is null || _view.Busy || _view.Document is not { } document) return;
             _drafts.Remove(document.Key(_binding.Identity));
             _view = _view with { Document = document with { Text = document.SavedText, Editing = false,
-                Dirty = false, Restored = false, LatestText = null, LatestHash = null },
+                Dirty = false, Restored = false, LatestText = null, LatestHash = null, PendingSaveText = null },
                 Notice = document.SourceChanged ? ConversationFilesNotice.SourceChanged : ConversationFilesNotice.None };
         }
         Changed?.Invoke();
@@ -376,9 +450,15 @@ internal sealed class ConversationFilesController : IDisposable
         var operation = Begin();
         if (operation is null) return;
         var (lease, revision) = operation.Value;
+        lock (_gate)
+        {
+            if (_disposed || _revision != revision || _view.Document?.Request != document.Request) return;
+            _busyRevision = revision;
+            _view = _view with { Busy = true, Notice = ConversationFilesNotice.None };
+        }
+        Changed?.Invoke();
         try
         {
-            Apply(lease, revision, v => v with { Busy = true, Notice = ConversationFilesNotice.None });
             var grant = await lease.Context.Client.GetSessionFileDownloadAsync(document.Request,
                 lease.Context.ConnectionEpoch, lease.CancellationToken).ConfigureAwait(false);
             if (!IsCurrent(lease, revision)) return;
@@ -392,38 +472,58 @@ internal sealed class ConversationFilesController : IDisposable
             await destination.CommitAsync().ConfigureAwait(false);
             Apply(lease, revision, v => v with { Busy = false, Notice = ConversationFilesNotice.Downloaded });
         }
-        catch (Exception error) when (IsFileError(error) || error is IOException)
+        catch (Exception error) when (IsFileError(error) || error is IOException or COMException)
         {
             if (IsCurrent(lease, revision))
                 Apply(lease, revision, v => v with { Busy = false, Notice = ConversationFilesNotice.DownloadFailed });
         }
+        finally { ReleaseBusy(lease, revision); }
     }
 
     private (ChatConversationPanelOperation Lease, long Revision)? Begin(string? runId = null)
     {
+        var lease = _panels.BeginOperation(PanelId, runId);
+        if (lease is null || !lease.IsCurrent) return null;
         lock (_gate)
         {
-            if (_disposed || _view.Busy || _panels.BeginOperation(PanelId, runId) is not { } lease) return null;
+            if (_disposed || _view.Busy || _binding != lease.Context) return null;
             return (lease, ++_revision);
         }
     }
 
     private bool IsCurrent(ChatConversationPanelOperation lease, long revision)
     {
-        lock (_gate) return !_disposed && revision == _revision && lease.IsCurrent && lease.Context == _binding;
+        var current = lease.IsCurrent;
+        lock (_gate) return current && !_disposed && revision == _revision && lease.Context == _binding;
     }
 
     private bool Apply(ChatConversationPanelOperation lease, long revision, Func<ConversationFilesView, ConversationFilesView> apply)
     {
+        if (!lease.IsCurrent) return false;
         lock (_gate)
         {
-            if (!IsCurrent(lease, revision)) return false;
+            if (_disposed || revision != _revision || lease.Context != _binding) return false;
             _view = apply(_view);
         }
         Changed?.Invoke();
         return true;
     }
 
+    private void ReleaseBusy(ChatConversationPanelOperation lease, long revision)
+    {
+        var stale = !lease.IsCurrent;
+        var changed = false;
+        lock (_gate)
+        {
+            if (!_disposed && _busyRevision == revision)
+            {
+                _busyRevision = null;
+                _view = _view with { Busy = false, Notice = stale ? ConversationFilesNotice.Uncertain : _view.Notice };
+                changed = true;
+            }
+        }
+        if (changed) Changed?.Invoke();
+    }
     private void Fail(ChatConversationPanelOperation lease, long revision, Exception error)
     {
         Apply(lease, revision, view => view with
@@ -436,6 +536,7 @@ internal sealed class ConversationFilesController : IDisposable
                 GatewayRequestException { DetailType: "session_file_source_changed" } => ConversationFilesNotice.SourceChanged,
                 GatewayRequestException { Code: "FORBIDDEN" } or UnauthorizedAccessException => ConversationFilesNotice.Permission,
                 GatewayRequestException { DetailType: "session_file_too_large" } => ConversationFilesNotice.InvalidContent,
+                _ when view.Document?.PendingSaveText is not null => ConversationFilesNotice.Uncertain,
                 TimeoutException or OperationCanceledException => ConversationFilesNotice.Uncertain,
                 _ => ConversationFilesNotice.Rejected
             },
@@ -454,7 +555,7 @@ internal sealed class ConversationFilesController : IDisposable
 
     private static ConversationFileDraft Draft(ConversationFileDocument document, ChatConversationIdentity identity) =>
         new(document.Key(identity), document.SavedText!, document.Text!, document.ExpectedHash!, document.Format!,
-            document.SelectionStart, document.SelectionLength, document.ScrollOffset);
+            document.SelectionStart, document.SelectionLength, document.ScrollOffset, document.PendingSaveText);
 
     internal static string? ReadText(SessionFileContent snapshot)
     {
@@ -467,16 +568,28 @@ internal sealed class ConversationFilesController : IDisposable
     internal static string SafeDownloadName(string name)
     {
         var leaf = name.Split(['/', '\\']).LastOrDefault() ?? "";
-        leaf = new string(leaf.Where(c => !char.IsControl(c) && !"<>:\"/\\|?*".Contains(c)).ToArray()).Trim().TrimEnd('.');
+        leaf = new string(leaf.Where(c => !char.IsControl(c) &&
+            char.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.Format &&
+            !"<>:\"/\\|?*".Contains(c)).ToArray()).Trim().TrimEnd('.');
         if (leaf.Length > 120) leaf = leaf[..120];
-        var stem = leaf.Split('.')[0];
+        if (leaf.Length > 0 && char.IsHighSurrogate(leaf[^1])) leaf = leaf[..^1];
+        leaf = leaf.TrimEnd(' ', '.');
+        var stem = leaf.Split('.')[0].TrimEnd(' ', '.');
         if (leaf.Length == 0 || stem.Equals("CON", StringComparison.OrdinalIgnoreCase) ||
             stem.Equals("PRN", StringComparison.OrdinalIgnoreCase) || stem.Equals("AUX", StringComparison.OrdinalIgnoreCase) ||
             stem.Equals("NUL", StringComparison.OrdinalIgnoreCase) ||
+            stem.Equals("CONIN$", StringComparison.OrdinalIgnoreCase) || stem.Equals("CONOUT$", StringComparison.OrdinalIgnoreCase) ||
             (stem.Length == 4 && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) ||
-                stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) && stem[3] is >= '0' and <= '9'))
+                stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) && (stem[3] is >= '0' and <= '9' or '\u00b9' or '\u00b2' or '\u00b3')))
             return "download.bin";
         return leaf;
+    }
+
+    internal static string DownloadExtension(string filename)
+    {
+        var extension = Path.GetExtension(filename);
+        return extension.Length is > 1 and <= 32 && extension[1..].All(c => char.IsLetterOrDigit(c) || c is '_' or '-')
+            ? extension : ".bin";
     }
 
     internal static string FileContentId(SessionFileRequest request) => JsonSerializer.Serialize(
@@ -484,15 +597,18 @@ internal sealed class ConversationFilesController : IDisposable
 
     public void Dispose()
     {
+        ConversationFileDraftKey? retired;
         lock (_gate)
         {
             if (_disposed) return;
             _disposed = true;
+            retired = _binding is not null && _view.Document is { } document ? document.Key(_binding.Identity) : null;
             _revision++;
             _view = new();
             _binding = null;
         }
         _panels.Changed -= BindingChanged;
+        if (retired is not null) _drafts.ReleaseClean(retired);
         Changed = null;
     }
 }

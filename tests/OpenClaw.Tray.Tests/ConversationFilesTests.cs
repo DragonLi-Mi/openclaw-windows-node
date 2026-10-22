@@ -43,9 +43,201 @@ public sealed class ConversationFilesTests
     [InlineData("report.txt:stream", "report.txtstream")]
     [InlineData("NUL", "download.bin")]
     [InlineData("..", "download.bin")]
+    [InlineData("CON .txt", "download.bin")]
+    [InlineData("COM\u00b9.log", "download.bin")]
+    [InlineData("LPT\u00b2.txt", "download.bin")]
+    [InlineData("CONOUT$", "download.bin")]
     public void DownloadSuggestionIsOnlyASafeLeaf(string input, string expected) =>
         Assert.Equal(expected, ConversationFilesController.SafeDownloadName(input));
 
+    [Theory]
+    [InlineData("notes.txt", ".txt")]
+    [InlineData("archive.tar.gz", ".gz")]
+    [InlineData("LICENSE", ".bin")]
+    [InlineData("name.", ".bin")]
+    public void SavePickerUsesConcreteExtensionsInsteadOfUnsupportedWildcard(string filename, string expected) =>
+        Assert.Equal(expected, ConversationFilesController.DownloadExtension(filename));
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RunChangeDuringSaveReleasesBusyAndReconcilesOnlyExactCommittedText(bool committed)
+    {
+        using var fixture = new Fixture();
+        await fixture.Controller.OpenAsync(Request);
+        fixture.Controller.BeginEdit();
+        fixture.Controller.UpdateNativeText(fixture.Controller.EditorTarget!, "captured save", 2, 1);
+        var pending = new TaskCompletionSource<SessionFileContent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Proxy.PendingWrite = pending.Task;
+        var save = fixture.Controller.SaveAsync();
+        Assert.True(fixture.Controller.View.Busy);
+        fixture.Panels.Open("files", ConversationFilesController.FileContentId(Request), "replacement-run");
+        Assert.False(fixture.Controller.View.Busy);
+        Assert.Equal(ConversationFilesNotice.Uncertain, fixture.Controller.View.Notice);
+        fixture.Proxy.Snapshot = Snapshot(committed ? "captured save" : "original", committed ? HashB : HashA);
+        pending.SetResult(fixture.Proxy.Snapshot);
+        await save;
+        fixture.Proxy.PendingWrite = null;
+        await fixture.Controller.SaveAsync();
+        Assert.Single(fixture.Proxy.Writes);
+        Assert.False(fixture.Controller.View.Busy);
+        Assert.Equal(!committed, fixture.Controller.View.Document!.Dirty);
+        Assert.Equal(committed ? ConversationFilesNotice.Saved : ConversationFilesNotice.Conflict, fixture.Controller.View.Notice);
+        Assert.Equal(committed ? HashB : HashA, fixture.Controller.View.Document.ExpectedHash);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedOrSupersededUncertainReadKeepsDraftAndNeverResends(bool superseded)
+    {
+        using var fixture = new Fixture();
+        await fixture.Controller.OpenAsync(Request);
+        fixture.Controller.BeginEdit();
+        fixture.Controller.UpdateNativeText(fixture.Controller.EditorTarget!, "uncertain save", 0, 0);
+        var pendingWrite = new TaskCompletionSource<SessionFileContent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Proxy.PendingWrite = pendingWrite.Task;
+        var save = fixture.Controller.SaveAsync();
+        fixture.Panels.Open("files", ConversationFilesController.FileContentId(Request), "new-run");
+        pendingWrite.SetResult(Snapshot("uncertain save", HashB));
+        await save;
+        var pendingRead = new TaskCompletionSource<SessionFileContent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Proxy.PendingRead = pendingRead.Task;
+        var retry = fixture.Controller.SaveAsync();
+        if (superseded)
+        {
+            fixture.Panels.Open("files", ConversationFilesController.FileContentId(Request), "third-run");
+            pendingRead.SetResult(Snapshot("unrelated content", HashB));
+        }
+        else pendingRead.SetException(new TimeoutException("Synthetic get timeout"));
+        await retry;
+        Assert.False(fixture.Controller.View.Busy);
+        Assert.Equal("uncertain save", fixture.Controller.View.Document!.Text);
+        Assert.Equal("uncertain save", fixture.Controller.View.Document.PendingSaveText);
+        Assert.True(fixture.Controller.View.Document.Dirty);
+        Assert.Equal(HashA, fixture.Controller.View.Document.ExpectedHash);
+        Assert.Equal(ConversationFilesNotice.Uncertain, fixture.Controller.View.Notice);
+        Assert.Single(fixture.Proxy.Writes);
+    }
+
+    [Fact]
+    public async Task UncertainReconciliationConfirmsCapturedSaveWithoutDiscardingNewerEdits()
+    {
+        using var fixture = new Fixture();
+        await fixture.Controller.OpenAsync(Request);
+        fixture.Controller.BeginEdit();
+        fixture.Controller.UpdateNativeText(fixture.Controller.EditorTarget!, "captured save", 0, 0);
+        var pending = new TaskCompletionSource<SessionFileContent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Proxy.PendingWrite = pending.Task;
+        var save = fixture.Controller.SaveAsync();
+        fixture.Panels.Open("files", ConversationFilesController.FileContentId(Request), "new-run");
+        fixture.Controller.UpdateNativeText(fixture.Controller.EditorTarget!, "newer local edits", 2, 1);
+        fixture.Proxy.Snapshot = Snapshot("captured save", HashB);
+        pending.SetResult(fixture.Proxy.Snapshot);
+        await save;
+        await fixture.Controller.SaveAsync();
+        Assert.Single(fixture.Proxy.Writes);
+        Assert.Equal("newer local edits", fixture.Controller.View.Document!.Text);
+        Assert.Equal("captured save", fixture.Controller.View.Document.SavedText);
+        Assert.True(fixture.Controller.View.Document.Dirty);
+        Assert.Null(fixture.Controller.View.Document.PendingSaveText);
+        Assert.Equal(HashB, fixture.Controller.View.Document.ExpectedHash);
+        Assert.Equal(ConversationFilesNotice.PendingEdits, fixture.Controller.View.Notice);
+    }
+
+    [Fact]
+    public async Task SelectionChangeDuringDownloadRollsBackDestinationAndReleasesBusy()
+    {
+        using var fixture = new Fixture();
+        await fixture.Controller.OpenAsync(Request);
+        var bytes = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Proxy.PendingDownload = bytes.Task;
+        var committed = false;
+        var disposed = false;
+        var download = fixture.Controller.DownloadAsync((_, _) => Task.FromResult<ConversationFileDestination?>(
+            new(new MemoryStream(), () => { committed = true; return Task.CompletedTask; },
+                () => { disposed = true; return ValueTask.CompletedTask; })));
+        Assert.True(fixture.Controller.View.Busy);
+        var other = Request with { Path = "other.txt" };
+        fixture.Panels.Open("files", ConversationFilesController.FileContentId(other));
+        Assert.False(fixture.Controller.View.Busy);
+        await fixture.Controller.OpenAsync(other);
+        bytes.SetResult();
+        await download;
+        Assert.False(committed);
+        Assert.True(disposed);
+        Assert.False(fixture.Controller.View.Busy);
+        Assert.Equal(other, fixture.Controller.View.Document!.Request);
+    }
+
+    [Fact]
+    public async Task SupersededSaveFinallyCannotClearNewDownloadBusyOwner()
+    {
+        using var fixture = new Fixture();
+        await fixture.Controller.OpenAsync(Request);
+        fixture.Controller.BeginEdit();
+        fixture.Controller.UpdateNativeText(fixture.Controller.EditorTarget!, "pending", 0, 0);
+        var old = new TaskCompletionSource<SessionFileContent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Proxy.PendingWrite = old.Task;
+        var save = fixture.Controller.SaveAsync();
+        fixture.Panels.Open("files", ConversationFilesController.FileContentId(Request), "new-run");
+        var bytes = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Proxy.PendingDownload = bytes.Task;
+        using var destination = new MemoryStream();
+        var download = fixture.Controller.DownloadAsync((_, _) => Task.FromResult<ConversationFileDestination?>(
+            new(destination, () => Task.CompletedTask, () => ValueTask.CompletedTask)));
+        old.SetResult(Snapshot("pending", HashB));
+        await save;
+        Assert.True(fixture.Controller.View.Busy);
+        bytes.SetResult();
+        await download;
+        Assert.False(fixture.Controller.View.Busy);
+    }
+
+    [Fact]
+    public void DraftLookupUsesExplicitLatestRevisionNotDictionaryInsertionOrder()
+    {
+        using var fixture = new Fixture();
+        var keyA = new ConversationFileDraftKey(fixture.Context.Identity, Request, new("/a", Source));
+        var keyB = keyA with { Origin = new("/b", Source with { WorkspaceId = "b" }) };
+        var a = new ConversationFileDraft(keyA, "old", "draft-a", HashA, ConversationFileText.Inspect("old"));
+        var b = a with { Key = keyB, Text = "draft-b" };
+        Assert.True(fixture.Drafts.Retain(a));
+        Assert.True(fixture.Drafts.Retain(b));
+        Assert.True(fixture.Drafts.Retain(a with { Text = "latest-a" }));
+        Assert.Equal("latest-a", fixture.Drafts.Find(fixture.Context.Identity, Request)!.Text);
+        fixture.Drafts.Clear();
+        Assert.Null(fixture.Drafts.Find(fixture.Context.Identity, Request));
+    }
+
+    [Fact]
+    public async Task CleanEditReservationIsReleasedOnCloseAndDraftLimitNotifiesOutsideLock()
+    {
+        using var fixture = new Fixture();
+        await fixture.Controller.OpenAsync(Request);
+        fixture.Controller.BeginEdit();
+        var clean = fixture.Controller.EditorTarget!;
+        Assert.True(fixture.Drafts.Contains(clean));
+        fixture.Panels.Close("files");
+        Assert.False(fixture.Drafts.Contains(clean));
+        fixture.Panels.Open("files");
+        await fixture.Controller.OpenAsync(Request);
+        for (var index = 0; index < 32; index++)
+        {
+            var key = clean with { Request = Request with { Path = $"retained-{index}.txt" } };
+            Assert.True(fixture.Drafts.Retain(new(key, "old", "unsaved", HashA, ConversationFileText.Inspect("old"))));
+        }
+        var observed = false;
+        fixture.Controller.Changed += () =>
+        {
+            Assert.True(Task.Run(() => fixture.Controller.View).Wait(TimeSpan.FromSeconds(5)),
+                "Changed must not be raised while the controller lock prevents another reader.");
+            observed = true;
+        };
+        fixture.Controller.BeginEdit();
+        Assert.True(observed);
+        Assert.Equal(ConversationFilesNotice.DraftLimit, fixture.Controller.View.Notice);
+    }
     [Fact]
     public async Task SaveTargetsSelectedSessionWithOriginalSourceHashAndFileLineEndings()
     {
@@ -238,6 +430,8 @@ public sealed class ConversationFilesTests
         public bool Admin = true;
         public SessionFileContent Snapshot = ConversationFilesTests.Snapshot();
         public Task<SessionFileContent>? PendingRead;
+        public Task<SessionFileContent>? PendingWrite;
+        public Task? PendingDownload;
         public List<SessionFileWrite> Writes = [];
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
@@ -255,8 +449,13 @@ public sealed class ConversationFilesTests
                     var write = Assert.IsType<SessionFileWrite>(args![0]);
                     Assert.Equal(Epoch, args[1]);
                     Writes.Add(write);
+                    if (PendingWrite is not null) return PendingWrite;
                     Snapshot = ConversationFilesTests.Snapshot(write.Content, HashB, write.ExpectedSource);
                     return Task.FromResult(Snapshot);
+                case "GetSessionFileDownloadAsync":
+                    return Task.FromResult(new SessionFileDownload("file.bin", "application/octet-stream",
+                        "/api/artifacts/download/test/grant", DateTimeOffset.MaxValue));
+                case "DownloadSessionFileAsync": return PendingDownload ?? Task.CompletedTask;
                 default: throw new NotSupportedException(targetMethod?.Name);
             }
         }

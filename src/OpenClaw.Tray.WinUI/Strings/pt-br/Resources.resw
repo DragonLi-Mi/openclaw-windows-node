@@ -8153,6 +8153,7 @@ Após a inscrição, volte para Configurações &gt; Windows Update e verifique 
   <data name="Chat_Files_RemoteRoot" xml:space="preserve"><value>Arquivos da conversa resolvidos pelo Gateway. Nenhuma raiz local é presumida.</value></data>
   <data name="Chat_Files_Truncated" xml:space="preserve"><value>Este resultado foi truncado. Refine a pesquisa ou baixe o arquivo original.</value></data>
   <data name="Chat_Files_ChooseFile" xml:space="preserve"><value>Escolha um arquivo para visualizar.</value></data>
+  <data name="Chat_Files_Empty" xml:space="preserve"><value>Nenhum arquivo da conversa neste resultado.</value></data>
   <data name="Chat_Files_Edit" xml:space="preserve"><value>Editar</value></data>
   <data name="Chat_Files_Save" xml:space="preserve"><value>Salvar</value></data>
   <data name="Chat_Files_Discard" xml:space="preserve"><value>Descartar edições</value></data>
@@ -8163,7 +8164,7 @@ Após a inscrição, volte para Configurações &gt; Windows Update e verifique 
   <data name="Chat_Files_Conflict" xml:space="preserve"><value>O arquivo foi alterado. Seu rascunho foi mantido. Revise o texto atual do servidor abaixo antes de recarregar ou sobrescrever.</value></data>
   <data name="Chat_Files_Reload" xml:space="preserve"><value>Recarregar versão do servidor</value></data>
   <data name="Chat_Files_Overwrite" xml:space="preserve"><value>Sobrescrever versão revisada</value></data>
-  <data name="Chat_Files_Counts" xml:space="preserve"><value>+{0} / -{1}</value></data>
+  <data name="Chat_Files_Counts" xml:space="preserve"><value>{0} adições, {1} exclusões</value></data>
   <data name="Chat_Files_Binary" xml:space="preserve"><value>Arquivo binário. Nenhum patch de texto está disponível.</value></data>
   <data name="Chat_Files_UnavailablePatch" xml:space="preserve"><value>Nenhum patch foi fornecido para este arquivo.</value></data>
   <data name="Chat_Files_Patch" xml:space="preserve"><value>Patch unificado</value></data>
@@ -8187,7 +8188,8 @@ Após a inscrição, volte para Configurações &gt; Windows Update e verifique 
   <data name="Chat_Files_DraftLimit" xml:space="preserve"><value>O limite de rascunhos na memória foi atingido. Salve ou descarte outro rascunho antes de editar.</value></data>
   <data name="Chat_Files_Restored" xml:space="preserve"><value>Rascunho não salvo restaurado. A fonte original do arquivo foi revalidada.</value></data>
   <data name="Chat_Files_Saved" xml:space="preserve"><value>Salvo pelo Gateway.</value></data>
-  <data name="Chat_Files_DownloadFailed" xml:space="preserve"><value>Falha no download ou conexão alterada. Nenhum arquivo foi confirmado. Tente novamente para obter uma nova autorização.</value></data>
+  <data name="Chat_Files_PendingEdits" xml:space="preserve"><value>O último salvamento foi confirmado. As edições mais recentes ainda não foram salvas.</value></data>
+  <data name="Chat_Files_DownloadFailed" xml:space="preserve"><value>O download não terminou ou a conexão mudou. Verifique o destino antes de tentar novamente com uma nova autorização.</value></data>
   <data name="Chat_Files_Downloaded" xml:space="preserve"><value>Arquivo original baixado.</value></data>
   <data name="Chat_Files_Uncertain" xml:space="preserve"><value>A operação foi interrompida ou expirou. Seu rascunho foi mantido. Revalide antes de tentar novamente.</value></data>
 </root>

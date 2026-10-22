@@ -8101,6 +8101,7 @@ Après votre inscription, revenez dans Paramètres &gt; Windows Update et recher
   <data name="Chat_Files_RemoteRoot" xml:space="preserve"><value>Fichiers de la conversation résolus par le Gateway. Aucun dossier local n&apos;est supposé.</value></data>
   <data name="Chat_Files_Truncated" xml:space="preserve"><value>Ce résultat est tronqué. Affinez la recherche ou téléchargez le fichier original.</value></data>
   <data name="Chat_Files_ChooseFile" xml:space="preserve"><value>Choisissez un fichier à afficher.</value></data>
+  <data name="Chat_Files_Empty" xml:space="preserve"><value>Aucun fichier de conversation dans ce résultat.</value></data>
   <data name="Chat_Files_Edit" xml:space="preserve"><value>Modifier</value></data>
   <data name="Chat_Files_Save" xml:space="preserve"><value>Enregistrer</value></data>
   <data name="Chat_Files_Discard" xml:space="preserve"><value>Abandonner les modifications</value></data>
@@ -8111,7 +8112,7 @@ Après votre inscription, revenez dans Paramètres &gt; Windows Update et recher
   <data name="Chat_Files_Conflict" xml:space="preserve"><value>Le fichier a changé. Votre brouillon est conservé. Examinez le texte actuel du serveur ci-dessous avant de recharger ou d&apos;écraser.</value></data>
   <data name="Chat_Files_Reload" xml:space="preserve"><value>Recharger la version du serveur</value></data>
   <data name="Chat_Files_Overwrite" xml:space="preserve"><value>Écraser la version examinée</value></data>
-  <data name="Chat_Files_Counts" xml:space="preserve"><value>+{0} / -{1}</value></data>
+  <data name="Chat_Files_Counts" xml:space="preserve"><value>{0} ajouts, {1} suppressions</value></data>
   <data name="Chat_Files_Binary" xml:space="preserve"><value>Fichier binaire. Aucun correctif texte n&apos;est disponible.</value></data>
   <data name="Chat_Files_UnavailablePatch" xml:space="preserve"><value>Aucun correctif n&apos;a été fourni pour ce fichier.</value></data>
   <data name="Chat_Files_Patch" xml:space="preserve"><value>Correctif unifié</value></data>
@@ -8135,7 +8136,8 @@ Après votre inscription, revenez dans Paramètres &gt; Windows Update et recher
   <data name="Chat_Files_DraftLimit" xml:space="preserve"><value>La limite des brouillons en mémoire est atteinte. Enregistrez ou abandonnez un autre brouillon avant de modifier.</value></data>
   <data name="Chat_Files_Restored" xml:space="preserve"><value>Brouillon non enregistré restauré. La source originale du fichier a été revérifiée.</value></data>
   <data name="Chat_Files_Saved" xml:space="preserve"><value>Enregistré par le Gateway.</value></data>
-  <data name="Chat_Files_DownloadFailed" xml:space="preserve"><value>Échec du téléchargement ou connexion modifiée. Aucun fichier n&apos;a été validé. Réessayez pour obtenir une nouvelle autorisation.</value></data>
+  <data name="Chat_Files_PendingEdits" xml:space="preserve"><value>Le dernier enregistrement est confirmé. Les modifications plus récentes ne sont pas encore enregistrées.</value></data>
+  <data name="Chat_Files_DownloadFailed" xml:space="preserve"><value>Le téléchargement n&apos;est pas terminé ou la connexion a changé. Vérifiez la destination avant de réessayer avec une nouvelle autorisation.</value></data>
   <data name="Chat_Files_Downloaded" xml:space="preserve"><value>Fichier original téléchargé.</value></data>
   <data name="Chat_Files_Uncertain" xml:space="preserve"><value>L&apos;opération a été interrompue ou a expiré. Votre brouillon est conservé. Revérifiez avant de réessayer.</value></data>
 </root>

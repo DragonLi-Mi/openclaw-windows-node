@@ -41,7 +41,7 @@ public static class SessionFileLimits
     public const int PreviewBytes = 1024 * 1024;
     public const int NativeEditorCharacters = PreviewBytes / 2 - 1;
     public const int RetainedDraftCount = 32;
-    public const int RetainedDraftCharacters = RetainedDraftCount * PreviewBytes * 2;
+    public const int RetainedDraftCharacters = RetainedDraftCount * PreviewBytes * 3;
     public const int RequestTimeoutMilliseconds = 30000;
 
     public static bool IsContentHash(string? value) =>

@@ -8101,6 +8101,7 @@
   <data name="Chat_Files_RemoteRoot" xml:space="preserve"><value>由 Gateway 解析的对话文件。不会假定本地根目录。</value></data>
   <data name="Chat_Files_Truncated" xml:space="preserve"><value>结果已截断。请缩小搜索范围或下载原始文件。</value></data>
   <data name="Chat_Files_ChooseFile" xml:space="preserve"><value>选择要预览的文件。</value></data>
+  <data name="Chat_Files_Empty" xml:space="preserve"><value>此结果中没有对话文件。</value></data>
   <data name="Chat_Files_Edit" xml:space="preserve"><value>编辑</value></data>
   <data name="Chat_Files_Save" xml:space="preserve"><value>保存</value></data>
   <data name="Chat_Files_Discard" xml:space="preserve"><value>放弃编辑</value></data>
@@ -8111,7 +8112,7 @@
   <data name="Chat_Files_Conflict" xml:space="preserve"><value>文件已更改。草稿已保留。请先查看下方服务器当前文本，再选择重新加载或覆盖。</value></data>
   <data name="Chat_Files_Reload" xml:space="preserve"><value>重新加载服务器版本</value></data>
   <data name="Chat_Files_Overwrite" xml:space="preserve"><value>覆盖已查看的版本</value></data>
-  <data name="Chat_Files_Counts" xml:space="preserve"><value>+{0} / -{1}</value></data>
+  <data name="Chat_Files_Counts" xml:space="preserve"><value>新增 {0}，删除 {1}</value></data>
   <data name="Chat_Files_Binary" xml:space="preserve"><value>二进制文件。没有可用的文本补丁。</value></data>
   <data name="Chat_Files_UnavailablePatch" xml:space="preserve"><value>未提供此文件的补丁。</value></data>
   <data name="Chat_Files_Patch" xml:space="preserve"><value>统一补丁</value></data>
@@ -8135,7 +8136,8 @@
   <data name="Chat_Files_DraftLimit" xml:space="preserve"><value>已达到内存草稿限制。请先保存或放弃其他草稿，再进行编辑。</value></data>
   <data name="Chat_Files_Restored" xml:space="preserve"><value>已恢复未保存的草稿。原始文件来源已重新验证。</value></data>
   <data name="Chat_Files_Saved" xml:space="preserve"><value>Gateway 已保存。</value></data>
-  <data name="Chat_Files_DownloadFailed" xml:space="preserve"><value>下载失败或连接已更改。未提交任何文件。请重试以获取新的授权。</value></data>
+  <data name="Chat_Files_PendingEdits" xml:space="preserve"><value>上次保存已确认。较新的编辑仍未保存。</value></data>
+  <data name="Chat_Files_DownloadFailed" xml:space="preserve"><value>下载未完成或连接已更改。请先检查目标文件，再使用新的授权重试。</value></data>
   <data name="Chat_Files_Downloaded" xml:space="preserve"><value>已下载原始文件。</value></data>
   <data name="Chat_Files_Uncertain" xml:space="preserve"><value>操作已中断或超时。草稿已保留。请重新验证后再重试。</value></data>
 </root>

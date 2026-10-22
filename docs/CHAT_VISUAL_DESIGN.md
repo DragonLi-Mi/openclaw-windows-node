@@ -142,8 +142,8 @@ Edit requires current admin authority, advertised `sessions.files.set`, a
 and at most 524287 native editor characters. Sources without a write
 precondition remain read-only rather than risking an unsafe retarget. Preview
 text and image bytes are bounded to 1 MiB. Window retention is limited to
-32 buffers and 67,108,864 UTF-16 code units across original and edited text
-(128 MiB of text data, excluding object overhead).
+32 buffers and 100,663,296 UTF-16 code units across original, edited and
+uncertain-save text (192 MiB of text data, excluding object overhead).
 These native limits are not claims about the Gateway's own limits.
 WinUI CR normalization stays inside the editor: saves restore the original
 LF/CRLF/CR convention, BOM and final-newline choice.
@@ -155,11 +155,19 @@ draft. Reload is an explicit discard to the same source. Overwrite is explicit
 and can only CAS the reviewed fresh hash; another race returns to conflict.
 Closing or disconnecting does not discard drafts. Reopening revalidates source
 and hash before showing restored edits or admitting writes.
+An interrupted save retains its exact attempted text separately from newer
+local edits. A fresh read can reconcile it only on the same request and source
+when content matches that attempted text exactly. Differing content becomes a
+conflict without automatic resend; a failed or superseded read leaves the
+outcome uncertain. Busy ownership is revision-scoped and released even when a
+run, selected file or transport changes.
 The native textbox is retained across updates; model echoes do not rewrite
 its text, caret or composition. Ctrl+S applies only to the focused editor.
 
 Download requests a connection-bound original-byte grant, then opens a
-window-owned native save picker with a sanitized leaf suggestion. It writes
+window-owned native save picker with a sanitized leaf suggestion and a concrete
+extension (`.bin` for extensionless suggestions), not an unsupported wildcard
+filter. It writes
 through a storage transaction and commits only after a successful current
 download. It never opens server paths, launches the downloaded file, or
 substitutes preview text for original bytes.

@@ -8168,6 +8168,7 @@ After enrolling, return to Settings &gt; Windows Update and check for updates. I
   <data name="Chat_Files_RemoteRoot" xml:space="preserve"><value>Gateway-resolved conversation files. No local root is assumed.</value></data>
   <data name="Chat_Files_Truncated" xml:space="preserve"><value>This result is truncated. Narrow the search or download the original file.</value></data>
   <data name="Chat_Files_ChooseFile" xml:space="preserve"><value>Choose a file to preview.</value></data>
+  <data name="Chat_Files_Empty" xml:space="preserve"><value>No conversation files in this result.</value></data>
   <data name="Chat_Files_Edit" xml:space="preserve"><value>Edit</value></data>
   <data name="Chat_Files_Save" xml:space="preserve"><value>Save</value></data>
   <data name="Chat_Files_Discard" xml:space="preserve"><value>Discard edits</value></data>
@@ -8178,7 +8179,7 @@ After enrolling, return to Settings &gt; Windows Update and check for updates. I
   <data name="Chat_Files_Conflict" xml:space="preserve"><value>The file changed. Your draft is retained. Review the current server text below before choosing Reload or Overwrite.</value></data>
   <data name="Chat_Files_Reload" xml:space="preserve"><value>Reload server version</value></data>
   <data name="Chat_Files_Overwrite" xml:space="preserve"><value>Overwrite reviewed version</value></data>
-  <data name="Chat_Files_Counts" xml:space="preserve"><value>+{0} / -{1}</value></data>
+  <data name="Chat_Files_Counts" xml:space="preserve"><value>{0} additions, {1} deletions</value></data>
   <data name="Chat_Files_Binary" xml:space="preserve"><value>Binary file. No text patch is available.</value></data>
   <data name="Chat_Files_UnavailablePatch" xml:space="preserve"><value>No patch was supplied for this file.</value></data>
   <data name="Chat_Files_Patch" xml:space="preserve"><value>Unified patch</value></data>
@@ -8202,7 +8203,8 @@ After enrolling, return to Settings &gt; Windows Update and check for updates. I
   <data name="Chat_Files_DraftLimit" xml:space="preserve"><value>The in-memory draft limit is reached. Save or discard another draft before editing.</value></data>
   <data name="Chat_Files_Restored" xml:space="preserve"><value>Restored unsaved draft. The original file source has been revalidated.</value></data>
   <data name="Chat_Files_Saved" xml:space="preserve"><value>Saved by the Gateway.</value></data>
-  <data name="Chat_Files_DownloadFailed" xml:space="preserve"><value>Download failed or the connection changed. No file was committed. Retry to obtain a new grant.</value></data>
+  <data name="Chat_Files_PendingEdits" xml:space="preserve"><value>The last save is confirmed. Newer edits are still unsaved.</value></data>
+  <data name="Chat_Files_DownloadFailed" xml:space="preserve"><value>The download did not finish or the connection changed. Check your destination before retrying with a new grant.</value></data>
   <data name="Chat_Files_Downloaded" xml:space="preserve"><value>Original file downloaded.</value></data>
   <data name="Chat_Files_Uncertain" xml:space="preserve"><value>The operation was interrupted or timed out. Your draft is retained. Revalidate before retrying.</value></data>
 </root>
