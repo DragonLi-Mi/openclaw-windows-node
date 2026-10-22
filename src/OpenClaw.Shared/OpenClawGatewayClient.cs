@@ -236,6 +236,7 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
         Volatile.Write(ref _handshakeConnectionGeneration, 0);
         Volatile.Write(ref _hasHandshakeSnapshot, false);
         Volatile.Write(ref _advertisedServerMethods, Array.Empty<string>());
+        Volatile.Write(ref _hasServerMethodAdvertisement, false);
         Volatile.Write(ref _advertisedServerCapabilities, Array.Empty<string>());
         Interlocked.Increment(ref _serverHandshakeGeneration);
         _pendingRequests.Drain(
@@ -356,6 +357,9 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
     public long? SessionMutationConnectionEpoch =>
         TryGetReadyConnectionGeneration(out var generation) ? generation : null;
     private string[] _advertisedServerMethods = [];
+    private bool _hasServerMethodAdvertisement;
+    public bool HasServerMethodAdvertisement => IsConnectedToGateway &&
+        Volatile.Read(ref _hasServerMethodAdvertisement);
     private string[] _advertisedServerCapabilities = [];
     private long _serverHandshakeGeneration;
     public IReadOnlyList<string> AdvertisedServerMethods => Array.AsReadOnly(Volatile.Read(ref _advertisedServerMethods));
@@ -2488,7 +2492,7 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
                     okWiz.ValueKind == JsonValueKind.False)
                 {
                     var message = TryGetErrorMessage(root) ?? "wizard request failed";
-                    wizardCompletion.TryFault(new InvalidOperationException(message));
+                    wizardCompletion.TryFault(GatewayRequestException.FromResponse(root, message));
                 }
                 else if (root.TryGetProperty("payload", out var wizPayload))
                 {
@@ -2592,6 +2596,7 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
             _operatorDeviceId = TryGetHandshakeDeviceId(payload);
             _grantedOperatorScopes = TryGetHandshakeScopes(payload);
             Volatile.Write(ref _advertisedServerMethods, GatewayServerMethodAdvertisement.Parse(payload));
+            Volatile.Write(ref _hasServerMethodAdvertisement, GatewayServerMethodAdvertisement.HasMethods(payload));
             Volatile.Write(
                 ref _advertisedServerCapabilities,
                 GatewayServerMethodAdvertisement.ParseCapabilities(payload));
