@@ -1151,12 +1151,14 @@ try {
 param([string]$Runner, [string]$Root, [int]$Timeout, [int]$TestExit, [string]$Name, [switch]$Override)
 $ErrorActionPreference = 'Stop'
 Set-Location $Root
+function global:dotnet { throw 'E2E bypassed the controlled process helper.' }
 function Invoke-FakeCiProcess {
     param($FilePath, $ArgumentList, $IdleTimeoutSeconds, $OutputPath)
     Set-Content -LiteralPath 'dotnet-called.txt' -Value 'called'
     $values = @($ArgumentList)
+    $directory = $values[[Array]::IndexOf($values, '--results-directory') + 1]
     if ($FilePath -cne 'dotnet' -or $IdleTimeoutSeconds -ne $Timeout -or
-        $OutputPath -notlike '*.console.log') {
+        $OutputPath -cne (Join-Path $directory "OpenClaw.E2ETests.$Name.console.log")) {
         throw 'E2E invocation lost its idle deadline or retained console evidence.'
     }
     if ('--blame' -notin $values -or '--blame-hang' -in $values -or '--blame-crash' -in $values) {
@@ -1181,6 +1183,7 @@ function Invoke-FakeCiProcess {
     $global:LASTEXITCODE = $TestExit
 }
 Copy-Item -LiteralPath $Runner -Destination (Join-Path $Root 'Invoke-CiE2e.ps1')
+Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $Runner) 'TestResultContract.ps1') -Destination $Root
 [IO.File]::WriteAllText((Join-Path $Root 'Invoke-CiProcess.ps1'), ${function:Invoke-FakeCiProcess}.ToString())
 $parameters = @{ Name = $Name; Filter = 'Sentinel.Filter' }
 if ($Override) { $parameters.HangTimeoutSeconds = $Timeout }

@@ -557,7 +557,7 @@ try {
         $checks++
         $runnerInvocations++
     }
-    # The real E2E entry point runs in a child shell with only dotnet replaced.
+    # Copy the real runner and validator beside a controlled process helper.
     # Fixed sibling artifacts model earlier attempts and workflow provenance.
     $e2eHarness = Join-Path $root 'e2e-runner-harness.ps1'
     Set-Content -LiteralPath $e2eHarness @'
@@ -605,17 +605,22 @@ $oldReport = Join-Path $artifactRoot "OpenClaw.E2ETests.$Name.trx"
 $baseline = Join-Path $artifactRoot 'gateway-release.json'
 Set-Content -LiteralPath $baseline '{"version":"2026.9.9"}'
 $state = @{ calls = 0; directories = [Collections.Generic.List[string]]::new() }
-function global:dotnet {
+function global:dotnet { throw 'E2E bypassed the controlled process helper.' }
+function Invoke-FakeCiProcess {
+    param([string]$FilePath, [string[]]$ArgumentList, [int]$IdleTimeoutSeconds, [string]$OutputPath)
     $state.calls++
-    $values = @($args)
+    $values = @($ArgumentList)
     $directory = $values[[Array]::IndexOf($values, '--results-directory') + 1]
     $expected = @('test', 'tests/OpenClaw.E2ETests', '--no-build', '-c', 'Debug', '-r', 'win-x64',
         '--verbosity', 'normal', '--results-directory', $directory,
         '--logger', "trx;LogFileName=OpenClaw.E2ETests.$Name.trx", '--logger', 'console;verbosity=detailed',
-        '--blame-hang', '--blame-hang-timeout', '600s', '--blame-hang-dump-type', 'none',
-        '--filter', $filter)
+        '--blame', '--filter', $filter)
     if (($values | ConvertTo-Json -Compress) -cne ($expected | ConvertTo-Json -Compress)) {
         throw 'E2E project/filter/build/logger arguments changed.'
+    }
+    if ($FilePath -cne 'dotnet' -or $IdleTimeoutSeconds -ne 600 -or
+        $OutputPath -cne (Join-Path $directory "OpenClaw.E2ETests.$Name.console.log")) {
+        throw 'E2E process owner, idle deadline or invocation console path changed.'
     }
     foreach ($entry in $environment.GetEnumerator()) {
         if ([Environment]::GetEnvironmentVariable($entry.Key) -cne $entry.Value) { throw "E2E changed inherited environment: $($entry.Key)" }
@@ -626,6 +631,7 @@ function global:dotnet {
         $directory -in $state.directories) { throw 'E2E invocation directory is not fresh, unique, and under the uploaded artifact root.' }
     $state.directories.Add($directory)
     Write-Host "E2E controlled launch: $($state.calls)"
+    Set-Content -LiteralPath $OutputPath -Value "E2E controlled output: $Name/$($state.calls)"
     $global:LASTEXITCODE = if ($Case -eq 'nonzero') { 9 } else { 0 }
     $report = Join-Path $directory "OpenClaw.E2ETests.$Name.trx"
     if ($Case -in @('missing', 'nonzero')) { return }
@@ -683,6 +689,12 @@ function global:dotnet {
     $trx.Save($report)
     if ($Case -eq 'stale-file') { (Get-Item $report).LastWriteTimeUtc = [DateTime]::UtcNow.AddDays(-1) }
 }
+$runnerDirectory = Join-Path $Results 'runner'
+New-Item -ItemType Directory -Path $runnerDirectory | Out-Null
+foreach ($file in @('Invoke-CiE2e.ps1', 'TestResultContract.ps1')) {
+    Copy-Item -LiteralPath (Join-Path $Repo "scripts\$file") -Destination $runnerDirectory
+}
+[IO.File]::WriteAllText((Join-Path $runnerDirectory 'Invoke-CiProcess.ps1'), ${function:Invoke-FakeCiProcess}.ToString())
 '@
     Add-Content -LiteralPath $e2eHarness ("function Write-Trx {`n" + $writer + "`n}")
     Add-Content -LiteralPath $e2eHarness @'
@@ -691,7 +703,7 @@ $oldHash = (Get-FileHash $oldReport).Hash
 try {
     $iterations = if ($Case -eq 'passed') { 2 } else { 1 }
     for ($iteration = 0; $iteration -lt $iterations; $iteration++) {
-        & (Join-Path $Repo 'scripts\Invoke-CiE2e.ps1') -Name $Name -Filter $filter
+        & (Join-Path $runnerDirectory 'Invoke-CiE2e.ps1') -Name $Name -Filter $filter
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     }
 } finally {
@@ -736,6 +748,11 @@ try {
                         $diagnostics[$index].Index -gt $text.IndexOf("E2E controlled launch: $($index + 1)", [StringComparison]::Ordinal) -or
                         ($case -notin @('missing', 'nonzero') -and -not (Test-Path -LiteralPath $path -PathType Leaf))) {
                         throw "E2E diagnostic does not name the actual invocation report before execution: $text"
+                    }
+                    $consolePath = Join-Path (Split-Path -Parent $path) "OpenClaw.E2ETests.$name.console.log"
+                    if (-not (Test-Path -LiteralPath $consolePath -PathType Leaf) -or
+                        (Get-Content -LiteralPath $consolePath -Raw).Trim() -cne "E2E controlled output: $name/$($index + 1)") {
+                        throw "E2E console evidence did not stay with its invocation report: $text"
                     }
                 }
                 $rejection = switch ($case) {
