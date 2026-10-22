@@ -467,12 +467,12 @@ try {
 }
 '@
     foreach ($configuration in @('Debug', 'Release')) {
-        $failureIndices = if ($configuration -eq 'Release') { @(2) } else { @(1, 2) }
         $fixtureCases = if ($configuration -eq 'Release') { @('passed') } else {
             @('stale', 'passed', 'missing', 'malformed', 'zero', 'all-skipped', 'mixed', 'nonzero', 'stale-file', 'inconsistent', 'duplicate', 'failed', 'timeout')
         }
-        foreach ($failureIndex in $failureIndices) {
-            foreach ($case in $fixtureCases) {
+        foreach ($case in $fixtureCases) {
+            $failureIndices = if ($case -eq 'passed') { @(1) } else { @(1, 2) }
+            foreach ($failureIndex in $failureIndices) {
                 $fixtureResults = Join-Path $root ([guid]::NewGuid().ToString('N'))
                 $savedPreference = $ErrorActionPreference
                 try {
