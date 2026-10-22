@@ -119,6 +119,10 @@ public sealed class ChatTimelinePresentationTests
         Assert.DoesNotContain("StartTailRequest", completion);
         Assert.DoesNotContain("StartBringItemIntoView", completion);
         Assert.DoesNotContain("TryPositionInitialTail", completion);
+        var extentStart = binding.IndexOf("private void OnExtentChanged(", StringComparison.Ordinal);
+        var traceHandlers = binding[extentStart..traceStart];
+        Assert.DoesNotMatch(@"\b(?:Start\w*|ChangeView|ScrollTo|TryPosition\w*)\s*\(", traceHandlers);
+        Assert.DoesNotMatch(@"args\.Cancel\s*=", traceHandlers);
         Assert.DoesNotContain("DispatcherTimer", binding);
         Assert.DoesNotContain("TextLength != current.TextLength", binding);
         Assert.DoesNotContain("ReactorStreamingTailState", binding);

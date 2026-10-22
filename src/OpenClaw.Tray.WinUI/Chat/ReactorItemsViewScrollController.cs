@@ -251,21 +251,22 @@ internal sealed class InitialTailPositioner : IDisposable
     private void OnBringingIntoView(
         WinUIScrollView sender, Microsoft.UI.Xaml.Controls.ScrollingBringingIntoViewEventArgs args) =>
         Logger.Trace($"[ChatScroll] Bring correlation={args.CorrelationId}, target={args.TargetVerticalOffset}, cancel={args.Cancel}, " +
-            $"offset={sender.VerticalOffset}, extent={sender.ExtentHeight}, viewport={sender.ViewportHeight}.");
+            $"offset={sender.VerticalOffset}, extent={sender.ExtentHeight}, viewport={sender.ViewportHeight}, state={sender.State}.");
 
     private void OnScrollCompleted(
         WinUIScrollView sender, Microsoft.UI.Xaml.Controls.ScrollingScrollCompletedEventArgs args) =>
         Logger.Trace($"[ChatScroll] Completed correlation={args.CorrelationId}, offset={sender.VerticalOffset}, " +
-            $"extent={sender.ExtentHeight}, viewport={sender.ViewportHeight}.");
+            $"extent={sender.ExtentHeight}, viewport={sender.ViewportHeight}, state={sender.State}.");
 
     private void TraceState(string stage)
     {
         var scroll = itemsView.ScrollView;
         var sourceCount = itemsView.ItemsSource is System.Collections.ICollection collection ? collection.Count : -1;
         Logger.Trace($"[ChatScroll] {stage}: version={_version}, queued={_initialDispatchVersion}, pending={_initialTailPending}, " +
+            $"following={_following}, disposed={_disposed}, " +
             $"index={_tailIndex}, count={_itemCount}, nativeSourceCount={sourceCount}, loaded={itemsView.IsLoaded}, " +
             $"scrollLoaded={scroll?.IsLoaded}, offset={scroll?.VerticalOffset}, extent={scroll?.ExtentHeight}, " +
-            $"viewport={scroll?.ViewportHeight}, width={scroll?.ViewportWidth}.");
+            $"viewport={scroll?.ViewportHeight}, width={scroll?.ViewportWidth}, state={scroll?.State}.");
     }
 
     private void QueueTailRequest(int version, TailNavigationRequest request)

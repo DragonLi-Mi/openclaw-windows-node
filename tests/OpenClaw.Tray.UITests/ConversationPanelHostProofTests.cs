@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using Microsoft.UI.Reactor.Hosting;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
@@ -23,6 +24,9 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
 {
     private static readonly TimeSpan NativeReadinessTimeout = TimeSpan.FromSeconds(10);
     private Window? _proofWindow;
+    private uint? _inputTick;
+
+    private static bool OnScreen => Environment.GetEnvironmentVariable("OPENCLAW_UITEST_ONSCREEN") == "1";
 
     [Theory]
     [InlineData(960)]
@@ -137,7 +141,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 surface = new Border { Width = 480, Height = 600, Child = timeline };
                 window = new Window { Content = surface };
                 _proofWindow = window;
-                window.AppWindow.MoveAndResize(new(-32000, -32000, 800, 900));
+                PlaceOwnedWindow(window, 800, 900);
                 window.Activate();
                 RecordOwnedWindow(window);
             });
@@ -173,6 +177,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 window?.Close();
                 _proofWindow = null;
             });
+            VerifyNoInputCollision();
         }
     }
 
@@ -333,7 +338,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 surface = new Border { Width = width, Height = 720, Child = host, RequestedTheme = theme.ElementTheme };
                 window = new Window { Content = surface };
                 _proofWindow = window;
-                window.AppWindow.MoveAndResize(new(-32000, -32000, 1200, 900));
+                PlaceOwnedWindow(window, 1200, 900);
                 window.Activate();
                 RecordOwnedWindow(window);
             });
@@ -373,8 +378,59 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 theme?.Dispose();
             });
             await provider.DisposeAsync();
+            VerifyNoInputCollision();
         }
     }
+
+    private void PlaceOwnedWindow(Window window, int width, int height)
+    {
+        _inputTick = ReadInputTick();
+        if (OnScreen)
+        {
+            var area = Microsoft.UI.Windowing.DisplayArea.Primary.WorkArea;
+            Assert.True(width + 32 <= area.Width && height + 64 <= area.Height,
+                "The owned proof window must fit the primary monitor work area without changing scale.");
+            window.AppWindow.MoveAndResize(new(area.X + 16, area.Y + 16, width, height));
+        }
+        else
+        {
+            window.AppWindow.MoveAndResize(new(-32000, -32000, width, height));
+        }
+    }
+
+    private void VerifyNoInputCollision()
+    {
+        if (_inputTick is not { } before) return;
+        _inputTick = null;
+        var after = ReadInputTick();
+        Console.WriteLine($"Owned native input audit: before={before},after={after},onScreen={OnScreen}");
+        Assert.Equal(before, after);
+    }
+
+    private static uint ReadInputTick()
+    {
+        var input = new LastInputInfo { Size = (uint)Marshal.SizeOf<LastInputInfo>() };
+        if (!GetLastInputInfo(ref input))
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+        return input.Tick;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LastInputInfo
+    {
+        internal uint Size;
+        internal uint Tick;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetLastInputInfo(ref LastInputInfo input);
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(nint window);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
 
     private static void RecordOwnedWindow(Window window)
     {
@@ -383,6 +439,16 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
         Directory.CreateDirectory(directory);
         using var process = System.Diagnostics.Process.GetCurrentProcess();
         var handle = WinRT.Interop.WindowNative.GetWindowHandle(window);
+        var area = Microsoft.UI.Windowing.DisplayArea.Primary.WorkArea;
+        var position = window.AppWindow.Position;
+        var size = window.AppWindow.Size;
+        if (OnScreen)
+        {
+            Assert.True(position.X >= area.X && position.Y >= area.Y &&
+                position.X + size.Width <= area.X + area.Width &&
+                position.Y + size.Height <= area.Y + area.Height,
+                "The complete owned window must remain inside the primary monitor work area.");
+        }
         var metadata = new
         {
             RunId = Path.GetFileName(directory),
@@ -391,6 +457,13 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
             Executable = Environment.ProcessPath,
             CommandLine = Environment.CommandLine,
             Window = handle.ToInt64(),
+            OnScreen,
+            Position = new { position.X, position.Y },
+            OuterSize = new { size.Width, size.Height },
+            Monitor = "Primary",
+            MonitorWorkArea = new { area.X, area.Y, area.Width, area.Height },
+            WindowDpi = GetDpiForWindow(handle),
+            ForegroundWindow = GetForegroundWindow().ToInt64(),
             ClientWidth = window.AppWindow.ClientSize.Width,
             ClientHeight = window.AppWindow.ClientSize.Height,
             Port = (int?)null,
