@@ -8156,4 +8156,5 @@ After enrolling, return to Settings &gt; Windows Update and check for updates. I
   <data name="Chat_Panel_WidthFormat" xml:space="preserve"><value>{0} pixels wide</value></data>
   <data name="Chat_Panel_Waiting" xml:space="preserve"><value>Waiting for this conversation to connect. Your panel selection is retained.</value></data>
   <data name="Chat_Panel_Unavailable" xml:space="preserve"><value>This content is no longer available in this conversation.</value></data>
+  <data name="Chat_Panel_ToolUnavailable" xml:space="preserve"><value>These details are no longer current. Reopen details from the current tool.</value></data>
 </root>

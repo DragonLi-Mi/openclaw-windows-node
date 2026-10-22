@@ -8089,4 +8089,5 @@
   <data name="Chat_Panel_WidthFormat" xml:space="preserve"><value>宽度为 {0} 像素</value></data>
   <data name="Chat_Panel_Waiting" xml:space="preserve"><value>正在等待此对话连接。已保留您的面板选择。</value></data>
   <data name="Chat_Panel_Unavailable" xml:space="preserve"><value>此内容在当前对话中已不可用。</value></data>
+  <data name="Chat_Panel_ToolUnavailable" xml:space="preserve"><value>这些详细信息已不是最新状态。请从当前工具重新打开详细信息。</value></data>
 </root>

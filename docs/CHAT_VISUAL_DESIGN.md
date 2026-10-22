@@ -96,6 +96,15 @@ grip supports pointer drag, Left/Right and Home/End. Panel transitions add no
 custom animation. Content owners supply their own scrolling and loading/error
 states; the host shows a connection-wait message instead of stale content.
 
+Expanded native tool cards expose **Open details**. The conversation panel
+reuses the tool renderer's selectable literal input/output, including its
+existing size limits. It retains only the request identity, not a copy of tool
+content. Live output updates use the current snapshot. An authoritative history
+commit can reassign synthetic tool identities, so it leaves the panel open with
+explicit unavailable/reopen guidance. Reopening the current card establishes a
+new request. This conservative boundary does not claim continuity across history
+rebuilds or render arbitrary tool HTML.
+
 This foundation does not turn the agent Workspace page into conversation Files,
 resolve a filesystem root from chat labels, or reuse the global node Canvas.
 Files requires the selected session's Gateway-provided source and conflict-safe

@@ -8089,4 +8089,5 @@ Après votre inscription, revenez dans Paramètres &gt; Windows Update et recher
   <data name="Chat_Panel_WidthFormat" xml:space="preserve"><value>Largeur de {0} pixels</value></data>
   <data name="Chat_Panel_Waiting" xml:space="preserve"><value>En attente de connexion de cette conversation. Votre sélection de panneau est conservée.</value></data>
   <data name="Chat_Panel_Unavailable" xml:space="preserve"><value>Ce contenu n'est plus disponible dans cette conversation.</value></data>
+  <data name="Chat_Panel_ToolUnavailable" xml:space="preserve"><value>Ces détails ne sont plus à jour. Rouvrez les détails depuis l'outil actuel.</value></data>
 </root>
