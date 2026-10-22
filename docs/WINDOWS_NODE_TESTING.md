@@ -48,6 +48,14 @@ not evidence of a released native WinUI fix. Keep the existing row-targeted
 `StartBringItemIntoView` scrolling rather than the application-side extent-only
 workaround from #1407.
 
+Rechecked on 2026-10-22: `0.1.0-preview.16` remains the latest published version,
+including previews, in the authoritative NuGet feeds for
+[Microsoft.UI.Reactor](https://api.nuget.org/v3-flatcontainer/microsoft.ui.reactor/index.json)
+and [Microsoft.UI.Reactor.Advanced](https://api.nuget.org/v3-flatcontainer/microsoft.ui.reactor.advanced/index.json),
+and the [upstream releases](https://github.com/microsoft/microsoft-ui-reactor/releases).
+Keep both references aligned. The core package requires `System.Drawing.Common`
+`10.0.12` or newer; the tray's direct reference meets that floor.
+
 `ReactorChatTimeline.BuildSafeMarkdown` uses Reactor's default Auto-marker/
 Star-content Grid list layout from
 [microsoft/microsoft-ui-reactor#1197](https://github.com/microsoft/microsoft-ui-reactor/pull/1197)
@@ -63,6 +71,14 @@ Keep the existing table and disposal proof in the focused run.
 
 Before release, also exercise repeated session switching
 while a bring-into-view request is pending, using 240 mixed-height messages.
+`GatewayFixtureUiTests.RepeatedSessionSwitchingKeepsNativeTimelineResponsive`
+provides a separate, bounded 12-cycle A/B scrolling and session-switch smoke.
+It checks actual visible session-specific text, app responsiveness and absence
+of a crash log without depending on final-row placement. The existing strict
+message-240 test is unchanged: a passing responsiveness smoke does not excuse a
+failed tail assertion, guarantee an in-flight native bring request, or prove
+that the layout-cycle crash is fixed. The fixture uses a synthetic Gateway,
+not a real Gateway or a reporter's history.
 Verify that message 240 is actually visible, not just that the current scroll
 extent was reached. Verify streaming tail-follow and arrivals while scrolled
 up. Do not substitute extent-only scrolling: the alternative workaround
