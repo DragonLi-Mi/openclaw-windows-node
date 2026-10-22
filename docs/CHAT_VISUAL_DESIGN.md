@@ -76,6 +76,13 @@ use the card fill above that content layer.
 
 ## Controls and states
 
+Tool input/output captions use the native `CaptionTextBlockStyle` (12-pixel
+regular text instead of the former 11-pixel semibold helper) and a
+`TextFillColorSecondaryBrush` theme reference on the caption control. Inline
+disclosures and the tool-details panel share that renderer, so a containing
+surface's Light or Dark theme is honored without capturing the application's
+default-theme brush or remounting the caption.
+
 Queued submissions leave the textbox and remain after the current turn as normal
 right-aligned user bubbles. A transparent `ChatPendingUserBrush`, subtle `ChatStrokeBrush`
 outline, and slightly faded `ChatSecondaryTextBrush` distinguish them from sent messages without

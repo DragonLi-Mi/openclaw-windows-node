@@ -6,8 +6,11 @@ using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Documents;
+using Microsoft.UI.Xaml.Markup;
+using Microsoft.UI.Xaml.Media;
 using OpenClaw.Chat;
 using OpenClawTray.Chat;
+using OpenClawTray.Helpers;
 using static Microsoft.UI.Reactor.Factories;
 using static OpenClaw.Tray.UITests.TestSupport;
 
@@ -20,6 +23,103 @@ public sealed class ReactorToolActivityProofTests
     private readonly UIThreadFixture _ui;
 
     public ReactorToolActivityProofTests(UIThreadFixture ui) => _ui = ui;
+
+    [Fact]
+    public async Task DetailCaptions_FollowContainingThemeWithoutRemounting()
+    {
+        await _ui.ResetContainerAsync();
+        ReactorHostControl? host = null;
+        Grid? surface = null;
+        TextBlock? reference = null;
+        TextBlock? bodyReference = null;
+        var appTheme = ElementTheme.Default;
+        ChatThemeProofScope? themeScope = null;
+        try
+        {
+            await _ui.RunOnUIAsync(() =>
+            {
+                themeScope = new ChatThemeProofScope("Light");
+                reference = (TextBlock)XamlReader.Load(
+                    """<TextBlock xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Reference caption" />""");
+                bodyReference = (TextBlock)XamlReader.Load(
+                    """<TextBlock xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Foreground="{ThemeResource ChatTextBrush}" Text="Reference body" />""");
+                appTheme = Application.Current.RequestedTheme == ApplicationTheme.Dark
+                    ? ElementTheme.Dark : ElementTheme.Light;
+                surface = (Grid)XamlReader.Load(
+                    """<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Width="420" Height="180" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" />""");
+                host = new ReactorHostControl { Margin = new Thickness(16), VerticalAlignment = VerticalAlignment.Top };
+                var entry = Tool("theme-tool", "read_file", "Literal output", ChatToolCallStatus.Success) with
+                {
+                    ToolArgs = new() { ["path"] = "example.txt" },
+                };
+                host.Content = host.Reconciler.Mount(
+                    ToolCallCardRenderer.BuildPanelDetails(entry), static () => { });
+                surface.Children.Add(host);
+                reference.VerticalAlignment = VerticalAlignment.Bottom;
+                reference.Margin = new Thickness(16, 0, 16, 28);
+                surface.Children.Add(reference);
+                bodyReference.VerticalAlignment = VerticalAlignment.Bottom;
+                bodyReference.Margin = new Thickness(16, 0, 16, 8);
+                surface.Children.Add(bodyReference);
+                _ui.Container.Children.Add(surface);
+            });
+
+            TextBlock[]? originalCaptions = null;
+            var oppositeTheme = appTheme == ElementTheme.Dark ? ElementTheme.Light : ElementTheme.Dark;
+            var step = 0;
+            foreach (var theme in new[] { oppositeTheme, appTheme, oppositeTheme })
+            {
+                await _ui.RunOnUIAsync(() => surface!.RequestedTheme = theme);
+                await _ui.YieldToRenderAsync();
+                await _ui.YieldToRenderAsync();
+                await _ui.RunOnUIAsync(() =>
+                {
+                    var captions = FindLogical<TextBlock>(host!)
+                        .Where(text => text.Text is "Tool input" or "Tool output").ToArray();
+                    Assert.Equal(2, captions.Length);
+                    Assert.Equal(theme, reference!.ActualTheme);
+                    if (theme == oppositeTheme)
+                        Assert.NotEqual(appTheme, captions[0].ActualTheme);
+                    var expected = Assert.IsType<SolidColorBrush>(reference.Foreground);
+                    foreach (var caption in captions)
+                    {
+                        Assert.Equal(theme, caption.ActualTheme);
+                        var actual = Assert.IsType<SolidColorBrush>(caption.Foreground);
+                        Assert.Equal(expected.Color, actual.Color);
+                        Assert.Equal(expected.Opacity, actual.Opacity);
+                        Assert.Equal(reference.FontSize, caption.FontSize);
+                        Assert.Equal(reference.FontWeight, caption.FontWeight);
+                    }
+                    if (originalCaptions is not null)
+                    {
+                        Assert.Same(originalCaptions[0], captions[0]);
+                        Assert.Same(originalCaptions[1], captions[1]);
+                    }
+                    originalCaptions = captions;
+                    var body = Assert.Single(FindLogical<RichTextBlock>(host!),
+                        text => CollectText(text) == "Literal output");
+                    Assert.Equal(Assert.IsType<SolidColorBrush>(bodyReference!.Foreground).Color,
+                        Assert.IsType<SolidColorBrush>(body.Foreground).Color);
+                });
+                await _ui.RunOnUIAsync(() =>
+                    VisualTestCapture.CaptureAsync(surface!, $"ToolDetailCaption-{step++}-{theme}"));
+            }
+        }
+        finally
+        {
+            await _ui.RunOnUIAsync(() =>
+            {
+                if (surface is not null)
+                    _ui.Container.Children.Remove(surface);
+                if (host is not null)
+                {
+                    host.Content = null;
+                    host.Dispose();
+                }
+                themeScope?.Dispose();
+            });
+        }
+    }
 
     [Fact]
     public async Task OpenDetails_PassesExactIdentityAndPanelReusesLiteralSections()

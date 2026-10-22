@@ -159,7 +159,10 @@ internal static class ToolCallCardRenderer
 
         return VStack(
             4,
-            Text(label, 11, FontWeights.SemiBold, "TextFillColorSecondaryBrush"),
+            TextBlock(label)
+                .Set(text => text.Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"])
+                .TextWrapping(TextWrapping.Wrap)
+                .Foreground(Theme.Ref("TextFillColorSecondaryBrush")),
             ScrollViewer(body)
                 .Set(scrollViewer =>
                 {
@@ -334,17 +337,6 @@ internal static class ToolCallCardRenderer
 
     private static string SanitizeAutomationId(string value) =>
         new(value.Select(character => char.IsLetterOrDigit(character) ? character : '_').ToArray());
-
-    private static TextBlockElement Text(
-        string text,
-        double fontSize,
-        global::Windows.UI.Text.FontWeight weight,
-        string foregroundResource) =>
-        TextBlock(text)
-            .TextWrapping(TextWrapping.Wrap)
-            .FontSize(fontSize)
-            .FontWeight(weight)
-            .Foreground(BrushFor(foregroundResource, Microsoft.UI.Colors.Black));
 
     private static string LocalizedOrDefault(string key, string fallback)
     {
