@@ -9,7 +9,9 @@
 
 The native Windows companion for [OpenClaw](https://github.com/openclaw/openclaw). Connect your PC to a gateway, chat with your agents, and choose which Windows capabilities they can use.
 
-[Download](https://docs.openclaw.ai/platforms/windows) | [Setup guide](docs/SETUP.md) | [Windows docs](https://docs.openclaw.ai/platforms/windows) | [Discord](https://discord.gg/clawd)
+[Download](https://docs.openclaw.ai/platforms/windows) | [Setup guide](docs/SETUP.md) | [Windows docs](https://docs.openclaw.ai/platforms/windows) | [Support](https://community.openclaw.ai/) | [Discord](https://discord.gg/clawd)
+
+For official OpenClaw support with installation, setup, or usage, visit [community.openclaw.ai](https://community.openclaw.ai/). Use GitHub issues for reproducible bugs and private security reporting for vulnerabilities.
 
 ## Install
 
