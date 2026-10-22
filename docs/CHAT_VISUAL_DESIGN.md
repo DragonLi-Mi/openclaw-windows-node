@@ -86,8 +86,12 @@ Reactor's theme binding installs its own style, so typography stays in the
 element record rather than a separately assigned style that reconciliation
 could replace. Inline disclosures and the tool-details panel share this
 renderer; local theme changes and output updates retain the same captions.
-WinUI's `XamlBindingHelper.ConvertValue` resolves raw native setter values to
-the required types. The theme-independent typography snapshot is cached on the
+WinUI resolves the validated native style on one unattached, temporary
+TextBlock. Its effective typography is copied into the snapshot; the temporary
+control is never parented or retained. This avoids assumptions about raw
+setter boxing or scalar-converter support. The production lookup follows
+native application/framework resource resolution, including ambient defaults.
+The theme-independent typography snapshot is cached on the
 UI thread for each application resource-dictionary instance; replacing that
 dictionary invalidates it. Styles and typography keys are stable within that
 instance. Colors remain live element theme references, not cached values.

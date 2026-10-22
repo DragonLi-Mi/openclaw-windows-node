@@ -6,7 +6,6 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using OpenClaw.Chat;
 using OpenClawTray.Helpers;
@@ -149,7 +148,8 @@ internal static class ToolCallCardRenderer
 
     private static Element BuildDetailSection(string label, string content)
     {
-        var caption = s_captionTypography.GetValue(Application.Current.Resources, ReadCaptionTypography);
+        var caption = s_captionTypography.GetValue(Application.Current.Resources, static resources =>
+            ReadCaptionTypography(key => resources.TryGetValue(key, out var value) ? value : null));
 
         var body = RichTextBlock(content)
             .Set(text =>
@@ -186,44 +186,32 @@ internal static class ToolCallCardRenderer
                 .MaxHeight(240));
     }
 
-    internal static CaptionTypography ReadCaptionTypography(ResourceDictionary resources)
+    internal static CaptionTypography ReadCaptionTypography(Func<string, object?> lookup)
     {
-        if (!resources.TryGetValue("CaptionTextBlockStyle", out var value) || value is not Style style)
+        if (lookup("CaptionTextBlockStyle") is not Style style)
             throw new InvalidOperationException("The native CaptionTextBlockStyle resource is unavailable.");
-        if (!resources.TryGetValue("CaptionTextBlockFontSize", out var sizeValue) ||
-            sizeValue is not double size || !double.IsFinite(size) || size <= 0)
-        {
-            throw new InvalidOperationException("The native CaptionTextBlockFontSize resource is unavailable or invalid.");
-        }
+        RequireCaptionSetter(style, Microsoft.UI.Xaml.Controls.TextBlock.FontWeightProperty, "FontWeight");
+        RequireCaptionSetter(style, Microsoft.UI.Xaml.Controls.TextBlock.FontSizeProperty, "FontSize");
+        RequireCaptionSetter(style, Microsoft.UI.Xaml.Controls.TextBlock.FontFamilyProperty, "FontFamily");
+        RequireCaptionSetter(style, Microsoft.UI.Xaml.Controls.TextBlock.TextWrappingProperty, "TextWrapping");
+        RequireCaptionSetter(style, Microsoft.UI.Xaml.Controls.TextBlock.TextTrimmingProperty, "TextTrimming");
+        RequireCaptionSetter(style, Microsoft.UI.Xaml.Controls.TextBlock.LineStackingStrategyProperty, "LineStackingStrategy");
+        RequireCaptionSetter(style, Microsoft.UI.Xaml.Controls.TextBlock.TextLineBoundsProperty, "TextLineBounds");
 
+        var native = new Microsoft.UI.Xaml.Controls.TextBlock { Style = style };
         return new(
-            size,
-            CaptionStyleValue<global::Windows.UI.Text.FontWeight>(
-                style, Microsoft.UI.Xaml.Controls.TextBlock.FontWeightProperty),
-            CaptionStyleValue<FontFamily>(style, Microsoft.UI.Xaml.Controls.TextBlock.FontFamilyProperty),
-            CaptionStyleValue<TextWrapping>(style, Microsoft.UI.Xaml.Controls.TextBlock.TextWrappingProperty),
-            CaptionStyleValue<TextTrimming>(style, Microsoft.UI.Xaml.Controls.TextBlock.TextTrimmingProperty),
-            CaptionStyleValue<LineStackingStrategy>(
-                style, Microsoft.UI.Xaml.Controls.TextBlock.LineStackingStrategyProperty),
-            CaptionStyleValue<TextLineBounds>(style, Microsoft.UI.Xaml.Controls.TextBlock.TextLineBoundsProperty));
+            native.FontSize, native.FontWeight, native.FontFamily, native.TextWrapping,
+            native.TextTrimming, native.LineStackingStrategy, native.TextLineBounds);
     }
 
-    private static T CaptionStyleValue<T>(Style style, DependencyProperty property)
+    private static void RequireCaptionSetter(Style style, DependencyProperty property, string name)
     {
         for (Style? current = style; current is not null; current = current.BasedOn)
         {
-            var setter = current.Setters.OfType<Setter>()
-                .LastOrDefault(item => item.Property == property);
-            if (setter is null)
-                continue;
-            var converted = setter.Value is T typed
-                ? typed
-                : XamlBindingHelper.ConvertValue(typeof(T), setter.Value);
-            return converted is T value ? value
-                : throw new InvalidOperationException($"The native caption style has an unsupported {typeof(T).Name} value.");
+            if (current.Setters.OfType<Setter>().Any(item => item.Property == property))
+                return;
         }
-        throw new InvalidOperationException(
-            $"The native caption style does not define {typeof(T).Name}.");
+        throw new InvalidOperationException($"The native caption style does not define {name}.");
     }
 
     internal sealed record CaptionTypography(

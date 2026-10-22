@@ -11,6 +11,7 @@ using Microsoft.UI.Xaml.Media;
 using OpenClaw.Chat;
 using OpenClawTray.Chat;
 using OpenClawTray.Helpers;
+using Xunit.Abstractions;
 using static Microsoft.UI.Reactor.Factories;
 using static OpenClaw.Tray.UITests.TestSupport;
 
@@ -21,8 +22,13 @@ namespace OpenClaw.Tray.UITests;
 public sealed class ReactorToolActivityProofTests
 {
     private readonly UIThreadFixture _ui;
+    private readonly ITestOutputHelper _output;
 
-    public ReactorToolActivityProofTests(UIThreadFixture ui) => _ui = ui;
+    public ReactorToolActivityProofTests(UIThreadFixture ui, ITestOutputHelper output)
+    {
+        _ui = ui;
+        _output = output;
+    }
 
     [Theory]
     [InlineData(false)]
@@ -35,11 +41,11 @@ public sealed class ReactorToolActivityProofTests
     private static void AssertMissingCaptionDefinition(bool hasEmptyStyle)
     {
         var applicationResources = Application.Current.Resources;
-        var resources = new ResourceDictionary { ["CaptionTextBlockFontSize"] = 12d };
+        var resources = new Dictionary<string, object>();
         if (hasEmptyStyle)
             resources["CaptionTextBlockStyle"] = new Style { TargetType = typeof(TextBlock) };
         var error = Assert.Throws<InvalidOperationException>(() =>
-            ToolCallCardRenderer.ReadCaptionTypography(resources));
+            ToolCallCardRenderer.ReadCaptionTypography(key => resources.GetValueOrDefault(key)));
         Assert.Equal(hasEmptyStyle
                 ? "The native caption style does not define FontWeight."
                 : "The native CaptionTextBlockStyle resource is unavailable.",
@@ -150,6 +156,7 @@ public sealed class ReactorToolActivityProofTests
                         Assert.Equal(expected.Opacity, actual.Opacity);
                         Assert.Equal(reference.FontSize, caption.FontSize);
                         Assert.Equal(reference.FontWeight, caption.FontWeight);
+                        Assert.Equal(reference.FontWeight.Weight, caption.FontWeight.Weight);
                         Assert.Equal(reference.FontFamily.Source, caption.FontFamily.Source);
                         Assert.Equal(reference.TextTrimming, caption.TextTrimming);
                         Assert.Equal(reference.TextWrapping, caption.TextWrapping);
@@ -170,6 +177,12 @@ public sealed class ReactorToolActivityProofTests
                 await _ui.RunOnUIAsync(() =>
                     VisualTestCapture.CaptureAsync(surface!, $"ToolDetailCaption-{step++}-{theme}"));
             }
+        }
+        catch (Exception error)
+        {
+            for (Exception? current = error; current is not null; current = current.InnerException)
+                _output.WriteLine($"Caption native failure: {current.GetType().FullName}, HRESULT=0x{current.HResult:X8}");
+            throw;
         }
         finally
         {
