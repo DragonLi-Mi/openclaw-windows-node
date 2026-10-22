@@ -97,7 +97,10 @@ public sealed class ConversationCanvasBoundary
         var sandbox = RequireHttp(new Uri(origin, sandboxValue.GetString()).AbsoluteUri);
         if (!SameOrigin(origin, sandbox))
             throw new InvalidDataException("The Canvas sandbox URL does not match its origin.");
-        var result = new CanvasDocumentView(html, gateway, sandbox);
+        var embedSandbox = payload.TryGetProperty("embedSandbox", out var mode) &&
+            mode.ValueKind == JsonValueKind.String && mode.GetString() is "strict" or "scripts" or "trusted"
+                ? mode.GetString() : null;
+        var result = new CanvasDocumentView(html, gateway, sandbox, embedSandbox);
         _ = new ConversationCanvasBoundary(result, new string('0', 32));
         return result;
     }

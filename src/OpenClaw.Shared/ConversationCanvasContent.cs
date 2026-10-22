@@ -136,4 +136,10 @@ public sealed record CanvasDocumentRequest(string DocumentId, string SessionKey)
 public sealed record McpAppDocumentRequest(string ViewId, string SessionKey, string? AgentId);
 
 /// <summary>HTML arrived over authenticated RPC; the public sandbox URL carries no credential.</summary>
-public sealed record CanvasDocumentView(string Html, Uri GatewayOrigin, Uri SandboxUrl);
+public sealed record CanvasDocumentView(string Html, Uri GatewayOrigin, Uri SandboxUrl, string? EmbedSandboxMode = null);
+
+public sealed class CanvasDocumentPendingException : InvalidOperationException
+{
+    public CanvasDocumentPendingException()
+        : base("The Gateway has not supplied current Canvas document availability.") { }
+}

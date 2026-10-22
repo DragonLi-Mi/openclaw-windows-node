@@ -25,9 +25,14 @@ internal sealed record ChatConversationCanvasSnapshot(
 internal sealed class ChatConversationCanvasController : IDisposable
 {
     internal const string PanelId = "canvas";
+    private const int MaximumAutomaticAttempts = 8;
+    private const int DefaultRetryDelayMilliseconds = 1000;
+    private const int MaximumRetryDelayMilliseconds = 30000;
+    private const int MaximumServerRetryMilliseconds = 300000;
     private readonly ChatConversationPanelState _panels;
     private readonly ChatConversationCanvasSelection _selection;
     private readonly Func<ChatConversationCanvasPrompt, CancellationToken, Task<ChatConversationCanvasPromptResult>> _submitPrompt;
+    private readonly Func<TimeSpan, CancellationToken, Task> _waitForRetry;
     private readonly object _gate = new();
     private readonly Queue<DateTimeOffset> _promptTimes = new();
     private CancellationTokenSource? _readCancellation;
@@ -38,11 +43,13 @@ internal sealed class ChatConversationCanvasController : IDisposable
 
     internal ChatConversationCanvasController(ChatConversationPanelState panels,
         ChatConversationCanvasSelection selection,
-        Func<ChatConversationCanvasPrompt, CancellationToken, Task<ChatConversationCanvasPromptResult>> submitPrompt)
+        Func<ChatConversationCanvasPrompt, CancellationToken, Task<ChatConversationCanvasPromptResult>> submitPrompt,
+        Func<TimeSpan, CancellationToken, Task>? waitForRetry = null)
     {
         _panels = panels;
         _selection = selection;
         _submitPrompt = submitPrompt;
+        _waitForRetry = waitForRetry ?? (static (delay, token) => Task.Delay(delay, token));
         panels.Changed += OnBindingChanged;
         panels.Disposed += Dispose;
     }
@@ -64,6 +71,7 @@ internal sealed class ChatConversationCanvasController : IDisposable
         var operation = _panels.BeginOperation(PanelId, _selection.RunId);
         long revision;
         CancellationTokenSource cancellation;
+        CancellationToken token;
         lock (_gate)
         {
             if (_disposed) return;
@@ -71,9 +79,10 @@ internal sealed class ChatConversationCanvasController : IDisposable
             previous = _readCancellation;
             cancellation = operation is null ? new() :
                 CancellationTokenSource.CreateLinkedTokenSource(operation.CancellationToken);
+            token = cancellation.Token;
             _readCancellation = cancellation;
         }
-        previous?.Cancel();
+        Cancel(previous);
         previous?.Dispose();
         Invalidated?.Invoke();
         if (operation is null || operation.Context.Identity != _selection.Owner || !operation.IsCurrent)
@@ -88,28 +97,59 @@ internal sealed class ChatConversationCanvasController : IDisposable
             return;
         }
         Publish(revision, new(ChatConversationCanvasPhase.Loading, operation));
-        try
+        var backoffMilliseconds = int.TryParse(Environment.GetEnvironmentVariable("OPENCLAW_CANVAS_RETRY_DELAY_MS"),
+            out var configuredDelay) && configuredDelay is >= 100 and <= MaximumRetryDelayMilliseconds
+                ? configuredDelay : DefaultRetryDelayMilliseconds;
+        for (var attempt = 0; attempt < MaximumAutomaticAttempts; attempt++)
         {
-            if (!operation.IsCurrent) return;
-            var document = await operation.Context.Client.ViewCanvasDocumentAsync(
-                new(_selection.Content.DocumentId!, operation.Context.Identity.SessionKey),
-                operation.Context.ConnectionEpoch, cancellation.Token).ConfigureAwait(false);
-            if (!operation.IsCurrent || cancellation.IsCancellationRequested) return;
-            Publish(revision, new(ChatConversationCanvasPhase.Loaded, operation, document));
+            if (!IsReadCurrent(revision, operation, token)) return;
+            Exception retryError;
+            try
+            {
+                var document = await operation.Context.Client.ViewCanvasDocumentAsync(
+                    new(_selection.Content.DocumentId!, operation.Context.Identity.SessionKey),
+                    operation.Context.ConnectionEpoch, token).ConfigureAwait(false);
+                if (!IsReadCurrent(revision, operation, token)) return;
+                Publish(revision, new(ChatConversationCanvasPhase.Loaded, operation, document, document.EmbedSandboxMode));
+                return;
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
+            catch (CanvasDocumentPendingException ex) { retryError = ex; }
+            catch (GatewayRequestException ex) when (ex.DetailType == "canvas_widget_pending") { retryError = ex; }
+            catch (TimeoutException ex) { retryError = ex; }
+            catch (OperationCanceledException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Error, ex); return; }
+            catch (NotSupportedException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Unsupported, ex); return; }
+            catch (InvalidDataException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Blocked, ex); return; }
+            catch (InvalidOperationException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Error, ex); return; }
+            catch (IOException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Error, ex); return; }
+            catch (JsonException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Blocked, ex); return; }
+            catch (UriFormatException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Blocked, ex); return; }
+            catch (WebSocketException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Error, ex); return; }
+            if (!IsReadCurrent(revision, operation, token)) return;
+            if (attempt + 1 == MaximumAutomaticAttempts)
+            {
+                Fail(revision, operation, ChatConversationCanvasPhase.Error, retryError);
+                return;
+            }
+            Publish(revision, new(ChatConversationCanvasPhase.Waiting, operation));
+            var delayMilliseconds = backoffMilliseconds;
+            if (retryError is GatewayRequestException { Details: { ValueKind: JsonValueKind.Object } details } &&
+                details.TryGetProperty("retryAfterMs", out var retryAfter) && retryAfter.ValueKind == JsonValueKind.Number &&
+                retryAfter.TryGetInt32(out var hint) && hint > 0)
+                delayMilliseconds = Math.Max(delayMilliseconds, Math.Min(hint, MaximumServerRetryMilliseconds));
+            try
+            {
+                await _waitForRetry(TimeSpan.FromMilliseconds(delayMilliseconds), token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
+            backoffMilliseconds = Math.Min(backoffMilliseconds * 2, MaximumRetryDelayMilliseconds);
         }
-        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
-        {
-            Publish(revision, new(ChatConversationCanvasPhase.Waiting));
-        }
-        catch (OperationCanceledException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Error, ex); }
-        catch (NotSupportedException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Unsupported, ex); }
-        catch (InvalidDataException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Blocked, ex); }
-        catch (InvalidOperationException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Error, ex); }
-        catch (TimeoutException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Error, ex); }
-        catch (IOException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Error, ex); }
-        catch (JsonException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Blocked, ex); }
-        catch (UriFormatException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Blocked, ex); }
-        catch (WebSocketException ex) { Fail(revision, operation, ChatConversationCanvasPhase.Error, ex); }
+    }
+
+    internal void UnexpectedFailure(Exception exception)
+    {
+        Logger.Warn($"[ConversationCanvas] Document operation failed ({exception.GetType().Name}).");
+        if (Snapshot.Operation is { IsCurrent: true } operation) SurfaceFailed(operation);
     }
 
     internal void SurfaceReady(ChatConversationPanelOperation operation)
@@ -173,7 +213,7 @@ internal sealed class ChatConversationCanvasController : IDisposable
             _revision++;
             cancellation = _readCancellation;
         }
-        cancellation?.Cancel();
+        Cancel(cancellation);
         Volatile.Write(ref _snapshot, new(ChatConversationCanvasPhase.Waiting));
         Invalidated?.Invoke();
         Changed?.Invoke();
@@ -184,6 +224,21 @@ internal sealed class ChatConversationCanvasController : IDisposable
     {
         Logger.Warn($"[ConversationCanvas] Document read failed ({exception.GetType().Name}).");
         if (operation.IsCurrent) Publish(revision, new(phase, operation));
+    }
+
+    private bool IsReadCurrent(long revision, ChatConversationPanelOperation operation, CancellationToken token)
+    {
+        if (token.IsCancellationRequested || !operation.IsCurrent) return false;
+        lock (_gate) return !_disposed && revision == _revision;
+    }
+
+    private static void Cancel(CancellationTokenSource? cancellation)
+    {
+        try { cancellation?.Cancel(); }
+        catch (ObjectDisposedException)
+        {
+            // A superseding read finished retiring this captured source before cancellation.
+        }
     }
 
     private void Publish(long revision, ChatConversationCanvasSnapshot snapshot)
@@ -221,7 +276,7 @@ internal sealed class ChatConversationCanvasController : IDisposable
         }
         _panels.Changed -= OnBindingChanged;
         _panels.Disposed -= Dispose;
-        cancellation?.Cancel();
+        Cancel(cancellation);
         cancellation?.Dispose();
         Invalidated?.Invoke();
         Invalidated = null;

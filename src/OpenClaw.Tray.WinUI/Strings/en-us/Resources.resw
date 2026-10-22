@@ -8157,8 +8157,7 @@ After enrolling, return to Settings &gt; Windows Update and check for updates. I
   <data name="Chat_Panel_Waiting" xml:space="preserve"><value>Waiting for this conversation to connect. Your panel selection is retained.</value></data>
   <data name="Chat_Panel_Unavailable" xml:space="preserve"><value>This content is no longer available in this conversation.</value></data>
   <data name="Chat_Canvas_Loading" xml:space="preserve"><value>Loading Canvas...</value></data>
-  <data name="Chat_Canvas_Ready" xml:space="preserve"><value>Canvas</value></data>
-  <data name="Chat_Canvas_Waiting" xml:space="preserve"><value>Reconnect to view this Canvas document.</value></data>
+  <data name="Chat_Canvas_Waiting" xml:space="preserve"><value>Waiting for this conversation's Canvas document.</value></data>
   <data name="Chat_Canvas_Unsupported" xml:space="preserve"><value>This Gateway does not support conversation Canvas documents.</value></data>
   <data name="Chat_Canvas_PluginUnsupported" xml:space="preserve"><value>MCP App support is not available in this version.</value></data>
   <data name="Chat_Canvas_PreviewUnsupported" xml:space="preserve"><value>This hosted preview is not a supported conversation Canvas document.</value></data>

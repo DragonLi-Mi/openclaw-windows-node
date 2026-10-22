@@ -34,7 +34,7 @@ internal sealed class ReactorConversationCanvas : Component<ReactorConversationC
             long revision = 0;
             void Changed() => setRevision(Interlocked.Increment(ref revision));
             controller.Changed += Changed;
-            _ = controller.LoadAsync();
+            Load(controller);
             return () =>
             {
                 controller.Changed -= Changed;
@@ -65,11 +65,12 @@ internal sealed class ReactorConversationCanvas : Component<ReactorConversationC
         return Grid([GridSize.Star()], [GridSize.Auto, GridSize.Auto, GridSize.Auto, GridSize.Star()],
             HStack(8,
                 Button(TextBlock(LocalizationHelper.GetString("Chat_Placement_Retry")),
-                    () => { if (owner.Current is { } active) _ = active.LoadAsync(); })
+                    () => { if (owner.Current is { } active) Load(active); })
                     .AutomationName(LocalizationHelper.GetString("Chat_Placement_Retry"))
                     .AutomationId("ConversationCanvasRetry")
                     .Resources(ChatVisuals.ToolbarButtonResources).MinWidth(40).MinHeight(40),
-                TextBlock(Text(status)).TextWrapping(TextWrapping.Wrap)
+                TextBlock(status == "Ready" ? LocalizationHelper.GetString("WindowTitle_Canvas") : Text(status))
+                    .TextWrapping(TextWrapping.Wrap)
                     .VAlign(VerticalAlignment.Center)
                     .Set(text =>
                     {
@@ -100,6 +101,9 @@ internal sealed class ReactorConversationCanvas : Component<ReactorConversationC
     }
 
     private static string Text(string key) => LocalizationHelper.GetString("Chat_Canvas_" + key);
+    private static void Load(ChatConversationCanvasController controller) =>
+        AsyncEventHandlerGuard.Run(controller.LoadAsync,
+            operationName: "ConversationCanvasRead", onError: controller.UnexpectedFailure);
 }
 
 internal sealed class ConversationCanvasMount : Control, IDisposable
@@ -153,7 +157,9 @@ internal sealed class ConversationCanvasMount : Control, IDisposable
         _surface = new(_owner, _operation, _document, _returnToConversation);
         if (_presenter is not null) _presenter.Content = _surface;
         _started = true;
-        _ = _surface.InitializeAsync();
+        var surface = _surface;
+        AsyncEventHandlerGuard.Run(surface.InitializeAsync,
+            operationName: "ConversationCanvasInitialize", onError: surface.ReportFailure);
     }
 
     private void RetireSurface()

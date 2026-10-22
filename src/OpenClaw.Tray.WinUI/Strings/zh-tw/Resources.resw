@@ -8090,8 +8090,7 @@
   <data name="Chat_Panel_Waiting" xml:space="preserve"><value>正在等待此對話連線。已保留您的面板選擇。</value></data>
   <data name="Chat_Panel_Unavailable" xml:space="preserve"><value>此內容在目前的對話中已無法使用。</value></data>
   <data name="Chat_Canvas_Loading" xml:space="preserve"><value>正在載入 Canvas...</value></data>
-  <data name="Chat_Canvas_Ready" xml:space="preserve"><value>Canvas</value></data>
-  <data name="Chat_Canvas_Waiting" xml:space="preserve"><value>請重新連線以檢視此 Canvas 文件。</value></data>
+  <data name="Chat_Canvas_Waiting" xml:space="preserve"><value>正在等候此對話的 Canvas 文件。</value></data>
   <data name="Chat_Canvas_Unsupported" xml:space="preserve"><value>此 Gateway 不支援對話中的 Canvas 文件。</value></data>
   <data name="Chat_Canvas_PluginUnsupported" xml:space="preserve"><value>此版本不支援 MCP 應用程式。</value></data>
   <data name="Chat_Canvas_PreviewUnsupported" xml:space="preserve"><value>此託管預覽不是受支援的對話 Canvas 文件。</value></data>

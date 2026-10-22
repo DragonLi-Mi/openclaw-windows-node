@@ -125,9 +125,22 @@ an explicit restriction notice; a preview's `scripts` field alone cannot grant
 execution. The narrow private prompt channel requires current visible focus,
 non-command text of at most 4,000 characters, no control or bidi-override
 characters, at most ten prompts per minute, and the parent conversation's actual
-acceptance. This character rejection is intentionally stricter than the web
+acceptance. An optional authenticated `embedSandbox` response field supplies
+the effective Gateway mode; absent or unknown values remain strict, including
+on older Gateways. The field describes the active policy when the response is
+produced, not instantaneous revocation of already-running document scripts.
+This character rejection is intentionally stricter than the web
 client. Close or owner change disposes the surface; a reconnect must refetch the
 document rather than reuse old sandbox or prompt authority.
+Unknown availability, a pending persisted widget receipt and read timeouts retry
+automatically on the same lease, with exponential backoff capped at 30 seconds
+and eight total attempts. A structured receipt's `retryAfterMs` hint can extend
+the wait up to five minutes. Exhaustion shows the normal retryable error state;
+definitive denials and unsupported methods do not trigger automatic requests.
+Seven five-minute server-directed waits can keep the panel waiting for about
+35 minutes before exhaustion. Retries are backoff-driven, not triggered by Canvas
+events. `OPENCLAW_CANVAS_RETRY_DELAY_MS` can override the initial delay from
+100 to 30,000 milliseconds; it does not change the attempt count or either cap.
 The rate limit belongs to the captured controller lifetime; reopening creates
 a new limiter. Retiring browser environments remain rooted until exit, and
 normal cleanup removes only their own profile after exit. First-use cleanup

@@ -193,6 +193,25 @@ public sealed partial class GatewayProtocolLiveRoundTripTests : IDisposable
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task CanvasDocument_UnknownAdvertisementWaitsWithoutDispatch(bool malformed)
+    {
+        using var server = new LoopbackGatewayServer();
+        server.OnMethod("connect", _ => new
+        {
+            type = "hello-ok", protocol = GatewayProtocolContract.CurrentVersion,
+            features = new { methods = malformed ? (object?)"not-an-array" : null }
+        });
+        using var client = new OpenClawGatewayClient(server.WebSocketUrl, "test-token", identityPath: _identityDir);
+        await ConnectAndWaitAsync(client, server, configureHandshake: false);
+        await Assert.ThrowsAsync<CanvasDocumentPendingException>(() => client.ViewCanvasDocumentAsync(
+            new("cv_one", "agent:research:one"), client.SessionMutationConnectionEpoch!.Value));
+        Assert.False(server.HasFrame("canvas.document.view"));
+        await client.DisconnectAsync();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task WelcomeCatalog_UnavailableDoesNotReturnBundledContent(bool advertised)
     {
         using var server = new LoopbackGatewayServer();

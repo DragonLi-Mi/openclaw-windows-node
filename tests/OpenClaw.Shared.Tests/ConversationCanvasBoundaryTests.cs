@@ -75,6 +75,20 @@ public sealed class ConversationCanvasBoundaryTests
         Assert.Throws<InvalidDataException>(() => ConversationCanvasBoundary.ParseDocument(
             Json($$"""{"html":"x","sandboxUrl":"/mcp-app-sandbox","sandboxPort":{{port}}}"""), "ws://localhost:18789"));
 
+    [Theory]
+    [InlineData("strict", "strict")]
+    [InlineData("scripts", "scripts")]
+    [InlineData("trusted", "trusted")]
+    [InlineData("unknown", null)]
+    public void EffectivePolicyIsReadOnlyFromAuthenticatedDocumentResult(string mode, string? expected)
+    {
+        var document = ConversationCanvasBoundary.ParseDocument(JsonSerializer.SerializeToElement(new
+        {
+            html = "<p>owned document</p>", sandboxUrl = "/mcp-app-sandbox", sandboxPort = 18790, embedSandbox = mode
+        }), "ws://localhost:18789");
+        Assert.Equal(expected, document.EmbedSandboxMode);
+    }
+
     [Fact]
     public void DocumentSizeUsesUtf8BytesNotCharacterCount()
     {
@@ -133,5 +147,20 @@ public sealed class ConversationCanvasBoundaryTests
         Assert.Contains("base-uri 'none'", csp);
         Assert.Contains("object-src 'none'", csp);
         Assert.DoesNotContain("'unsafe-inline'", csp);
+    }
+
+    [Fact]
+    public void TrustedGatewayModeNeverWidensTheTransportFrameOrAddsNativeGrants()
+    {
+        var document = Document() with { EmbedSandboxMode = "trusted" };
+        var content = new ConversationCanvasContent(ConversationCanvasContentKind.Document, "cv_one", null, null, true);
+        Assert.True(ConversationCanvasBoundary.AllowScripts(document.EmbedSandboxMode, content));
+        var boundary = new ConversationCanvasBoundary(document, Nonce);
+        var html = ConversationCanvasHostDocument.Build(boundary, Nonce, "Canvas", "render-one");
+        Assert.Contains("""frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms")""", html);
+        Assert.DoesNotContain("allow-popups", html);
+        Assert.DoesNotContain("allow-downloads", html);
+        Assert.DoesNotContain("allow-top-navigation", html);
+        Assert.DoesNotContain("AddHostObject", html);
     }
 }

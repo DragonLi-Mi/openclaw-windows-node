@@ -175,7 +175,11 @@ internal sealed class ConversationCanvasWebView : Grid, IDisposable
         args.Response = _environment!.CreateWebResourceResponse(null, 403, "Forbidden", "Cache-Control: no-store");
     }
 
-    private async void MessageReceived(CoreWebView2 sender, CoreWebView2WebMessageReceivedEventArgs args)
+    private void MessageReceived(CoreWebView2 sender, CoreWebView2WebMessageReceivedEventArgs args) =>
+        AsyncEventHandlerGuard.Run(() => HandleMessageAsync(sender, args),
+            operationName: nameof(MessageReceived), onError: Fail);
+
+    private async Task HandleMessageAsync(CoreWebView2 sender, CoreWebView2WebMessageReceivedEventArgs args)
     {
         if (!IsCurrent || !_boundary.IsParent(args.Source)) return;
         try
@@ -215,6 +219,7 @@ internal sealed class ConversationCanvasWebView : Grid, IDisposable
         }
         catch (JsonException ex) { Logger.Warn($"[ConversationCanvas] Invalid host message ({ex.GetType().Name})."); }
         catch (OperationCanceledException) when (!IsCurrent) { }
+        catch (OperationCanceledException ex) { Fail(ex); }
         catch (InvalidOperationException ex) { Fail(ex); }
         catch (COMException ex) { Fail(ex); }
     }
@@ -295,6 +300,8 @@ internal sealed class ConversationCanvasWebView : Grid, IDisposable
         if (IsCurrent) _owner.SurfaceFailed(_operation);
         Dispose();
     }
+
+    internal void ReportFailure(Exception exception) => Fail(exception);
 
     private void Invalidate()
     {

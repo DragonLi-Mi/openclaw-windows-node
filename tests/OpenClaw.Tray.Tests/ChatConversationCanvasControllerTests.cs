@@ -40,7 +40,8 @@ public sealed class ChatConversationCanvasControllerTests
         internal readonly ChatConversationCanvasSelection Selection;
         internal readonly ChatConversationCanvasController Controller;
 
-        internal Fixture(Func<ChatConversationCanvasPrompt, CancellationToken, Task<ChatConversationCanvasPromptResult>>? submit = null)
+        internal Fixture(Func<ChatConversationCanvasPrompt, CancellationToken, Task<ChatConversationCanvasPromptResult>>? submit = null,
+            Func<TimeSpan, CancellationToken, Task>? waitForRetry = null)
         {
             var client = DispatchProxy.Create<IOperatorGatewayClient, GatewayProxy>();
             Gateway = (GatewayProxy)client;
@@ -52,7 +53,8 @@ public sealed class ChatConversationCanvasControllerTests
                 new(ConversationCanvasContentKind.Document, "cv_one",
                     "/__openclaw__/canvas/documents/cv_one/index.html", "Owned document", true),
                 "message-one", "run-one");
-            Controller = new(Panels, Selection, submit ?? ((_, _) => Task.FromResult(ChatConversationCanvasPromptResult.Accepted)));
+            Controller = new(Panels, Selection, submit ?? ((_, _) => Task.FromResult(ChatConversationCanvasPromptResult.Accepted)),
+                waitForRetry);
         }
 
         internal async Task Ready()
@@ -134,6 +136,98 @@ public sealed class ChatConversationCanvasControllerTests
         fixture.Gateway.Read = (_, _, _) => Task.FromResult(Document("recovered"));
         await fixture.Ready();
         Assert.Equal("recovered", fixture.Controller.Snapshot.Document?.Html);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PendingAvailabilityOrPersistedReceiptIsNotPermanentUnsupported(bool receipt)
+    {
+        var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var fixture = new Fixture(waitForRetry: (_, token) =>
+        {
+            waiting.TrySetResult();
+            return Task.Delay(Timeout.InfiniteTimeSpan, token);
+        });
+        Exception error = receipt
+            ? new GatewayRequestException("Waiting for the widget result.", "UNAVAILABLE",
+                System.Text.Json.JsonSerializer.SerializeToElement(new { type = "canvas_widget_pending" }))
+            : new CanvasDocumentPendingException();
+        fixture.Gateway.Read = (_, _, _) => Task.FromException<CanvasDocumentView>(error);
+        var read = fixture.Controller.LoadAsync();
+        await waiting.Task;
+        Assert.Equal(ChatConversationCanvasPhase.Waiting, fixture.Controller.Snapshot.Phase);
+        Assert.Null(fixture.Controller.Snapshot.Document);
+        fixture.Panels.Close("canvas");
+        await read;
+    }
+
+    [Fact]
+    public async Task PendingDocumentRetriesAndBecomesAvailableWithoutUserAction()
+    {
+        var delays = new List<TimeSpan>();
+        using var fixture = new Fixture(waitForRetry: (delay, _) => { delays.Add(delay); return Task.CompletedTask; });
+        var calls = 0;
+        fixture.Gateway.Read = (_, _, _) => ++calls == 1
+            ? Task.FromException<CanvasDocumentView>(new GatewayRequestException("Pending", "UNAVAILABLE",
+                System.Text.Json.JsonSerializer.SerializeToElement(new { type = "canvas_widget_pending", retryAfterMs = 2500 })))
+            : Task.FromResult(Document("persisted document"));
+        await fixture.Controller.LoadAsync();
+        Assert.Equal(2, calls);
+        Assert.True(Assert.Single(delays) >= TimeSpan.FromMilliseconds(2500));
+        Assert.Equal("persisted document", fixture.Controller.Snapshot.Document?.Html);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PendingRetryIsCancelledBySelectionOrDisposal(bool dispose)
+    {
+        var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var fixture = new Fixture(waitForRetry: (_, token) =>
+        {
+            waiting.TrySetResult();
+            return Task.Delay(Timeout.InfiniteTimeSpan, token);
+        });
+        fixture.Gateway.Read = (_, _, _) => Task.FromException<CanvasDocumentView>(new CanvasDocumentPendingException());
+        var read = fixture.Controller.LoadAsync();
+        await waiting.Task;
+        if (dispose) fixture.Controller.Dispose();
+        else fixture.Panels.ExpectSelection("agent:research:two");
+        await read;
+        Assert.Equal(1, fixture.Gateway.Reads);
+        Assert.Null(fixture.Controller.Snapshot.Document);
+    }
+
+    [Fact]
+    public async Task AutomaticRetriesHaveAnAttemptAndBackoffCapAndDoNotRetryDefinitiveErrors()
+    {
+        var delays = new List<TimeSpan>();
+        using var fixture = new Fixture(waitForRetry: (delay, _) => { delays.Add(delay); return Task.CompletedTask; });
+        fixture.Gateway.Read = (_, _, _) => Task.FromException<CanvasDocumentView>(new TimeoutException());
+        await fixture.Controller.LoadAsync();
+        Assert.Equal(8, fixture.Gateway.Reads);
+        Assert.Equal(7, delays.Count);
+        Assert.All(delays, delay => Assert.InRange(delay.TotalMilliseconds, 100, 30000));
+        Assert.Equal(ChatConversationCanvasPhase.Error, fixture.Controller.Snapshot.Phase);
+        delays.Clear();
+        fixture.Gateway.Read = (_, _, _) => Task.FromException<CanvasDocumentView>(new GatewayRequestException("Denied", "FORBIDDEN"));
+        await fixture.Controller.LoadAsync();
+        Assert.Equal(9, fixture.Gateway.Reads);
+        Assert.Empty(delays);
+    }
+
+    [Fact]
+    public async Task ScriptPolicyCannotSurviveTheDocumentConnectionLease()
+    {
+        using var fixture = new Fixture();
+        fixture.Gateway.Read = (_, _, _) => Task.FromResult(Document("scripts") with { EmbedSandboxMode = "scripts" });
+        await fixture.Ready();
+        Assert.Equal("scripts", fixture.Controller.Snapshot.EmbedSandboxMode);
+        fixture.Gateway.Epoch++;
+        fixture.Panels.Refresh();
+        Assert.Null(fixture.Controller.Snapshot.Document);
+        Assert.Null(fixture.Controller.Snapshot.EmbedSandboxMode);
     }
 
     [Fact]

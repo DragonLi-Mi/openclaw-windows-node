@@ -13,7 +13,12 @@ public partial class OpenClawGatewayClient
         cancellationToken.ThrowIfCancellationRequested();
         RequireCanvasConnection(connectionEpoch);
         const string method = "canvas.document.view";
-        if (!AdvertisedServerMethods.Contains(method, StringComparer.Ordinal))
+        var advertisementKnown = HasServerMethodAdvertisement;
+        var supported = AdvertisedServerMethods.Contains(method, StringComparer.Ordinal);
+        RequireCanvasConnection(connectionEpoch);
+        if (!advertisementKnown)
+            throw new CanvasDocumentPendingException();
+        if (!supported)
             throw new NotSupportedException("The Gateway does not advertise conversation Canvas documents.");
         var signingIdentity = AuthenticatedSigningDeviceId;
         var payload = await SendResponseRequestAsync(method,
