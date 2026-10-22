@@ -2000,7 +2000,7 @@ public class SetupStepsTests : IDisposable
             GatewayInstallPolicy.NodeVersion);
 
         Assert.Contains(
-            $"bash -s -- --node-version '{GatewayInstallPolicy.NodeVersion}' < \"$installer\"",
+            "bash -s -- --node-version '24.22.1' < \"$installer\"",
             command);
         Assert.DoesNotContain(" --version ", command, StringComparison.Ordinal);
         Assert.DoesNotContain("| bash", command, StringComparison.Ordinal);
@@ -2028,7 +2028,7 @@ public class SetupStepsTests : IDisposable
         Assert.Contains("--output \"$installer\"", command);
         Assert.Contains("'https://openclaw.ai/install-cli.sh'", command);
         Assert.Contains("if ! test -s \"$installer\"", command);
-        Assert.Contains("bash -s -- --version '2026.5.22' --node-version '24.19.0' < \"$installer\"", command);
+        Assert.Contains("bash -s -- --version '2026.5.22' --node-version '24.22.1' < \"$installer\"", command);
         Assert.DoesNotContain("--retry", command);
         Assert.DoesNotContain("| bash", command);
     }
@@ -4403,6 +4403,7 @@ public class SetupStepsTests : IDisposable
     [InlineData("BadUser")]
     [InlineData("bad user")]
     [InlineData("bad$user")]
+    [InlineData("openclaw\n")]
     public async Task ConfigureWsl_RejectsInvalidLinuxUserName(string user)
     {
         var ctx = CreateContext();
@@ -4491,7 +4492,7 @@ public class SetupStepsTests : IDisposable
             18789,
             "'[]'");
 
-        Assert.Contains("openclaw config set gateway.reload.mode hybrid", commands);
+        Assert.Contains("openclaw config set gateway.reload.mode 'hybrid'", commands);
     }
 
     [Fact]
@@ -4751,6 +4752,35 @@ public class SetupStepsTests : IDisposable
             "config set gateway.reload.mode off",
             commands.WslCalls[0].Command);
         Assert.Contains("curl -s", commands.WslCalls[1].Command);
+        Assert.True(commands.WslCalls[0].InputViaStdin);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("bad\"user")]
+    [InlineData("bad$(id)")]
+    [InlineData("openclaw\n")]
+    public async Task SetupWizard_RejectsInvalidLinuxUserBeforeAnyWslCommand(string? user)
+    {
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            (_, _, _) => Fail("WSL must not run for an invalid Linux user"));
+        var ctx = CreateContext(
+            new SetupConfig { Wsl = new WslConfig { User = user! } },
+            commands);
+        ctx.DistroName = "test-distro";
+
+        var suspend = await new SetupWizardRunner(ctx).SuspendReloadModeAsync();
+        var restore = await new SetupWizardRunner(ctx).RestoreReloadModeAsync();
+        var run = await new SetupWizardRunner(ctx).RunAsync(CancellationToken.None);
+
+        Assert.Equal(StepOutcome.FailedTerminal, suspend.Outcome);
+        Assert.Equal(StepOutcome.FailedTerminal, restore.Outcome);
+        Assert.Equal(StepOutcome.FailedTerminal, run.Outcome);
+        Assert.Contains("Invalid WSL user", run.Message);
+        Assert.Contains("Invalid WSL user", suspend.Message);
+        Assert.Contains("Invalid WSL user", restore.Message);
+        Assert.Empty(commands.WslCalls);
     }
 
     [Fact]
@@ -5553,6 +5583,111 @@ public class SetupStepsTests : IDisposable
         Assert.Contains(
             "openclaw config set gateway.custom.note 'a'\\''b'",
             commands);
+    }
+
+    // Bind is allowlisted by ExecuteAsync; the builder also quotes it defensively.
+    [Fact]
+    public async Task ConfigureGateway_QuotesBindAndPipesScriptThroughStdin()
+    {
+        const string bind = "lan;$PATH";
+        var commands = ConfigureGatewayStep.BuildConfigCommands(
+            new GatewayConfig
+            {
+                Bind = bind,
+                AuthMode = "token;$(id)",
+                ReloadMode = "hybrid;$PATH",
+            },
+            18789,
+            "'[]'");
+
+        Assert.Contains("openclaw config set gateway.bind 'lan;$PATH'", commands);
+        Assert.Contains("openclaw config set gateway.auth.mode 'token;$(id)'", commands);
+        Assert.Contains("openclaw config set gateway.reload.mode 'hybrid;$PATH'", commands);
+        Assert.DoesNotContain("openclaw config set gateway.bind lan;$PATH", commands);
+
+        var runner = new FakeCommandRunner(
+            _ => Ok(),
+            (_, _, _) => Ok("GATEWAY_CONFIGURED"));
+        var ctx = CreateContext(
+            new SetupConfig
+            {
+                Gateway = new GatewayConfig { Bind = "loopback" },
+            },
+            runner);
+        ctx.DistroName = "test-distro";
+
+        var result = await new ConfigureGatewayStep().ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.Message);
+        var call = Assert.Single(runner.WslCalls);
+        Assert.True(call.InputViaStdin);
+        Assert.Contains("$PATH", call.Command);
+        Assert.Contains("openclaw config set gateway.bind 'loopback'", call.Command);
+    }
+
+    // Exercise the direct properties, not the already-quoted ExtraConfig override.
+    [Theory]
+    [InlineData("token", "off", "'token'", "'off'")]
+    [InlineData("token';$(id); echo PWNED", "hybrid", "'token'\\'';$(id); echo PWNED'", "'hybrid'")]
+    [InlineData("token", "hybrid';$PATH; echo PWNED", "'token'", "'hybrid'\\'';$PATH; echo PWNED'")]
+    public async Task ConfigureGateway_ExecuteAsyncQuotesDirectAuthAndReloadModes(
+        string authMode,
+        string reloadMode,
+        string quotedAuthMode,
+        string quotedReloadMode)
+    {
+        var safeRunner = new FakeCommandRunner(
+            _ => Ok(),
+            (_, _, _) => Ok("GATEWAY_CONFIGURED"));
+        var safeResult = await new ConfigureGatewayStep().ExecuteAsync(
+            CreateGatewayModesContext(safeRunner, "token", "hybrid"),
+            CancellationToken.None);
+        Assert.True(safeResult.IsSuccess, safeResult.Message);
+        var safeCall = Assert.Single(safeRunner.WslCalls);
+
+        var runner = new FakeCommandRunner(
+            _ => Ok(),
+            (_, _, _) => Ok("GATEWAY_CONFIGURED"));
+        var result = await new ConfigureGatewayStep().ExecuteAsync(
+            CreateGatewayModesContext(runner, authMode, reloadMode),
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.Message);
+        var call = Assert.Single(runner.WslCalls);
+        Assert.True(call.InputViaStdin);
+        Assert.Contains($"openclaw config set gateway.auth.mode {quotedAuthMode}", call.Command);
+        Assert.Contains($"openclaw config set gateway.reload.mode {quotedReloadMode}", call.Command);
+        Assert.Equal(
+            safeCall.Command
+                .Replace(
+                    "openclaw config set gateway.auth.mode 'token'",
+                    $"openclaw config set gateway.auth.mode {quotedAuthMode}",
+                    StringComparison.Ordinal)
+                .Replace(
+                    "openclaw config set gateway.reload.mode 'hybrid'",
+                    $"openclaw config set gateway.reload.mode {quotedReloadMode}",
+                    StringComparison.Ordinal),
+            call.Command);
+    }
+
+    private SetupContext CreateGatewayModesContext(
+        ICommandRunner runner,
+        string authMode,
+        string reloadMode)
+    {
+        var ctx = CreateContext(
+            new SetupConfig
+            {
+                Gateway = new GatewayConfig
+                {
+                    Bind = "loopback",
+                    AuthMode = authMode,
+                    ReloadMode = reloadMode,
+                },
+            },
+            runner);
+        ctx.DistroName = "test-distro";
+        return ctx;
     }
 
     [Fact]
@@ -7724,7 +7859,8 @@ public class SetupStepsTests : IDisposable
     {
         Assert.Contains(
             commands.WslCalls,
-            call => call.Command.Contains("config set gateway.reload.mode 'hybrid'"));
+            call => call.Command.Contains("config set gateway.reload.mode 'hybrid'")
+                && call.InputViaStdin);
         Assert.Contains(
             commands.WslCalls,
             call => call.Command.Contains("openclaw gateway restart"));
