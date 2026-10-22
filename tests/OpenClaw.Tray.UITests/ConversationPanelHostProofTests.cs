@@ -21,7 +21,7 @@ namespace OpenClaw.Tray.UITests;
 [Collection(UICollection.Name)]
 public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
 {
-    private static readonly TimeSpan InitialTailReadinessTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan NativeReadinessTimeout = TimeSpan.FromSeconds(10);
     private Window? _proofWindow;
 
     [Theory]
@@ -47,11 +47,11 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
             await WaitForInitialTailAsync(surface, readerScroll);
             await ui.RunOnUIAsync(() =>
             {
-                readerScroll.ScrollTo(0, 120, new ScrollingScrollOptions(
-                    ScrollingAnimationMode.Disabled, ScrollingSnapPointsMode.Ignore));
                 editor.Select(5, 8);
                 editor.Focus(FocusState.Programmatic);
             });
+            await SettleAsync();
+            await ScrollReaderAsync(readerScroll, 120);
             await SettleAsync();
             await ui.RunOnUIAsync(() =>
             {
@@ -123,8 +123,11 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
     {
         await WithRootAsync(960, async (surface, panels, provider, _) =>
         {
+            var scroll = await ui.RunOnUIAsync(() =>
+                Task.FromResult(Assert.Single(FindDescendants<ItemsView>(surface)).ScrollView));
+            await WaitForInitialTailAsync(surface, scroll, requireScrollable: false);
             await ui.RunOnUIAsync(() => Find<Expander>(surface, "ChatToolCall_tool_entry").IsExpanded = true);
-            await SettleAsync();
+            await WaitForToolActionAsync(surface);
             await ui.RunOnUIAsync(() => Invoke(Find<Button>(surface, "ChatToolOpenDetails_tool_entry")));
             await SettleAsync();
             await ui.RunOnUIAsync(() =>
@@ -357,7 +360,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
         });
     }
 
-    private Task WaitForInitialTailAsync(Border surface, ScrollView scroll) => ui.RunOnUIAsync(async () =>
+    private Task WaitForInitialTailAsync(Border surface, ScrollView scroll, bool requireScrollable = true) => ui.RunOnUIAsync(async () =>
     {
         var settled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var active = true;
@@ -368,7 +371,8 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
         {
             if (!active) return;
             surface.UpdateLayout();
-            var atTail = scroll.IsLoaded && scroll.ScrollableHeight > 160 &&
+            var atTail = scroll.IsLoaded && scroll.ViewportHeight > 0 && scroll.ExtentHeight > 0 &&
+                (!requireScrollable || scroll.ScrollableHeight > 160) &&
                 Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight) <= 1;
             stablePasses = atTail && Math.Abs(previousExtent - scroll.ExtentHeight) < 0.5 &&
                 Math.Abs(previousViewport - scroll.ViewportHeight) < 0.5 ? stablePasses + 1 : 0;
@@ -381,16 +385,79 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
         CheckLayout();
         try
         {
-            await settled.Task.WaitAsync(InitialTailReadinessTimeout);
+            await settled.Task.WaitAsync(NativeReadinessTimeout);
             Assert.True(stablePasses >= 2);
             Assert.InRange(Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight), 0, 1);
         }
         catch (TimeoutException)
         {
-            Assert.Fail($"Initial tail never settled for two layout passes: offset={scroll.VerticalOffset}, " +
+            Assert.Fail($"Initial tail never settled for two low-priority layout checks " +
+                $"(requiresScrollableOver160={requireScrollable}): offset={scroll.VerticalOffset}, " +
                 $"maximum={scroll.ScrollableHeight}, extent={scroll.ExtentHeight}, viewport={scroll.ViewportHeight}.");
         }
         finally { active = false; }
+    });
+
+    private Task ScrollReaderAsync(ScrollView scroll, double offset) => ui.RunOnUIAsync(async () =>
+    {
+        var completed = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var expected = -2;
+        var observed = new List<string>();
+        Windows.Foundation.TypedEventHandler<ScrollView, ScrollingScrollCompletedEventArgs> handler = (_, args) =>
+        {
+            observed.Add($"{args.CorrelationId}:{scroll.VerticalOffset}");
+            if (args.CorrelationId == expected) completed.TrySetResult(args.CorrelationId);
+        };
+        scroll.ScrollCompleted += handler;
+        try
+        {
+            expected = scroll.ScrollTo(0, offset, new ScrollingScrollOptions(
+                ScrollingAnimationMode.Disabled, ScrollingSnapPointsMode.Ignore));
+            Assert.True(expected >= 0, "The native reader scroll was not admitted.");
+            Assert.Equal(expected, await completed.Task.WaitAsync(NativeReadinessTimeout));
+            Assert.InRange(scroll.VerticalOffset, offset - 1, offset + 1);
+        }
+        catch (TimeoutException)
+        {
+            Assert.Fail($"Native reader scroll {expected} never completed: " +
+                $"offset={scroll.VerticalOffset}, extent={scroll.ExtentHeight}, observed={string.Join(",", observed)}.");
+        }
+        finally { scroll.ScrollCompleted -= handler; }
+    });
+
+    private Task WaitForToolActionAsync(Border surface) => ui.RunOnUIAsync(async () =>
+    {
+        var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Button? action = null;
+        void Check(object? sender, object args)
+        {
+            action = FindDescendants<Button>(surface).FirstOrDefault(button =>
+                AutomationProperties.GetAutomationId(button) == "ChatToolOpenDetails_tool_entry");
+            var scale = surface.XamlRoot.RasterizationScale;
+            if (action is { IsLoaded: true, IsEnabled: true, Visibility: Visibility.Visible } &&
+                Math.Abs(action.ActualHeight * scale - 32 * scale) <= 1 && action.ActualWidth > 0)
+                ready.TrySetResult();
+        }
+        surface.LayoutUpdated += Check;
+        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += Check;
+        try
+        {
+            Check(null, EventArgs.Empty);
+            await ready.Task.WaitAsync(NativeReadinessTimeout);
+            Assert.Equal(32, action!.MinHeight);
+        }
+        catch (TimeoutException)
+        {
+            var expander = Find<Expander>(surface, "ChatToolCall_tool_entry");
+            Assert.Fail($"Native tool action never became ready: expanded={expander.IsExpanded}, " +
+                $"loaded={action?.IsLoaded}, enabled={action?.IsEnabled}, height={action?.ActualHeight}, " +
+                $"width={action?.ActualWidth}, scale={surface.XamlRoot.RasterizationScale}.");
+        }
+        finally
+        {
+            surface.LayoutUpdated -= Check;
+            Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= Check;
+        }
     });
 
     private async Task SettleAsync()
