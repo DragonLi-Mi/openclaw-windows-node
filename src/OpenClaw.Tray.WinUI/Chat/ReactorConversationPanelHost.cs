@@ -148,6 +148,7 @@ internal sealed class ReactorConversationPanelHost : Component<ReactorConversati
                         .AutomationName(accountMessage)
                         .Set(text =>
                         {
+                            // Do not add Theme.Ref here: the consumed Reactor build replaces the native caption style.
                             text.Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"];
                             text.ClearValue(Microsoft.UI.Xaml.Controls.TextBlock.FontSizeProperty);
                             text.ClearValue(Microsoft.UI.Xaml.Controls.TextBlock.FontWeightProperty);
