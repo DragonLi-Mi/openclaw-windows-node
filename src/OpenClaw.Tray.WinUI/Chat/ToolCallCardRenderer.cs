@@ -160,7 +160,12 @@ internal static class ToolCallCardRenderer
         return VStack(
             4,
             TextBlock(label)
-                .Set(text => text.Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"])
+                .Set(text =>
+                {
+                    text.Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"];
+                    text.ClearValue(Microsoft.UI.Xaml.Controls.TextBlock.FontSizeProperty);
+                    text.ClearValue(Microsoft.UI.Xaml.Controls.TextBlock.FontWeightProperty);
+                })
                 .TextWrapping(TextWrapping.Wrap)
                 .Foreground(Theme.Ref("TextFillColorSecondaryBrush")),
             ScrollViewer(body)
