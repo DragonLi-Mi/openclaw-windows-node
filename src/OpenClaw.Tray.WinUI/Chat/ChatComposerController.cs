@@ -191,18 +191,25 @@ internal sealed partial class ChatComposerController : IDisposable
         {
             var submittedRevision = _vm.DraftRevision;
             var generationAtStart = _generation;
+            var selectionAtStart = _selectionRevision;
             var sendOperation = ++_sendOperation;
             _vm.SetSending(true);
             try
             {
-                var accepted = await SendCoreAsync(thread.Id, thread.Title, message, attachments).ConfigureAwait(true);
-                if (_disposed || generationAtStart != _generation || sendOperation != _sendOperation)
-                    return accepted;
-
-                if (accepted)
+                void ClearSubmitted()
                 {
                     _vm.ClearDraftIfUnchanged(submittedRevision);
                     _vm.RemoveSubmittedAttachments(attachments);
+                }
+                var accepted = await SendCoreAsync(thread.Id, thread.Title, message, attachments,
+                    beforeSessionSelection: ClearSubmitted).ConfigureAwait(true);
+                if (_disposed || generationAtStart != _generation || sendOperation != _sendOperation)
+                    return accepted;
+
+                if (accepted && selectionAtStart == _selectionRevision &&
+                    _vm.Inputs?.CurrentThread.Id == thread.Id)
+                {
+                    ClearSubmitted();
                 }
 
                 return accepted;
@@ -246,7 +253,8 @@ internal sealed partial class ChatComposerController : IDisposable
         string threadId,
         string? displayName,
         string message,
-        IReadOnlyList<ChatAttachment> attachments)
+        IReadOnlyList<ChatAttachment> attachments,
+        Action? beforeSessionSelection = null)
     {
         if (_disposed)
             return false;
@@ -257,7 +265,9 @@ internal sealed partial class ChatComposerController : IDisposable
 #endif
 
         var generationAtStart = _generation;
+        var targetSelectionRevision = _selectionRevision;
         bool StillLive() => !_disposed && generationAtStart == _generation;
+        bool StillTargeted() => StillLive() && targetSelectionRevision == _selectionRevision;
 
         if (_port.SupportsNativeLifecycle
             && ChatLifecycleCommandParser.TryParse(message, attachments.Count > 0, out var command))
@@ -265,19 +275,19 @@ internal sealed partial class ChatComposerController : IDisposable
             if (ChatLifecycleCommandExecutionPolicy.ShouldQueue(command))
             {
                 var queued = await _port.EnqueueCompactCommandAsync(threadId).ConfigureAwait(true);
-                return StillLive() && queued;
+                return StillTargeted() && queued;
             }
 
             if (command == ChatLifecycleCommandKind.Reset && _hostActions.ConfirmResetAsync is not null)
             {
                 var confirmed = await _hostActions.ConfirmResetAsync(threadId, displayName).ConfigureAwait(true);
-                if (!StillLive() || !confirmed)
+                if (!StillTargeted() || !confirmed)
                     return false;
             }
 
             if (command == ChatLifecycleCommandKind.New)
                 _hostActions.SessionNavigationStarting?.Invoke();
-            if (!StillLive())
+            if (!StillTargeted())
                 return false;
 
             var selectionRevision = _selectionRevision;
@@ -286,7 +296,10 @@ internal sealed partial class ChatComposerController : IDisposable
                 return false;
             if (result.Succeeded && result.NewSessionKey is { } sessionKey &&
                 selectionRevision == _selectionRevision)
+            {
+                beforeSessionSelection?.Invoke();
                 TrySelectSession(sessionKey);
+            }
             return result.Succeeded;
         }
 
@@ -294,11 +307,11 @@ internal sealed partial class ChatComposerController : IDisposable
         {
             var requiresPreparation = _placement.RequiresPreparation;
             if (!await _placement.PrepareAsync(threadId, _lifetimeToken).ConfigureAwait(true)
-                || !StillLive() || (requiresPreparation && !_placement.IsCurrent(threadId)))
+                || !StillTargeted() || (requiresPreparation && !_placement.IsCurrent(threadId)))
                 return false;
         }
         var accepted = await _port.SendMessageAsync(threadId, message, attachments, _lifetimeToken).ConfigureAwait(true);
-        return StillLive() && accepted;
+        return StillTargeted() && accepted;
     }
 
     public void Stop()

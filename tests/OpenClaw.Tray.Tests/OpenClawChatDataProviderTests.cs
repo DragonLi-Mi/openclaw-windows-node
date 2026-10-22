@@ -68,6 +68,7 @@ public class OpenClawChatDataProviderTests
     {
         public bool IsConnected { get; set; }
         public ConnectionStatus CurrentStatus { get; set; }
+        public long ConnectionEpoch { get; set; }
         public string? MainSessionKey { get; set; }
         public bool HasHandshakeSnapshot { get; set; }
         public List<string> SentMessages { get; } = new();
@@ -12027,6 +12028,25 @@ public class OpenClawChatDataProviderTests
 
         await WaitForConditionAsync(() => bridge.SentMessages.Count == 1);
         Assert.Equal(new[] { "fresh after reconnect" }, bridge.SentMessages);
+    }
+
+    [Fact]
+    public async Task SendMessageAsync_EpochChangesWithoutStatusDelivery_DoesNotSendOnReplacementConnection()
+    {
+        var (bridge, provider, snapshots, _) = CreateProvider([MainSession()]);
+        await using (provider)
+        {
+            await provider.LoadAsync();
+            provider.BeforePublishForTests = _ => bridge.ConnectionEpoch = 1;
+
+            var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                provider.SendMessageReportingAcceptanceAsync("main", "Keep my original input."));
+
+            Assert.Contains("connection changed", error.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Empty(bridge.SentMessages);
+            Assert.Contains(snapshots[^1].Timelines["main"].Entries,
+                entry => entry.Text.Contains("connection changed", StringComparison.OrdinalIgnoreCase));
+        }
     }
 
     [Fact]

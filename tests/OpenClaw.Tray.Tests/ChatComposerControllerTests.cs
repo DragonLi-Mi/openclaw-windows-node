@@ -170,6 +170,49 @@ public sealed class ChatComposerControllerTests
     }
 
     [Fact]
+    public async Task SendAsync_NavigationDuringSend_PreservesDraftAndAttachments()
+    {
+        var (vm, controller, port, _) = MakeController();
+        vm.SetDraft("original");
+        var attachment = new ChatAttachment { FileName = "original.png" };
+        vm.AddAttachments([attachment]);
+        port.SendMessageGate = new TaskCompletionSource<bool>();
+
+        var send = controller.SendAsync();
+        controller.InvalidatePendingSessionNavigation();
+        vm.ApplyInputs(MakeInputs(revision: 2, thread: MakeThread("session-2")));
+        port.SendMessageGate.SetResult(true);
+
+        Assert.False(await send);
+        Assert.Equal("original", vm.Draft);
+        Assert.Same(attachment, Assert.Single(vm.PendingAttachments));
+        Assert.False(vm.IsSending);
+        Assert.Equal("session-1", port.LastSendMessageCall!.Value.ThreadId);
+    }
+
+    [Fact]
+    public async Task SendAsync_ResetConfirmationAfterNavigation_DoesNotResetOldConversation()
+    {
+        var confirmation = new TaskCompletionSource<bool>();
+        var actions = new ChatComposerHostActions(null, null, null, null)
+        {
+            ConfirmResetAsync = (_, _) => confirmation.Task,
+        };
+        var (vm, controller, port, _) = MakeController(actions);
+        vm.SetDraft("/reset");
+
+        var send = controller.SendAsync();
+        controller.InvalidatePendingSessionNavigation();
+        vm.ApplyInputs(MakeInputs(revision: 2, thread: MakeThread("session-2")));
+        confirmation.SetResult(true);
+
+        Assert.False(await send);
+        Assert.Equal(0, port.ExecuteLifecycleCallCount);
+        Assert.Equal("/reset", vm.Draft);
+        Assert.False(vm.IsSending);
+    }
+
+    [Fact]
     public async Task SendAsync_AttachmentAddedWhileInFlight_SurvivesAcceptedSend()
     {
         var (vm, controller, port, _) = MakeController();

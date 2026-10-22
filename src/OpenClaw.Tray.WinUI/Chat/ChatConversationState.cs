@@ -21,14 +21,17 @@ internal sealed class ChatConversationState
     private readonly Dictionary<string, ChatTimelineState> _timelines = new();
     private readonly Dictionary<string, Dictionary<string, ChatEntryMetadata>> _entryMeta = new();
     private ConnectionStatus _status;
+    private long _transportEpoch;
     private bool _disposed;
 
     internal ChatConversationState(
         ConnectionStatus status,
         OpenClawChatDataProvider.LastChatState? lastChatState,
-        ModelsListInfo? seedModels)
+        ModelsListInfo? seedModels,
+        long transportEpoch = 0)
     {
         _status = status;
+        _transportEpoch = transportEpoch;
         _presentation = new ChatPresentationState(lastChatState, seedModels);
     }
 
@@ -290,10 +293,12 @@ internal sealed class ChatConversationState
             }
 
             var reconnected = status == ConnectionStatus.Connected &&
-                              _status != ConnectionStatus.Connected;
+                              (_status != ConnectionStatus.Connected ||
+                               _transportEpoch != context.TransportEpoch);
             var disconnected = status != ConnectionStatus.Connected &&
                                _status == ConnectionStatus.Connected;
             _status = status;
+            _transportEpoch = context.TransportEpoch;
             if (status != ConnectionStatus.Connected)
                 _presentation.LeaveConnected();
             if (disconnected)
@@ -1033,6 +1038,7 @@ internal sealed class ChatConversationState
         ChatQueuedSendDispatch dispatch) =>
         !_disposed &&
         _history.ConnectionGeneration == dispatch.ConnectionGeneration &&
+        _transportEpoch == dispatch.TransportEpoch &&
         GetResetVersionLocked(dispatch.Request.ThreadId) == dispatch.ResetVersion;
 
     private ChatDataSnapshot? CleanupStaleDispatchTurnLocked(
@@ -1089,7 +1095,7 @@ internal sealed class ChatConversationState
             _history.ConnectionGeneration,
             resetVersion,
             _reset.LifecycleStartSequence,
-            _lifecycle.LifecycleStartSequence);
+            _lifecycle.LifecycleStartSequence) with { TransportEpoch = _transportEpoch };
         RegisterResetSubmissionLocked(dispatch);
         return dispatch;
     }
@@ -1113,6 +1119,8 @@ internal sealed class ChatConversationState
             _reset.LifecycleStartSequence,
             _lifecycle.LifecycleStartSequence,
             out delayedRetry);
+        if (dispatch is not null)
+            dispatch = dispatch with { TransportEpoch = _transportEpoch };
         if (dispatch?.Request.LifecycleCommand is null && dispatch is not null)
         {
             RegisterResetSubmissionLocked(dispatch);
@@ -1217,10 +1225,14 @@ internal sealed class ChatConversationState
         string threadId,
         string? expectedRequestId,
         ChatPermissionDecision decision,
-        ChatProjectionContext context)
+        ChatProjectionContext context,
+        ChatRuntimeGeneration? expectedGeneration = null)
     {
         lock (_gate)
         {
+            if (_disposed || expectedGeneration.HasValue &&
+                CurrentRuntimeGenerationLocked(threadId) != expectedGeneration.Value)
+                return BuildSnapshotLocked(context);
             var timeline = GetOrCreateTimelineLocked(threadId);
             if (expectedRequestId is not null &&
                 !string.Equals(
@@ -1295,7 +1307,10 @@ internal sealed class ChatConversationState
         {
             var hadActiveTurn = _timelines.TryGetValue(threadId, out var timeline) &&
                                 timeline.TurnActive;
-            return _lifecycle.BeginAbort(threadId, hadActiveTurn);
+            return _lifecycle.BeginAbort(threadId, hadActiveTurn) with
+            {
+                RuntimeGeneration = CurrentRuntimeGenerationLocked(threadId),
+            };
         }
     }
 
@@ -1347,6 +1362,39 @@ internal sealed class ChatConversationState
             _lifecycle.CompleteAbort(threadId, runId);
             if (!_queue.HasSendingMessages(threadId))
                 _queue.ClearLocallyInitiated(threadId);
+        }
+    }
+
+    internal ChatDataSnapshot? CompleteAbortIfCurrent(
+        string threadId,
+        ChatAbortStart abort,
+        ChatProjectionContext context)
+    {
+        lock (_gate)
+        {
+            if (_disposed || CurrentRuntimeGenerationLocked(threadId) != abort.RuntimeGeneration)
+                return null;
+            _lifecycle.TryGetActiveRun(threadId, out var activeRunId);
+            if (activeRunId is not null && activeRunId != abort.RunId)
+                return null;
+            _lifecycle.CompleteAbort(threadId, abort.RunId);
+            if (!_queue.HasSendingMessages(threadId))
+                _queue.ClearLocallyInitiated(threadId);
+            if (abort.HadActiveTurn)
+                ApplyEventLocked(threadId, new ChatStatusEvent("Aborted", ChatTone.Warning), metadata: null);
+            ApplyEventLocked(threadId, new ChatTurnEndEvent(RetainToolCorrelations: false), metadata: null);
+            return BuildSnapshotLocked(context);
+        }
+    }
+
+    internal bool TryBeginPermissionResponse(
+        string threadId, string requestId, string decision, out ChatRuntimeGeneration generation)
+    {
+        lock (_gate)
+        {
+            generation = CurrentRuntimeGenerationLocked(threadId);
+            return !_disposed &&
+                CanRespondToPermission(threadId, requestId, decision);
         }
     }
 
@@ -2908,13 +2956,13 @@ internal sealed class ChatConversationState
         lock (_gate)
         {
             return !_disposed &&
-                   _history.ConnectionGeneration == generation.ConnectionGeneration &&
-                   GetResetVersionLocked(threadId) == generation.ResetGeneration;
+                   CurrentRuntimeGenerationLocked(threadId) == generation;
         }
     }
 
     private ChatRuntimeGeneration CurrentRuntimeGenerationLocked(string threadId) =>
         new(
             _history.ConnectionGeneration,
-            GetResetVersionLocked(threadId));
+            GetResetVersionLocked(threadId),
+            _transportEpoch);
 }
