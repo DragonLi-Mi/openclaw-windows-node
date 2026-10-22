@@ -92,12 +92,14 @@ See the [pending-message concept](design/reference/concepts/states/pending-chat-
 
 Conversation sends, Stop requests and exec-approval responses retain the
 connection epoch captured by their state transaction. The transport refuses
-to move them onto a replacement connection. Epoch-bound sends and aborts
+to write them onto a replacement connection. A rejected old epoch is a
+pre-write refusal, not proof of uncertain delivery. Epoch-bound sends and aborts
 require the explicit selected session key, never a fallback to the Gateway's
 main session. Late Stop or approval acknowledgements cannot complete a
-replacement run or dismiss a replacement approval. A send completed after
-navigation preserves the draft and attachment selection; reset confirmation
-cannot authorize a conversation the user has since left. These fences do not
+replacement run or dismiss a replacement approval. An accepted send reports
+acceptance even after navigation, clears only its unchanged draft revision and
+submitted attachment identities, and preserves edits and added attachments.
+Reset confirmation cannot authorize a conversation the user has since left. These fences do not
 establish delivery after a lost acknowledgement or implement uncertain-send
 reconciliation.
 

@@ -296,21 +296,20 @@ public class OpenClawChatDataProviderTests
             Action<Action>? post = null)
     {
         var bridge = new FakeBridge { Sessions = initial ?? Array.Empty<SessionInfo>() };
-        var provider = toolMetaCachePath is null && attachmentMetaCachePath is null && lastChatStatePath is null &&
-            lastChatStateSaveDelay is null && historyRetryScheduler is null && historyFailureReservedForTesting is null &&
-            lastStateSaveReservedForTesting is null && beforeSelectedStateSaveForTesting is null &&
-            deferredAbortScheduler is null && post is null
-            ? new OpenClawChatDataProvider(bridge)
-            : new OpenClawChatDataProvider(
+        var stateDirectory = Path.GetDirectoryName(toolMetaCachePath);
+        if (string.IsNullOrEmpty(stateDirectory))
+            stateDirectory = Path.Combine(Path.GetTempPath(), "OpenClawChatTests", Guid.NewGuid().ToString("N"));
+        var provider = new OpenClawChatDataProvider(
                 bridge,
                 post,
-                toolMetaCacheFilePath: toolMetaCachePath ?? Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "tool-metadata.json"),
-                attachmentMetaCacheFilePath: attachmentMetaCachePath,
-                lastChatStateFilePath: lastChatStatePath,
+                toolMetaCacheFilePath: toolMetaCachePath ?? Path.Combine(stateDirectory, "tool-metadata.json"),
+                attachmentMetaCacheFilePath: attachmentMetaCachePath ?? Path.Combine(stateDirectory, "attachment-metadata.json"),
+                lastChatStateFilePath: lastChatStatePath ?? Path.Combine(stateDirectory, "last-chat-state.json"),
                 lastChatStateSaveDelay: lastChatStateSaveDelay,
                 historyRetryScheduler: historyRetryScheduler,
                 historyFailureReservedForTesting: historyFailureReservedForTesting,
-                deferredAbortScheduler: deferredAbortScheduler);
+                deferredAbortScheduler: deferredAbortScheduler,
+                abortedIdsFilePath: Path.Combine(stateDirectory, "aborted-messages.json"));
         provider.SetPersistenceTestHooks(
             lastStateSaveReservedForTesting,
             beforeSelectedStateSaveForTesting);
@@ -12033,7 +12032,11 @@ public class OpenClawChatDataProviderTests
     [Fact]
     public async Task SendMessageAsync_EpochChangesWithoutStatusDelivery_DoesNotSendOnReplacementConnection()
     {
-        var (bridge, provider, snapshots, _) = CreateProvider([MainSession()]);
+        using var temp = new OpenClaw.TestSupport.TempDirectory();
+        var (bridge, provider, snapshots, _) = CreateProvider([MainSession()],
+            toolMetaCachePath: Path.Combine(temp.Path, "tool-metadata.json"),
+            attachmentMetaCachePath: Path.Combine(temp.Path, "attachment-metadata.json"),
+            lastChatStatePath: Path.Combine(temp.Path, "last-chat-state.json"));
         await using (provider)
         {
             await provider.LoadAsync();
@@ -12046,6 +12049,10 @@ public class OpenClawChatDataProviderTests
             Assert.Empty(bridge.SentMessages);
             Assert.Contains(snapshots[^1].Timelines["main"].Entries,
                 entry => entry.Text.Contains("connection changed", StringComparison.OrdinalIgnoreCase));
+            provider.BeforePublishForTests = null;
+            bridge.RaiseStatus(ConnectionStatus.Connected);
+            Assert.True(await provider.SendMessageReportingAcceptanceAsync("main", "Explicit fresh send."));
+            Assert.Equal(["Explicit fresh send."], bridge.SentMessages);
         }
     }
 

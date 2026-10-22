@@ -152,7 +152,8 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         TimeSpan? lastChatStateSaveDelay = null,
         Func<TimeSpan, CancellationToken, Func<Task>, Task>? historyRetryScheduler = null,
         Action? historyFailureReservedForTesting = null,
-        Func<Func<Task>, Task>? deferredAbortScheduler = null)
+        Func<Func<Task>, Task>? deferredAbortScheduler = null,
+        string? abortedIdsFilePath = null)
     {
         _bridge = bridge ?? throw new ArgumentNullException(nameof(bridge));
         _welcomeLocale = LocalizationHelper.CurrentLanguage;
@@ -164,7 +165,8 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
             attachmentMetaCacheFilePath);
         _persistence = new ChatStatePersistence(
             lastChatStateFilePath,
-            lastChatStateSaveDelay);
+            lastChatStateSaveDelay,
+            abortedIdsPath: abortedIdsFilePath);
         _state = new ChatConversationState(
             bridge.CurrentStatus,
             _persistence.InitialLastChatState,
