@@ -152,9 +152,11 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                     (int)Math.Ceiling(surface.Width * scale), (int)Math.Ceiling(surface.Height * scale)));
                 RecordOwnedWindow(window);
                 positioner = new(timeline!);
+                Console.WriteLine($"Initial-tail race before dispatch: index=24,count={rows.Count},key=same-tail");
                 positioner.Request(24, 25, "same-request", "same-tail");
                 for (var index = 0; index < 25; index++) rows.Insert(rows.Count - 1, $"Inserted row {index}");
                 positioner.UpdateTail(49, 50, "same-tail");
+                Console.WriteLine($"Initial-tail race still before dispatch: index=49,count={rows.Count},key=same-tail");
                 return Task.FromResult(timeline!.ScrollView);
             });
             await WaitForStablePositionAsync(surface!, scroll,
