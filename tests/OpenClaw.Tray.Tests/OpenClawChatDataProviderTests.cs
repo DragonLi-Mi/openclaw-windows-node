@@ -372,6 +372,34 @@ public class OpenClawChatDataProviderTests
         await provider.DisposeAsync();
     }
 
+    [Theory]
+    [InlineData("same")]
+    [InlineData("foreign")]
+    [InlineData("reset")]
+    public async Task InputCustody_LoadSeedsKnownIncarnationWithoutAdoptingForeignOrResetClearedUuid(string transition)
+    {
+        var session = MainSession();
+        session.SessionId = "known-incarnation";
+        var (bridge, provider, _, _) = CreateProvider([session]);
+        await provider.LoadAsync();
+        var origin = provider.CaptureInputOrigin("main");
+        Assert.Equal("known-incarnation", origin.SessionId);
+        Assert.True(provider.IsInputOriginCurrent(origin));
+        if (transition == "reset")
+        {
+            bridge.RaiseSessionCommandCompleted(new() { Method = "sessions.reset", Key = "main", Ok = true });
+            await provider.LoadAsync();
+            Assert.Null(provider.CaptureInputOrigin("main").SessionId);
+        }
+        else
+        {
+            if (transition == "foreign") session.SessionId = "foreign-incarnation";
+            bridge.RaiseSessions([session]);
+        }
+        Assert.Equal(transition == "same", provider.IsInputOriginCurrent(origin));
+        await provider.DisposeAsync();
+    }
+
     [Fact]
     public async Task InputCustody_ExplicitQueueRemainsLocalUntilActiveRunEnds()
     {

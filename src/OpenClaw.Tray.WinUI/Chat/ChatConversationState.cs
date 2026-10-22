@@ -109,6 +109,7 @@ internal sealed class ChatConversationState
             _presentation.ReplaceSessions(
                 sessions,
                 receivedFromGateway: false);
+            _history.SeedSessionIds(_presentation.SessionSnapshot());
             EnsureTimelinesForSessionsLocked();
             _presentation.RememberLastSessionState(context);
             return BuildSnapshotLocked(context);

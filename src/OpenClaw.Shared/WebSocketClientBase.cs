@@ -827,6 +827,10 @@ public abstract class WebSocketClientBase : IDisposable
         CancellationToken cancellationToken) =>
         SendRawAsync(message, expectedConnectionGeneration, cancellationToken, null, null);
 
+    /// <summary>
+    /// The beforeWrite callback must be bounded and synchronous. It must not
+    /// send, await, block on a send, or acquire locks in the reverse send order.
+    /// </summary>
     protected async Task<bool> SendRawAsync(
         string message,
         long expectedConnectionGeneration,
