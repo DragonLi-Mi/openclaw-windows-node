@@ -43,6 +43,16 @@ public sealed class BuildPrerequisiteTests
             var gitConfig = Path.Combine(fixture, "gitconfig");
             File.WriteAllText(gitConfig, $"[safe]\n\tdirectory = \"{repository.Replace('\\', '/')}\"\n");
 
+            // Windows PowerShell can reset the architecture at startup on ARM64.
+            var wrapper = Path.Combine(fixture, "check-prerequisites.ps1");
+            File.WriteAllText(wrapper, """
+                param([Parameter(Mandatory)][string]$BuildScript)
+                $ErrorActionPreference = 'Stop'
+                $env:PROCESSOR_ARCHITECTURE = 'AMD64'
+                & $BuildScript -CheckOnly -NoTrustRepository
+                exit $LASTEXITCODE
+                """);
+
             var start = new ProcessStartInfo("powershell.exe")
             {
                 WorkingDirectory = repository,
@@ -52,13 +62,12 @@ public sealed class BuildPrerequisiteTests
                 CreateNoWindow = true,
             };
             foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-                "-File", Path.Combine(repository, "build.ps1"), "-CheckOnly", "-NoTrustRepository" })
+                "-File", wrapper, "-BuildScript", Path.Combine(repository, "build.ps1") })
                 start.ArgumentList.Add(argument);
             // A PowerShell 7 parent can otherwise supply modules that Windows
             // PowerShell 5.1 cannot load, before the runtime check is reached.
             start.Environment.Remove("PSModulePath");
             start.Environment["GIT_CONFIG_GLOBAL"] = gitConfig;
-            start.Environment["PROCESSOR_ARCHITECTURE"] = "AMD64";
             start.Environment["OpenClawVsInstallRoot"] = install;
             start.Environment["OpenClawVsWherePath"] = vswhere;
             foreach (var property in new[] { "OpenClawVCRedistVersion", "OpenClawVCRuntimeVersionIsSupported",
