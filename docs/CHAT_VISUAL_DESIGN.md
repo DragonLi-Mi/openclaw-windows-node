@@ -139,7 +139,9 @@ regular text instead of the former 11-pixel semibold helper) and a
 `TextFillColorSecondaryBrush` theme reference on the caption control. Inline
 disclosures and the tool-details panel share that renderer, so a containing
 surface's Light or Dark theme is honored without capturing the application's
-default-theme brush or remounting the caption.
+default-theme brush or remounting the caption. Applying the style clears
+Reactor's local font size and weight defaults so the native caption typography
+also survives subsequent detail updates.
 
 Queued submissions leave the textbox and remain after the current turn as normal
 right-aligned user bubbles. A transparent `ChatPendingUserBrush`, subtle `ChatStrokeBrush`

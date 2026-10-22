@@ -34,6 +34,11 @@ public sealed class ReactorToolActivityProofTests
         TextBlock? bodyReference = null;
         var appTheme = ElementTheme.Default;
         ChatThemeProofScope? themeScope = null;
+        Element? currentElement = null;
+        var entry = Tool("theme-tool", "read_file", "Literal output", ChatToolCallStatus.Success) with
+        {
+            ToolArgs = new() { ["path"] = "example.txt" },
+        };
         try
         {
             await _ui.RunOnUIAsync(() =>
@@ -48,12 +53,9 @@ public sealed class ReactorToolActivityProofTests
                 surface = (Grid)XamlReader.Load(
                     """<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Width="420" Height="180" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" />""");
                 host = new ReactorHostControl { Margin = new Thickness(16), VerticalAlignment = VerticalAlignment.Top };
-                var entry = Tool("theme-tool", "read_file", "Literal output", ChatToolCallStatus.Success) with
-                {
-                    ToolArgs = new() { ["path"] = "example.txt" },
-                };
+                currentElement = ToolCallCardRenderer.BuildPanelDetails(entry);
                 host.Content = host.Reconciler.Mount(
-                    ToolCallCardRenderer.BuildPanelDetails(entry), static () => { });
+                    currentElement, static () => { });
                 surface.Children.Add(host);
                 reference.VerticalAlignment = VerticalAlignment.Bottom;
                 reference.Margin = new Thickness(16, 0, 16, 28);
@@ -69,7 +71,17 @@ public sealed class ReactorToolActivityProofTests
             var step = 0;
             foreach (var theme in new[] { oppositeTheme, appTheme, oppositeTheme })
             {
-                await _ui.RunOnUIAsync(() => surface!.RequestedTheme = theme);
+                var currentOutput = $"Literal output {step}";
+                await _ui.RunOnUIAsync(() =>
+                {
+                    var nextElement = ToolCallCardRenderer.BuildPanelDetails(
+                        entry with { ToolOutput = currentOutput });
+                    host!.Content = host.Reconciler.Reconcile(
+                        currentElement!, nextElement, Assert.IsAssignableFrom<UIElement>(host.Content),
+                        static () => { });
+                    currentElement = nextElement;
+                    surface!.RequestedTheme = theme;
+                });
                 await _ui.YieldToRenderAsync();
                 await _ui.YieldToRenderAsync();
                 await _ui.RunOnUIAsync(() =>
@@ -97,7 +109,7 @@ public sealed class ReactorToolActivityProofTests
                     }
                     originalCaptions = captions;
                     var body = Assert.Single(FindLogical<RichTextBlock>(host!),
-                        text => CollectText(text) == "Literal output");
+                        text => CollectText(text) == currentOutput);
                     Assert.Equal(Assert.IsType<SolidColorBrush>(bodyReference!.Foreground).Color,
                         Assert.IsType<SolidColorBrush>(body.Foreground).Color);
                 });
