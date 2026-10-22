@@ -152,6 +152,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                     (int)Math.Ceiling(surface.Width * scale), (int)Math.Ceiling(surface.Height * scale)));
                 RecordOwnedWindow(window);
                 positioner = new(timeline!);
+                Assert.False(IsMessageVisible(surface, timeline!.ScrollView, "Tail item"));
                 Console.WriteLine($"Initial-tail race before dispatch: index=24,count={rows.Count},key=same-tail");
                 positioner.Request(24, 25, "same-request", "same-tail");
                 for (var index = 0; index < 25; index++) rows.Insert(rows.Count - 1, $"Inserted row {index}");
@@ -161,7 +162,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
             });
             await WaitForStablePositionAsync(surface!, scroll,
                 () => scroll.ScrollableHeight - scroll.VerticalOffset <= 60 &&
-                    FindDescendants<TextBlock>(timeline!).Any(text => text.Text == "Tail item" && IsVisibleInScroll(text, scroll)),
+                    IsMessageVisible(surface!, scroll, "Tail item"),
                 "current same-key tail after index/count changed before queued dispatch");
         }
         finally
@@ -457,36 +458,42 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 (finalMessage is null
                     ? Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight) <= 1
                     : scroll.ScrollableHeight - scroll.VerticalOffset <= 60 &&
-                        FindDescendants<RichTextBlock>(surface).Any(text =>
-                            MessageText(text) == finalMessage && IsVisibleInScroll(text, scroll))),
+                        IsMessageVisible(surface, scroll, finalMessage)),
             $"initial tail (requiresScrollableOver160={requireScrollable})");
 
     private sealed record ReaderAnchor(string Message, double Top);
 
-    private static string MessageText(RichTextBlock text) => string.Concat(
-        text.Blocks.OfType<Paragraph>().SelectMany(paragraph => paragraph.Inlines.OfType<Run>()).Select(run => run.Text));
+    private static bool IsMessageVisible(Border surface, ScrollView scroll, string message)
+    {
+        var matches = FindDescendants<TextBlock>(surface)
+            .Where(text => text.IsLoaded && text.Text == message).ToArray();
+        Assert.True(matches.Length <= 1, $"The realized final message must be unique: {message}.");
+        return matches.Length == 1 && IsVisibleInScroll(matches[0], scroll);
+    }
 
     private static global::Windows.Foundation.Rect BoundsInScroll(FrameworkElement element, ScrollView scroll) =>
         element.TransformToVisual(scroll).TransformBounds(new(0, 0, element.ActualWidth, element.ActualHeight));
 
     private static bool IsVisibleInScroll(FrameworkElement element, ScrollView scroll)
     {
-        if (!element.IsLoaded || element.Visibility != Visibility.Visible || element.ActualHeight <= 0)
+        if (!element.IsLoaded || element.Visibility != Visibility.Visible || element.Opacity <= 0 ||
+            element.ActualWidth <= 0 || element.ActualHeight <= 0)
             return false;
         var bounds = BoundsInScroll(element, scroll);
-        return bounds.Top >= 0 && bounds.Bottom <= scroll.ViewportHeight;
+        return bounds.Top >= 0 && bounds.Bottom <= scroll.ViewportHeight &&
+            bounds.Left >= 0 && bounds.Right <= scroll.ViewportWidth;
     }
 
     private static ReaderAnchor CaptureReaderAnchor(Border surface, ScrollView scroll) =>
-        FindDescendants<RichTextBlock>(surface)
-            .Where(text => MessageText(text).StartsWith("Panel message ", StringComparison.Ordinal) && IsVisibleInScroll(text, scroll))
-            .Select(text => new ReaderAnchor(MessageText(text), BoundsInScroll(text, scroll).Top))
+        FindDescendants<TextBlock>(surface)
+            .Where(text => text.Text.StartsWith("Panel message ", StringComparison.Ordinal) && IsVisibleInScroll(text, scroll))
+            .Select(text => new ReaderAnchor(text.Text, BoundsInScroll(text, scroll).Top))
             .OrderBy(anchor => anchor.Top).First();
 
     private static void AssertReaderAnchor(Border surface, ScrollView scroll, ReaderAnchor anchor)
     {
-        var text = Assert.Single(FindDescendants<RichTextBlock>(surface),
-            candidate => MessageText(candidate) == anchor.Message && IsVisibleInScroll(candidate, scroll));
+        var text = Assert.Single(FindDescendants<TextBlock>(surface),
+            candidate => candidate.Text == anchor.Message && IsVisibleInScroll(candidate, scroll));
         var tolerance = 1 / surface.XamlRoot.RasterizationScale;
         var top = BoundsInScroll(text, scroll).Top;
         Console.WriteLine($"Reader anchor after panel: message={anchor.Message}, expectedTop={anchor.Top}, actualTop={top}, offset={scroll.VerticalOffset}");
@@ -520,6 +527,24 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
         }
         catch (TimeoutException)
         {
+            var messages = FindDescendants<TextBlock>(surface)
+                .Where(text => text.Text.StartsWith("Panel message ", StringComparison.Ordinal) ||
+                    text.Text.StartsWith("Second message ", StringComparison.Ordinal) ||
+                    text.Text is "Tail item" ||
+                    text.Text.StartsWith("Original row ", StringComparison.Ordinal) ||
+                    text.Text.StartsWith("Inserted row ", StringComparison.Ordinal))
+                .Select(text => new
+                {
+                    text.Text, text.IsLoaded, text.Visibility, text.Opacity,
+                    text.ActualWidth, text.ActualHeight, Bounds = BoundsInScroll(text, scroll),
+                    Visible = IsVisibleInScroll(text, scroll)
+                }).ToArray();
+            Console.WriteLine("Native final-message diagnostic: " +
+                System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    Description = description, scroll.VerticalOffset, scroll.ScrollableHeight,
+                    scroll.ExtentHeight, scroll.ViewportHeight, scroll.ViewportWidth, Messages = messages
+                }));
             Assert.Fail($"{description} never settled for two native layout/render observations: offset={scroll.VerticalOffset}, " +
                 $"maximum={scroll.ScrollableHeight}, extent={scroll.ExtentHeight}, viewport={scroll.ViewportHeight}.");
         }

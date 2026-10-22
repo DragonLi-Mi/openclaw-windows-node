@@ -124,6 +124,7 @@ internal sealed class InitialTailPositioner : IDisposable
         _following = true;
         _initialTailPending = true;
         _valid = TailNavigationPolicy.TryCapture(tailIndex, displayedTailKey, itemCount, out _);
+        TraceState("request");
         if (!_valid)
             return;
 
@@ -180,11 +181,15 @@ internal sealed class InitialTailPositioner : IDisposable
         StopWaitingForScrollView();
         var version = _version;
         if (_initialDispatchVersion == version)
+        {
+            TraceState("deduplicated");
             return;
+        }
         _initialDispatchVersion = version;
         // Native navigation must leave reconciliation, but must not wait for another layout event.
         if (!itemsView.DispatcherQueue.TryEnqueue(() =>
         {
+            TraceState($"dispatch-{version}");
             if (_initialDispatchVersion == version)
                 _initialDispatchVersion = null;
             if (_disposed || !_valid || version != _version)
@@ -229,12 +234,38 @@ internal sealed class InitialTailPositioner : IDisposable
         {
             _scrollView.VerticalAnchorRatio = 1.0;
             _scrollView.ViewChanged += OnViewChanged;
+            _scrollView.ExtentChanged += OnExtentChanged;
+            _scrollView.BringingIntoView += OnBringingIntoView;
+            _scrollView.ScrollCompleted += OnScrollCompleted;
         }
     }
 
     private void OnViewChanged(WinUIScrollView sender, object args)
     {
         _following = IsNearBottom(sender);
+        TraceState("view-changed");
+    }
+
+    private void OnExtentChanged(WinUIScrollView sender, object args) => TraceState("extent-changed");
+
+    private void OnBringingIntoView(
+        WinUIScrollView sender, Microsoft.UI.Xaml.Controls.ScrollingBringingIntoViewEventArgs args) =>
+        Logger.Trace($"[ChatScroll] Bring correlation={args.CorrelationId}, target={args.TargetVerticalOffset}, cancel={args.Cancel}, " +
+            $"offset={sender.VerticalOffset}, extent={sender.ExtentHeight}, viewport={sender.ViewportHeight}.");
+
+    private void OnScrollCompleted(
+        WinUIScrollView sender, Microsoft.UI.Xaml.Controls.ScrollingScrollCompletedEventArgs args) =>
+        Logger.Trace($"[ChatScroll] Completed correlation={args.CorrelationId}, offset={sender.VerticalOffset}, " +
+            $"extent={sender.ExtentHeight}, viewport={sender.ViewportHeight}.");
+
+    private void TraceState(string stage)
+    {
+        var scroll = itemsView.ScrollView;
+        var sourceCount = itemsView.ItemsSource is System.Collections.ICollection collection ? collection.Count : -1;
+        Logger.Trace($"[ChatScroll] {stage}: version={_version}, queued={_initialDispatchVersion}, pending={_initialTailPending}, " +
+            $"index={_tailIndex}, count={_itemCount}, nativeSourceCount={sourceCount}, loaded={itemsView.IsLoaded}, " +
+            $"scrollLoaded={scroll?.IsLoaded}, offset={scroll?.VerticalOffset}, extent={scroll?.ExtentHeight}, " +
+            $"viewport={scroll?.ViewportHeight}, width={scroll?.ViewportWidth}.");
     }
 
     private void QueueTailRequest(int version, TailNavigationRequest request)
@@ -276,11 +307,13 @@ internal sealed class InitialTailPositioner : IDisposable
         }
 
         _following = true;
+        TraceState("issuing");
         itemsView.StartBringItemIntoView(request.Index, new BringIntoViewOptions
         {
             AnimationDesired = false,
             VerticalAlignmentRatio = 1.0,
         });
+        TraceState("issued");
         return true;
     }
 
@@ -311,6 +344,9 @@ internal sealed class InitialTailPositioner : IDisposable
         {
             _scrollView.VerticalAnchorRatio = double.NaN;
             _scrollView.ViewChanged -= OnViewChanged;
+            _scrollView.ExtentChanged -= OnExtentChanged;
+            _scrollView.BringingIntoView -= OnBringingIntoView;
+            _scrollView.ScrollCompleted -= OnScrollCompleted;
         }
 
         _scrollView = null;

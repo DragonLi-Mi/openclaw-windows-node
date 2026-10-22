@@ -112,7 +112,13 @@ public sealed class ChatTimelinePresentationTests
         Assert.DoesNotContain("UpdateLayout", binding);
         Assert.DoesNotContain("TailSettle", binding);
         Assert.DoesNotContain("ScrollTo(", binding);
-        Assert.DoesNotContain("ScrollCompleted", binding);
+        var completionStart = binding.IndexOf("private void OnScrollCompleted(", StringComparison.Ordinal);
+        var traceStart = binding.IndexOf("private void TraceState(", completionStart, StringComparison.Ordinal);
+        var completion = binding[completionStart..traceStart];
+        Assert.Contains("Logger.Trace(", completion);
+        Assert.DoesNotContain("StartTailRequest", completion);
+        Assert.DoesNotContain("StartBringItemIntoView", completion);
+        Assert.DoesNotContain("TryPositionInitialTail", completion);
         Assert.DoesNotContain("DispatcherTimer", binding);
         Assert.DoesNotContain("TextLength != current.TextLength", binding);
         Assert.DoesNotContain("ReactorStreamingTailState", binding);
