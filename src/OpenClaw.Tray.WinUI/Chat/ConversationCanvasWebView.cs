@@ -16,6 +16,7 @@ namespace OpenClawTray.Chat;
 internal sealed class ConversationCanvasWebView : Grid, IDisposable
 {
     private const int DefaultLoadTimeoutMilliseconds = 30000;
+    private const int MaximumBridgeMessageCharacters = ConversationCanvasBoundary.MaximumPromptCharacters * 6 + 1024;
     private static readonly object RetiringGate = new();
     private static readonly HashSet<CoreWebView2Environment> RetiringEnvironments = [];
     private readonly ChatConversationCanvasController _owner;
@@ -62,11 +63,22 @@ internal sealed class ConversationCanvasWebView : Grid, IDisposable
     }
 
     internal string ProfileDirectory => _profile.DirectoryPath;
+    [DllImport("user32.dll")]
+    private static extern nint GetForegroundWindow();
+
     private bool IsCurrent => !_disposed && _operation.IsCurrent &&
         ReferenceEquals(_owner.Snapshot.Operation, _operation);
     private bool IsInteractable() => IsCurrent && _ready && IsLoaded &&
         Visibility == Visibility.Visible && ActualWidth > 0 && ActualHeight > 0 &&
-        FocusManager.GetFocusedElement(XamlRoot) is DependencyObject focused && IsWithin(focused, _view);
+        XamlRoot is { } root && IsForeground(root) &&
+        FocusManager.GetFocusedElement(root) is DependencyObject focused && IsWithin(focused, _view);
+
+    private static bool IsForeground(XamlRoot root)
+    {
+        if (root.ContentIslandEnvironment is not { } environment) return false;
+        var hwnd = Microsoft.UI.Win32Interop.GetWindowFromWindowId(environment.AppWindowId);
+        return hwnd != 0 && hwnd == GetForegroundWindow();
+    }
 
     internal async Task InitializeAsync()
     {
@@ -184,7 +196,13 @@ internal sealed class ConversationCanvasWebView : Grid, IDisposable
         if (!IsCurrent || !_boundary.IsParent(args.Source)) return;
         try
         {
-            using var parsed = JsonDocument.Parse(args.WebMessageAsJson);
+            var json = args.WebMessageAsJson;
+            if (json.Length > MaximumBridgeMessageCharacters)
+            {
+                _owner.InteractionBlocked();
+                return;
+            }
+            using var parsed = JsonDocument.Parse(json);
             var message = parsed.RootElement;
             if (!_boundary.IsNativeMessage(args.Source, message) ||
                 !message.TryGetProperty("renderId", out var render) || render.ValueKind != JsonValueKind.String ||
@@ -213,7 +231,9 @@ internal sealed class ConversationCanvasWebView : Grid, IDisposable
                     break;
                 case "prompt" when _ready && message.TryGetProperty("text", out var text) &&
                                         text.ValueKind == JsonValueKind.String:
-                    await _owner.SubmitPromptAsync(text.GetString(), IsInteractable, DateTimeOffset.UtcNow);
+                    var outcome = await _owner.SubmitPromptAsync(text.GetString(), IsInteractable, DateTimeOffset.UtcNow);
+                    if (IsCurrent && outcome != ChatConversationCanvasPromptResult.Accepted)
+                        _owner.InteractionBlocked();
                     break;
             }
         }

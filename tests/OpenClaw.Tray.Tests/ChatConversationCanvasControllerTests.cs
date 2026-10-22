@@ -231,6 +231,19 @@ public sealed class ChatConversationCanvasControllerTests
     }
 
     [Fact]
+    public async Task RepeatedBlockedMessagesDoNotRepublishTheSameNotice()
+    {
+        using var fixture = new Fixture();
+        await fixture.Ready();
+        var notifications = 0;
+        fixture.Controller.Changed += () => notifications++;
+        fixture.Controller.InteractionBlocked();
+        fixture.Controller.InteractionBlocked();
+        Assert.Equal(1, notifications);
+        Assert.True(fixture.Controller.Snapshot.InteractionBlocked);
+    }
+
+    [Fact]
     public async Task SuspendedSurfaceRetainsDocumentButCannotAcceptPromptsUntilRenderedAgain()
     {
         using var fixture = new Fixture();

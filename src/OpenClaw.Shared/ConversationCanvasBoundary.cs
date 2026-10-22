@@ -18,12 +18,7 @@ public sealed class ConversationCanvasBoundary
             throw new ArgumentException("Invalid Canvas presentation nonce.", nameof(nonce));
         GatewayOrigin = HttpOrigin(document.GatewayOrigin.AbsoluteUri);
         SandboxUrl = RequireHttp(document.SandboxUrl.AbsoluteUri);
-        if (SameOrigin(GatewayOrigin, SandboxUrl) ||
-            SandboxUrl.AbsolutePath != SandboxPath ||
-            !string.IsNullOrEmpty(SandboxUrl.Fragment) ||
-            GatewayOrigin.Scheme == "https" && SandboxUrl.Scheme != "https")
-            throw new InvalidDataException("The Canvas sandbox must use a separate origin.");
-        ValidatePublicQuery(SandboxUrl);
+        ValidateSandbox(GatewayOrigin, SandboxUrl);
         messageNonce ??= nonce;
         if (messageNonce.Length != 32 || messageNonce.Any(character => !char.IsAsciiHexDigit(character)))
             throw new ArgumentException("Invalid Canvas message nonce.", nameof(messageNonce));
@@ -70,16 +65,27 @@ public sealed class ConversationCanvasBoundary
     public static CanvasDocumentView ParseDocument(JsonElement payload, string gatewayUrl)
     {
         if (payload.ValueKind != JsonValueKind.Object ||
-            !payload.TryGetProperty("html", out var htmlValue) || htmlValue.ValueKind != JsonValueKind.String ||
-            !payload.TryGetProperty("sandboxUrl", out var sandboxValue) || sandboxValue.ValueKind != JsonValueKind.String ||
-            !payload.TryGetProperty("sandboxPort", out var portValue) || portValue.ValueKind != JsonValueKind.Number ||
-            !portValue.TryGetInt32(out var port) ||
-            port is < 1 or > 65535)
+            !payload.TryGetProperty("html", out var htmlValue) || htmlValue.ValueKind != JsonValueKind.String)
             throw new InvalidDataException("The Gateway returned an invalid Canvas document.");
         var html = htmlValue.GetString()!;
         if (Encoding.UTF8.GetByteCount(html) > MaximumHtmlUtf8Bytes)
             throw new InvalidDataException("The Canvas document exceeds the supported size.");
         var gateway = HttpOrigin(gatewayUrl);
+        var sandbox = ResolveSandboxUrl(payload, gateway);
+        var embedSandbox = payload.TryGetProperty("embedSandbox", out var mode) &&
+            mode.ValueKind == JsonValueKind.String && mode.GetString() is "strict" or "scripts" or "trusted"
+                ? mode.GetString() : null;
+        return new(html, gateway, sandbox, embedSandbox);
+    }
+
+    /// <summary>Shared proxy-address validation only, not a script or native bridge grant.</summary>
+    internal static Uri ResolveSandboxUrl(JsonElement payload, Uri gateway)
+    {
+        if (payload.ValueKind != JsonValueKind.Object ||
+            !payload.TryGetProperty("sandboxUrl", out var sandboxValue) || sandboxValue.ValueKind != JsonValueKind.String ||
+            !payload.TryGetProperty("sandboxPort", out var portValue) || portValue.ValueKind != JsonValueKind.Number ||
+            !portValue.TryGetInt32(out var port) || port is < 1 or > 65535)
+            throw new InvalidDataException("The isolated content sandbox address is invalid.");
         Uri origin;
         if (payload.TryGetProperty("sandboxOrigin", out var originValue))
         {
@@ -97,20 +103,18 @@ public sealed class ConversationCanvasBoundary
         var sandbox = RequireHttp(new Uri(origin, sandboxValue.GetString()).AbsoluteUri);
         if (!SameOrigin(origin, sandbox))
             throw new InvalidDataException("The Canvas sandbox URL does not match its origin.");
-        var embedSandbox = payload.TryGetProperty("embedSandbox", out var mode) &&
-            mode.ValueKind == JsonValueKind.String && mode.GetString() is "strict" or "scripts" or "trusted"
-                ? mode.GetString() : null;
-        var result = new CanvasDocumentView(html, gateway, sandbox, embedSandbox);
-        _ = new ConversationCanvasBoundary(result, new string('0', 32));
-        return result;
+        ValidateSandbox(gateway, sandbox);
+        return sandbox;
     }
 
     public static Uri HttpOrigin(string value)
     {
-        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
-            !string.IsNullOrEmpty(uri.UserInfo))
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
             throw new InvalidDataException("The Canvas Gateway origin is invalid.");
-        var builder = new UriBuilder(uri) { Path = "/", Query = "", Fragment = "" };
+        var builder = new UriBuilder(uri)
+        {
+            UserName = "", Password = "", Path = "/", Query = "", Fragment = ""
+        };
         builder.Scheme = uri.Scheme switch
         {
             "ws" => "http",
@@ -134,6 +138,14 @@ public sealed class ConversationCanvasBoundary
         left.Scheme == right.Scheme &&
         string.Equals(left.IdnHost, right.IdnHost, StringComparison.OrdinalIgnoreCase) &&
         left.Port == right.Port;
+
+    private static void ValidateSandbox(Uri gateway, Uri sandbox)
+    {
+        if (SameOrigin(gateway, sandbox) || sandbox.AbsolutePath != SandboxPath ||
+            !string.IsNullOrEmpty(sandbox.Fragment) || gateway.Scheme == "https" && sandbox.Scheme != "https")
+            throw new InvalidDataException("The content sandbox must use a separate origin.");
+        ValidatePublicQuery(sandbox);
+    }
 
     private static void ValidatePublicQuery(Uri uri)
     {

@@ -68,6 +68,19 @@ public sealed class ConversationCanvasBoundaryTests
             """), "wss://gateway.example"));
     }
 
+    [Fact]
+    public void ParentOriginDoesNotInheritWebSocketProxyCredentialsOrQuery()
+    {
+        var origin = ConversationCanvasBoundary.HttpOrigin("wss://proxy-user:proxy-password@gateway.example/ws?token=not-forwarded");
+        Assert.Equal("https://gateway.example/", origin.AbsoluteUri);
+        Assert.Equal(string.Empty, origin.UserInfo);
+        Assert.Equal(string.Empty, origin.Query);
+        Assert.Throws<InvalidDataException>(() => ConversationCanvasBoundary.ParseDocument(Json("""
+            {"html":"x","sandboxUrl":"/mcp-app-sandbox","sandboxPort":18790,
+             "sandboxOrigin":"https://proxy-user:proxy-password@sandbox.example"}
+            """), "wss://gateway.example"));
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(65536)]
@@ -142,6 +155,8 @@ public sealed class ConversationCanvasBoundaryTests
         Assert.Contains("}, config.sandboxOrigin)", html);
         Assert.Contains("allow-scripts allow-same-origin allow-forms", html);
         Assert.Contains("port.close()", html);
+        Assert.Contains("\"maximumPromptCharacters\":4000", html);
+        Assert.Contains("prompt.length <= config.maximumPromptCharacters", html);
         var csp = ConversationCanvasHostDocument.ContentSecurityPolicy(boundary, Nonce);
         Assert.Contains("connect-src 'none'", csp);
         Assert.Contains("base-uri 'none'", csp);

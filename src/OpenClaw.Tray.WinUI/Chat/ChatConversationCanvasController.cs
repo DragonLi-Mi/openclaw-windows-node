@@ -61,8 +61,9 @@ internal sealed class ChatConversationCanvasController : IDisposable
     internal void Close() => _panels.Close(PanelId);
     internal void InteractionBlocked()
     {
-        if (Snapshot.Operation?.IsCurrent == true)
-            PublishCurrent(Snapshot with { InteractionBlocked = true });
+        var snapshot = Snapshot;
+        if (!snapshot.InteractionBlocked && snapshot.Operation?.IsCurrent == true)
+            PublishCurrent(snapshot with { InteractionBlocked = true });
     }
 
     internal async Task LoadAsync()

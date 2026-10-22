@@ -21,7 +21,8 @@ public static class ConversationCanvasHostDocument
             sandboxOrigin = boundary.SandboxOrigin,
             title,
             renderId,
-            theme = theme is "dark" ? "dark" : "light"
+            theme = theme is "dark" ? "dark" : "light",
+            maximumPromptCharacters = ConversationCanvasBoundary.MaximumPromptCharacters
         });
         return $$"""
             <!doctype html>
@@ -104,8 +105,12 @@ public static class ConversationCanvasHostDocument
                 promptPort = port;
                 port.onmessage = message => {
                   if (message.data?.type === "openclaw:widget-prompt" && rendered && focused() &&
-                      typeof message.data.prompt === "string")
-                    send("prompt", { text: message.data.prompt });
+                      typeof message.data.prompt === "string") {
+                    const prompt = message.data.prompt.trim();
+                    if (prompt.length > 0 && prompt.length <= config.maximumPromptCharacters &&
+                        !prompt.startsWith("/") && !prompt.startsWith("!"))
+                      send("prompt", { text: prompt });
+                  }
                 };
                 port.start();
                 port.postMessage({ type: "openclaw:widget-prompt-host-ready" });

@@ -132,6 +132,11 @@ produced, not instantaneous revocation of already-running document scripts.
 This character rejection is intentionally stricter than the web
 client. Close or owner change disposes the surface; a reconnect must refetch the
 document rather than reuse old sandbox or prompt authority.
+Foreground-window and focus checks are not proof of a recent user gesture. A
+script in the currently focused document can request normal conversational
+prompts within these bounds, as in the web client. The conversation owner still
+decides admission. Repeated rejected requests coalesce into one native notice;
+the notice does not move focus or repeatedly announce through a live region.
 Unknown availability, a pending persisted widget receipt and read timeouts retry
 automatically on the same lease, with exponential backoff capped at 30 seconds
 and eight total attempts. A structured receipt's `retryAfterMs` hint can extend
@@ -157,6 +162,22 @@ display modes require their own captured view/session owner and must not be
 silently routed through the Canvas prompt channel. Root/transcript integration,
 authoritative script-policy transport and current-build populated native proof
 are separate completion gates, not claims established by source or unit tests.
+The Shared MCP App transport separately preserves the authenticated view payload
+and exposes an explicit operation allowlist. It overwrites top-level
+session/view/agent routing with the captured owner, preserves tool arguments and
+extension metadata as data, and never retries admitted operations automatically.
+Cancellation, timeout or a connection change after a write response can leave
+an unknown outcome even when the Gateway already executed the operation. The
+bridge must not present that as a confirmed failure or automatically retry it.
+`MCP_APP_VIEW_EXPIRED` remains a structured Gateway detail code for an expired
+view, not a retryable generic error. The view HTML limit follows the existing
+32 Mi UTF-16-character WebSocket envelope ceiling, rather than the separate
+10 MiB UTF-8 saved-Canvas-widget limit.
+This transport seam alone does not enable the native MCP App UI. Message and
+file-open confirmation, parent acceptance, SDK initialization, subscription
+lifetime and native proof are still required.
+In particular, `mcp.app.hostContextChanged` and `mcp.app.resourceUpdated` event
+consumption remain part of the unfinished UI bridge, not transport parity.
 
 Queued submissions leave the textbox and remain after the current turn as normal
 right-aligned user bubbles. A transparent `ChatPendingUserBrush`, subtle `ChatStrokeBrush`
