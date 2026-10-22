@@ -8120,4 +8120,8 @@ Ga na inschrijving terug naar Instellingen &gt; Windows Update en controleer op 
   <data name="Chat_McpApp_Cancel" xml:space="preserve"><value>Annuleren</value></data>
   <data name="Chat_McpApp_ContentBlocks" xml:space="preserve"><value>Inhoudsitems: {0}</value></data>
   <data name="Chat_Panel_ToolUnavailable" xml:space="preserve"><value>Deze details zijn niet meer actueel. Open de details opnieuw vanuit de huidige tool.</value></data>
+  <data name="Chat_Panel_AccountLoading" xml:space="preserve"><value>Het operatoraccount voor dit gesprek wordt gecontroleerd.</value></data>
+  <data name="Chat_Panel_AccountUnavailable" xml:space="preserve"><value>Deze Gateway kan het operatoraccount niet verifiëren. Gesprekspanelen zijn niet beschikbaar.</value></data>
+  <data name="Chat_Panel_AccountFailed" xml:space="preserve"><value>Het operatoraccount kon niet worden geverifieerd. Maak opnieuw verbinding om het nogmaals te proberen.</value></data>
+  <data name="Chat_Panel_AccountChanged" xml:space="preserve"><value>Het operatoraccount is gewijzigd. Maak opnieuw verbinding voordat u gesprekspanelen opent.</value></data>
 </root>

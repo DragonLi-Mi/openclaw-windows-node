@@ -8119,4 +8119,8 @@
   <data name="Chat_McpApp_Cancel" xml:space="preserve"><value>取消</value></data>
   <data name="Chat_McpApp_ContentBlocks" xml:space="preserve"><value>內容項目數：{0}</value></data>
   <data name="Chat_Panel_ToolUnavailable" xml:space="preserve"><value>這些詳細資訊已不是最新狀態。請從目前的工具重新開啟詳細資訊。</value></data>
+  <data name="Chat_Panel_AccountLoading" xml:space="preserve"><value>正在驗證此對話的操作員帳戶。</value></data>
+  <data name="Chat_Panel_AccountUnavailable" xml:space="preserve"><value>此 Gateway 無法驗證操作員帳戶。對話面板無法使用。</value></data>
+  <data name="Chat_Panel_AccountFailed" xml:space="preserve"><value>無法驗證操作員帳戶。請重新連線以重試。</value></data>
+  <data name="Chat_Panel_AccountChanged" xml:space="preserve"><value>操作員帳戶已變更。請重新連線後再開啟對話面板。</value></data>
 </root>

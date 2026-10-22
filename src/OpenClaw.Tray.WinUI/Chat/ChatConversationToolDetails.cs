@@ -9,6 +9,9 @@ internal sealed class ChatConversationToolDetails
     private sealed record Selection(ChatConversationContext Context, ChatToolDetailRequest Request);
     private readonly Dictionary<ChatConversationIdentity, Selection> _selections = [];
 
+    internal static bool HasCurrentHistory(bool nativeProvider, string? sessionKey, IReadOnlySet<string>? currentHistory) =>
+        !nativeProvider || sessionKey is not null && currentHistory?.Contains(sessionKey) == true;
+
     internal bool Open(
         ChatConversationPanelState panels,
         ChatConversationContext expectedContext,

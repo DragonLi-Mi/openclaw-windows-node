@@ -78,13 +78,36 @@ use the card fill above that content layer.
 
 Conversation side panels share one native host beside the existing timeline and
 composer. `ChatConversationPanelState` retains only panel selection and width
-for the exact Gateway record, accepted signing identity and session key/id/agent.
+for the exact Gateway record, canonical operator profile, accepted signing
+device and session key/id/agent.
 Changing connection epoch revokes pending work without treating the retained
 layout as authorization. A session id changing from unknown to known is an
 identity change, not a wildcard match.
 The retained ChatPage owns the layout store across provider/client remounts;
 each new mount gets a fresh operation lifetime. Closing the Workspace clears
 that window's layout store. Content and edit buffers are not stored by this host.
+
+The canonical operator profile is `users.self.profile.id`, never a signing
+device, channel account, name or email. `ChatConversationAccountIdentity` reads
+the already advertised, authenticated `users.self` method with the existing
+self-read scopes, and accepts a result only for its original client, ready
+connection epoch and self-profile revision. `SelfProfileChanged` revokes the
+fact before starting a fresh read, including on the same socket. The
+display-only `WorkspaceIdentitySource` is not an authorization source.
+An unresolved account never supplies a retained-state key. Loading, explicit
+profileless/unsupported and failed reads have distinct localized states; the
+composer remains usable. An older Gateway without `users.self` cannot open or
+restore conversation panels. There is no device-only compatibility fallback.
+If a different known profile is observed on the same socket, panels require a
+reconnect. Existing provider timelines and session catalogs do not carry account
+provenance, so they cannot be adopted by the new profile. Ordinary chat is not
+disabled by the panel compatibility check; its broader input/history scoping is
+separate work. Returning to a previously known profile restores its layout only
+after a fresh connection and current canonical profile response; old leases and
+detail requests do not revive. Native tool details additionally wait for history
+committed in the current connection rather than authorizing cached transcripts.
+This is presentation scoping, not new permission or an auth API. Server-side
+authorization and epoch-bound mutation admission remain mandatory.
 
 The conversation remains mounted while panels open, close or resize. At widths
 below 652 pixels, the panel fills the conversation area and the retained

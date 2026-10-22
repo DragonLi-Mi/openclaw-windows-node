@@ -36,6 +36,7 @@ public sealed class ChatConversationPanelStateTests
     [InlineData("gateway")]
     [InlineData("session")]
     [InlineData("disconnected")]
+    [InlineData("account")]
     public void CaptureRefusesUnreadyIdentity(string missing)
     {
         var (client, proxy) = Gateway();
@@ -44,7 +45,7 @@ public sealed class ChatConversationPanelStateTests
         if (missing == "disconnected") proxy.Connected = false;
         Assert.Null(ChatConversationContext.Capture(
             missing == "gateway" ? null : "gateway-one", client,
-            missing == "session" ? null : Session()));
+            missing == "session" ? null : Session(), missing == "account" ? null : "profile-a"));
     }
 
     [Fact]
@@ -52,7 +53,7 @@ public sealed class ChatConversationPanelStateTests
     {
         var (client, _) = Gateway();
         var context = Assert.IsType<ChatConversationContext>(
-            ChatConversationContext.Capture("gateway-one", client, new() { Key = "custom-key" }));
+            ChatConversationContext.Capture("gateway-one", client, new() { Key = "custom-key" }, "profile-a"));
         Assert.Equal("custom-key", context.Identity.SessionKey);
         Assert.Null(context.Identity.AgentId);
         Assert.Null(context.Identity.SessionId);
@@ -78,7 +79,7 @@ public sealed class ChatConversationPanelStateTests
     public void SelectionOrAuthorityChangeRejectsDelayedCompletion(string change)
     {
         var (client, proxy) = Gateway();
-        ChatConversationContext? current = ChatConversationContext.Capture("gateway-one", client, Session());
+        ChatConversationContext? current = ChatConversationContext.Capture("gateway-one", client, Session(), "profile-a");
         using var panels = new ChatConversationPanelState(key =>
             current?.Identity.SessionKey == key ? current : null);
         panels.Bind("agent:writing:one");
@@ -109,7 +110,7 @@ public sealed class ChatConversationPanelStateTests
     {
         var (client, _) = Gateway();
         using var panels = new ChatConversationPanelState(key =>
-            ChatConversationContext.Capture("gateway-one", client, Session(key, key + "-id")));
+            ChatConversationContext.Capture("gateway-one", client, Session(key, key + "-id"), "profile-a"));
         panels.Bind("one");
         panels.Open("details");
         panels.Resize(512);
@@ -133,7 +134,7 @@ public sealed class ChatConversationPanelStateTests
     {
         var (client, _) = Gateway();
         using var panels = new ChatConversationPanelState(key =>
-            ChatConversationContext.Capture("gateway-one", client, Session(key, key)));
+            ChatConversationContext.Capture("gateway-one", client, Session(key, key), "profile-a"));
         panels.Bind("one");
         panels.Open("details");
         var operation = panels.BeginOperation("details")!;
@@ -156,7 +157,7 @@ public sealed class ChatConversationPanelStateTests
     {
         var (client, _) = Gateway();
         using var panels = new ChatConversationPanelState(key => key == "known"
-            ? ChatConversationContext.Capture("gateway-one", client, Session(key, key)) : null);
+            ? ChatConversationContext.Capture("gateway-one", client, Session(key, key), "profile-a") : null);
         panels.Bind("known");
         panels.Open("details");
         panels.ExpectSelection("unknown");
@@ -180,7 +181,7 @@ public sealed class ChatConversationPanelStateTests
                 resolving.Set();
                 Assert.True(release.Wait(TimeSpan.FromSeconds(10)));
             }
-            return ChatConversationContext.Capture("gateway-one", client, Session(key, key));
+            return ChatConversationContext.Capture("gateway-one", client, Session(key, key), "profile-a");
         });
         panels.Bind("one");
         panels.Open("files");
@@ -206,7 +207,7 @@ public sealed class ChatConversationPanelStateTests
         var (client, proxy) = Gateway();
         var gateway = "gateway-one";
         var session = Session(id: change == "known-session-id" ? null : "session-one");
-        using var panels = new ChatConversationPanelState(_ => ChatConversationContext.Capture(gateway, client, session));
+        using var panels = new ChatConversationPanelState(_ => ChatConversationContext.Capture(gateway, client, session, "profile-a"));
         panels.Bind(session.Key);
         panels.Open("files");
         panels.Resize(600);
@@ -223,7 +224,7 @@ public sealed class ChatConversationPanelStateTests
     public void ReconnectRetainsLayoutButNeverReusesOperation()
     {
         var (client, proxy) = Gateway();
-        using var panels = new ChatConversationPanelState(_ => ChatConversationContext.Capture("gateway-one", client, Session()));
+        using var panels = new ChatConversationPanelState(_ => ChatConversationContext.Capture("gateway-one", client, Session(), "profile-a"));
         panels.Bind("agent:writing:one");
         panels.Open("files");
         var operation = panels.BeginOperation("files")!;
@@ -244,7 +245,7 @@ public sealed class ChatConversationPanelStateTests
     public void CloseAndDisposeCancelSelectedWorkButResizeDoesNot()
     {
         var (client, _) = Gateway();
-        var panels = new ChatConversationPanelState(_ => ChatConversationContext.Capture("gateway-one", client, Session()));
+        var panels = new ChatConversationPanelState(_ => ChatConversationContext.Capture("gateway-one", client, Session(), "profile-a"));
         panels.Bind("agent:writing:one");
         panels.Open("files");
         var operation = panels.BeginOperation("files")!;
@@ -270,7 +271,7 @@ public sealed class ChatConversationPanelStateTests
     {
         var (client, _) = Gateway();
         using var panels = new ChatConversationPanelState(_ =>
-            ChatConversationContext.Capture("gateway-one", client, Session()));
+            ChatConversationContext.Capture("gateway-one", client, Session(), "profile-a"));
         panels.Bind("agent:writing:one");
         panels.Open("details", "tool-one", "run-one");
         var previous = panels.BeginOperation("details", "run-one")!;
@@ -298,7 +299,7 @@ public sealed class ChatConversationPanelStateTests
         var layouts = new ChatConversationPanelLayouts();
         var (firstClient, _) = Gateway();
         var first = new ChatConversationPanelState(
-            _ => ChatConversationContext.Capture("gateway-one", firstClient, Session()), layouts);
+            _ => ChatConversationContext.Capture("gateway-one", firstClient, Session(), "profile-a"), layouts);
         first.Bind("agent:writing:one");
         first.Open("files");
         first.Resize(560);
@@ -306,20 +307,106 @@ public sealed class ChatConversationPanelStateTests
         first.Dispose();
         var (secondClient, _) = Gateway();
         using var second = new ChatConversationPanelState(
-            _ => ChatConversationContext.Capture("gateway-one", secondClient, Session()), layouts);
+            _ => ChatConversationContext.Capture("gateway-one", secondClient, Session(), "profile-a"), layouts);
         second.Bind("agent:writing:one");
         Assert.Equal("files", second.Layout.SelectedPanel);
         Assert.Equal(560, second.Layout.Width);
         Assert.False(oldOperation.IsCurrent);
         Assert.Same(secondClient, second.BeginOperation("files")!.Context.Client);
         using var otherGateway = new ChatConversationPanelState(
-            _ => ChatConversationContext.Capture("gateway-two", secondClient, Session()), layouts);
+            _ => ChatConversationContext.Capture("gateway-two", secondClient, Session(), "profile-a"), layouts);
         otherGateway.Bind("agent:writing:one");
         Assert.Null(otherGateway.Layout.SelectedPanel);
         layouts.Clear();
         using var reopenedWindow = new ChatConversationPanelState(
-            _ => ChatConversationContext.Capture("gateway-one", secondClient, Session()), layouts);
+            _ => ChatConversationContext.Capture("gateway-one", secondClient, Session(), "profile-a"), layouts);
         reopenedWindow.Bind("agent:writing:one");
         Assert.Null(reopenedWindow.Layout.SelectedPanel);
+    }
+
+    [Fact]
+    public async Task DelayedRootBindCannotOverwriteANewerAuthenticatedAccountFact()
+    {
+        var (client, _) = Gateway();
+        var context = ChatConversationContext.Capture("gateway-one", client, Session(), "profile-a")!;
+        using var started = new ManualResetEventSlim();
+        using var release = new ManualResetEventSlim();
+        var blockNext = 0;
+        using var panels = new ChatConversationPanelState(_ =>
+        {
+            var captured = context;
+            if (Interlocked.Exchange(ref blockNext, 0) == 1)
+            {
+                started.Set();
+                Assert.True(release.Wait(TimeSpan.FromSeconds(10)));
+            }
+            return captured;
+        });
+        panels.Bind("agent:writing:one");
+        panels.Open("files");
+        blockNext = 1;
+        var delayedBind = Task.Run(() => panels.Bind("agent:writing:one"));
+        Assert.True(started.Wait(TimeSpan.FromSeconds(10)));
+        context = context with { Identity = context.Identity with { UserId = "profile-b" }, AccountRevision = 2 };
+        panels.Refresh();
+        release.Set();
+        await delayedBind;
+        Assert.Equal("profile-b", panels.Context!.Identity.UserId);
+        Assert.Null(panels.Layout.SelectedPanel);
+    }
+
+    [Fact]
+    public void StaleConsumerCannotReacquireAnotherDocumentsLeaseWithinTheSameRun()
+    {
+        var (client, _) = Gateway();
+        using var panels = new ChatConversationPanelState(_ =>
+            ChatConversationContext.Capture("gateway-one", client, Session(), "profile-a"));
+        panels.Bind("agent:writing:one");
+        panels.Open("canvas", "document-a", "run-one");
+        var first = panels.BeginOperation("canvas", "run-one", "document-a")!;
+        panels.Open("canvas", "document-b", "run-one");
+        Assert.False(first.IsCurrent);
+        Assert.True(first.CancellationToken.IsCancellationRequested);
+        Assert.Null(panels.BeginOperation("canvas", "run-one", "document-a"));
+        var current = panels.BeginOperation("canvas", "run-one", "document-b")!;
+        Assert.Equal("document-b", current.ContentId);
+        Assert.True(current.IsCurrent);
+    }
+
+    [Theory]
+    [InlineData("Loading", "details")]
+    [InlineData("Loading", "files")]
+    [InlineData("Loading", "canvas")]
+    [InlineData("Profileless", "details")]
+    [InlineData("Profileless", "files")]
+    [InlineData("Profileless", "canvas")]
+    [InlineData("Unavailable", "details")]
+    [InlineData("Unavailable", "files")]
+    [InlineData("Unavailable", "canvas")]
+    [InlineData("Failed", "details")]
+    [InlineData("Failed", "files")]
+    [InlineData("Failed", "canvas")]
+    [InlineData("RequiresReconnect", "details")]
+    [InlineData("RequiresReconnect", "files")]
+    [InlineData("RequiresReconnect", "canvas")]
+    public void AllPanelSlotsRejectWorkWhileCanonicalAccountIsUnverified(string status, string panelId)
+    {
+        var (client, _) = Gateway();
+        var context = ChatConversationContext.Capture("gateway-one", client, Session(), "profile-a")!;
+        var account = ChatConversationAccountStatus.Known;
+        using var panels = new ChatConversationPanelState(
+            _ => account == ChatConversationAccountStatus.Known ? context : null,
+            accountStatus: () => account);
+        panels.Bind("agent:writing:one");
+        Assert.True(panels.Open(panelId, "content-one", "run-one"));
+        var operation = panels.BeginOperation(panelId, "run-one", "content-one")!;
+        account = Enum.Parse<ChatConversationAccountStatus>(status);
+        panels.Refresh();
+        Assert.Null(panels.Context);
+        Assert.Empty(panels.Layout.OpenPanels);
+        Assert.True(operation.CancellationToken.IsCancellationRequested);
+        Assert.False(operation.IsCurrent);
+        Assert.False(panels.Open(panelId, "content-one", "run-one"));
+        Assert.Null(panels.BeginOperation(panelId, "run-one", "content-one"));
     }
 }

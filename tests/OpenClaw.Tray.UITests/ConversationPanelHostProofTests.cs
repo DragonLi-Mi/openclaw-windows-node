@@ -148,14 +148,34 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
             .SelectMany(paragraph => paragraph.Inlines.OfType<Run>())
             .Select(run => run.Text));
 
+    [Fact]
+    public async Task UnavailableAccountExplainsWhyPanelsCannotOpenAndKeepsComposerUsable()
+    {
+        await WithRootAsync(960, async (surface, panels, _) =>
+        {
+            await ui.RunOnUIAsync(() =>
+            {
+                var notice = Find<TextBlock>(surface, "ConversationPanelAccountStatus");
+                Assert.Equal(Visibility.Visible, notice.Visibility);
+                Assert.Equal("This Gateway cannot verify the operator account. Conversation panels are unavailable.", notice.Text);
+                Assert.True(Find<TextBox>(surface, "ChatComposerInput").IsEnabled);
+                Assert.False(panels.Open("details"));
+                Assert.Null(panels.Context);
+                Assert.Empty(panels.Layout.OpenPanels);
+            });
+        }, unverifiedAccount: true);
+    }
+
     private async Task WithRootAsync(
-        int width, Func<Border, ChatConversationPanelState, PanelProvider, Task> proof, bool dense = true)
+        int width, Func<Border, ChatConversationPanelState, PanelProvider, Task> proof, bool dense = true,
+        bool unverifiedAccount = false)
     {
         await ui.ResetContainerAsync();
         var provider = new PanelProvider(dense);
         var client = DispatchProxy.Create<IOperatorGatewayClient, ReadyClient>();
-        using var panels = new ChatConversationPanelState(_ => ChatConversationContext.Capture(
-            "gateway-proof", client, new() { Key = "one", AgentId = "writing", SessionId = "session-one" }));
+        using var panels = new ChatConversationPanelState(_ => unverifiedAccount ? null : ChatConversationContext.Capture(
+            "gateway-proof", client, new() { Key = "one", AgentId = "writing", SessionId = "session-one" }, "profile-proof"),
+            accountStatus: () => unverifiedAccount ? ChatConversationAccountStatus.Unavailable : ChatConversationAccountStatus.Known);
         Border? surface = null;
         Window? window = null;
         ReactorHostControl? host = null;
@@ -181,7 +201,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
             await SettleAsync();
             await ui.RunOnUIAsync(() => WaitForRenderedConditionAsync(
                 () => FindDescendants<TextBox>(surface!).Any(control =>
-                    AutomationProperties.GetAutomationId(control) == "ChatComposerInput") && panels.IsReady,
+                    AutomationProperties.GetAutomationId(control) == "ChatComposerInput") && (unverifiedAccount || panels.IsReady),
                 "production conversation panel host"));
             await proof(surface!, panels, provider);
         }
