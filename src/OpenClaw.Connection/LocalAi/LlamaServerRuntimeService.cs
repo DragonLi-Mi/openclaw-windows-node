@@ -401,6 +401,21 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
                 throw new InvalidOperationException(
                     "The setup Gateway route cannot be acknowledged without a healthy managed Local AI runtime.");
             }
+            // Setup can discover the fallback only after the listener starts. Adopt that
+            // committed receipt before returning teardown ownership, but not another install.
+            LocalAiResolvedInstall? committed = await _manifestStore.LoadAsync(cancellationToken)
+                .ConfigureAwait(false);
+            if (_install is null || committed is null || current.Endpoint is null ||
+                !LocalAiManifestStore.HasSameRuntimeAndModel(committed.Manifest, _install.Manifest))
+            {
+                throw new InvalidOperationException(
+                    "The Local AI installation changed before the setup Gateway route could be acknowledged.");
+            }
+            // The healthy owned listener is authoritative over stale endpoint bookkeeping.
+            if (committed.Endpoint != current.Endpoint)
+                committed = await _manifestStore.UpdateVerifiedEndpointAsync(
+                    committed.Manifest, current.Endpoint, cancellationToken).ConfigureAwait(false);
+            _install = committed;
             await _options.EndpointLifecycle
                 .SetAutomaticRecoveryEnabledAsync(true, cancellationToken)
                 .ConfigureAwait(false);

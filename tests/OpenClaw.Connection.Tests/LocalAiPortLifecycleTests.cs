@@ -273,14 +273,9 @@ public sealed partial class LocalAiPortLifecycleTests
             PreviousEndpoints = null,
         });
 
-        InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(() =>
-            store.UpdateVerifiedEndpointAsync(
-                pending,
-                new Uri("http://127.0.0.1:28767/v1")));
-
-        Assert.Contains("finalized", error.Message, StringComparison.Ordinal);
+        await store.UpdateVerifiedEndpointAsync(pending, new Uri("http://127.0.0.1:28767/v1"));
         LocalAiResolvedInstall updated = (await store.LoadAsync())!;
-        Assert.Equal("http://127.0.0.1:28766/v1", updated.Manifest.Endpoint);
+        Assert.Equal("http://127.0.0.1:28767/v1", updated.Manifest.Endpoint);
         Assert.Null(updated.Manifest.ReplacedManifest);
         Assert.Null(updated.Manifest.PreviousEndpoints);
         string json = await File.ReadAllTextAsync(paths.ManifestPath);
@@ -289,7 +284,7 @@ public sealed partial class LocalAiPortLifecycleTests
     }
 
     [Fact]
-    public async Task Manifest_FinalizationRejectsConcurrentlyUpdatedEndpoint()
+    public async Task Manifest_FinalizationAcceptsOptionalEndpointAndFallbackDrift()
     {
         using var temp = new TempDirectory("local-ai-manifest-");
         var paths = new LocalAiPaths(temp.Path);
@@ -311,41 +306,13 @@ public sealed partial class LocalAiPortLifecycleTests
             pending,
             new Uri("http://127.0.0.1:28767/v1"));
 
-        InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(() =>
-            store.FinalizeReplacementAsync(pending));
-
-        Assert.Contains("changed", error.Message, StringComparison.Ordinal);
+        await store.UpdateGatewayFallbackAsync(pending, "openai/gpt-5", CancellationToken.None);
+        await store.FinalizeReplacementAsync(pending);
         LocalAiResolvedInstall retained = (await store.LoadAsync())!;
         Assert.Equal("http://127.0.0.1:28767/v1", retained.Manifest.Endpoint);
-        Assert.NotNull(retained.Manifest.ReplacedManifest);
-        Assert.NotNull(retained.Manifest.PreviousEndpoints);
-    }
-
-    [Fact]
-    public async Task Manifest_RejectsNullPreviousEndpoint()
-    {
-        using var temp = new TempDirectory("local-ai-manifest-");
-        var paths = new LocalAiPaths(temp.Path);
-        var store = new LocalAiManifestStore(paths);
-        LocalAiInstallManifest original = ValidManifest() with
-        {
-            Endpoint = "http://127.0.0.1:28765/v1",
-        };
-        await store.SaveAsync(original with
-        {
-            ModelCatalogId = "replacement-model",
-            ModelAlias = "replacement-model",
-            Endpoint = "http://127.0.0.1:28766/v1",
-            ReplacedManifest = original,
-            PreviousEndpoints = [original.Endpoint!],
-        });
-        JsonObject json = (JsonNode.Parse(await File.ReadAllTextAsync(paths.ManifestPath)) as JsonObject)!;
-        json["previousEndpoints"] = new JsonArray { null };
-        await File.WriteAllTextAsync(paths.ManifestPath, json.ToJsonString());
-
-        InvalidDataException error = await Assert.ThrowsAsync<InvalidDataException>(() => store.LoadAsync());
-
-        Assert.Contains("non-empty endpoint", error.Message, StringComparison.Ordinal);
+        Assert.Equal("openai/gpt-5", retained.Manifest.GatewayFallbackModel);
+        Assert.Null(retained.Manifest.ReplacedManifest);
+        Assert.Null(retained.Manifest.PreviousEndpoints);
     }
 
     [Fact]
@@ -2780,8 +2747,10 @@ public sealed partial class LocalAiPortLifecycleTests
         Assert.Equal([false, true, false, false, true], lifecycle.RecoveryIntents);
     }
 
-    [Fact]
-    public async Task AcknowledgeSetupGatewayRouteAsync_ClearsResolutionWithoutLifecycleIo()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AcknowledgeSetupGatewayRouteAsync_ClearsResolutionDespiteOptionalDrift(bool optionalDrift)
     {
         using var temp = new TempDirectory("local-ai-port-");
         LocalAiPaths paths = await PrepareInstallAsync(temp);
@@ -2800,7 +2769,20 @@ public sealed partial class LocalAiPortLifecycleTests
         Assert.True(started.GatewayRouteRequiresResolution);
         events.Clear();
 
+        var store = new LocalAiManifestStore(paths);
+        if (optionalDrift)
+        {
+            LocalAiInstallManifest changed = (await store.LoadAsync())!.Manifest with
+            {
+                Endpoint = "http://127.0.0.1:28770/v1",
+                GatewayFallbackModel = "openai/new-fallback",
+            };
+            await store.SaveAsync(changed);
+        }
         LocalAiRuntimeSnapshot acknowledged = await runtime.AcknowledgeSetupGatewayRouteAsync();
+        Assert.Equal(started.Endpoint, (await store.LoadAsync())!.Endpoint);
+        if (optionalDrift)
+            Assert.Equal("openai/new-fallback", (await store.LoadAsync())!.Manifest.GatewayFallbackModel);
 
         Assert.False(acknowledged.GatewayRouteRequiresResolution);
         Assert.Empty(events);
