@@ -7,10 +7,19 @@ OpenClaw Companion treats accessibility as a CI quality gate for the WinUI app. 
 The `.github\workflows\ci.yml` **Run Accessibility Tests (Axe.Windows)** step runs:
 
 ```powershell
-dotnet test tests\OpenClaw.Tray.UITests --no-build -c Debug -r win-x64 --filter Category=Accessibility
+.\scripts\Invoke-CiTest.ps1 `
+    -Project tests\OpenClaw.Tray.UITests `
+    -Runtime win-x64 `
+    -SkipCoverage `
+    -ResultsDirectory TestResults\Accessibility `
+    -TrxFileName Accessibility.trx `
+    -Filter Category=Accessibility `
+    -SummaryTitle "Accessibility (Axe.Windows)"
 ```
 
-Those tests launch the app in a real Windows desktop process and scan pages for WCAG violations through Axe.Windows. Failures are summarized in the GitHub Actions step summary and written to `Accessibility.trx`.
+The helper uses prebuilt Debug/win-x64 tests. Those tests launch the app in a real Windows desktop process and scan pages for WCAG violations through Axe.Windows. The GitHub Actions step summary reports admitted selected-test counts and status, with permitted skips explicitly unvalidated. A test-command failure or rejected report produces a generic failure summary, not detailed WCAG findings or a passing result. The summary is not complete native/custom proof.
+
+For failure details, inspect the step log and the `test-results-ui` artifact. When produced, the report is written to `TestResults\Accessibility\<invocation-id>\Accessibility.trx` in the workspace and uploaded as `Accessibility/<invocation-id>/Accessibility.trx`. The helper logs the expected report path before running tests. A skipped step or failure before report creation may leave no TRX, and a rejected report may be unusable.
 
 ## Running locally
 
