@@ -106,10 +106,13 @@ internal sealed class ChatConversationState
             ObjectDisposedException.ThrowIf(_disposed, this);
             if (_inputAuthorityRetired)
                 return BuildSnapshotLocked(context);
-            _presentation.ReplaceSessions(
-                sessions,
-                receivedFromGateway: false);
-            _history.SeedSessionIds(_presentation.SessionSnapshot());
+            if (!_presentation.HasFreshSessionSnapshot)
+            {
+                _presentation.ReplaceSessions(
+                    sessions,
+                    receivedFromGateway: false);
+                _history.SeedSessionIds(_presentation.SessionSnapshot());
+            }
             EnsureTimelinesForSessionsLocked();
             _presentation.RememberLastSessionState(context);
             return BuildSnapshotLocked(context);

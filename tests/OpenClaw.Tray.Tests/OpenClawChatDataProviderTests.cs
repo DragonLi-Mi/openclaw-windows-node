@@ -401,6 +401,29 @@ public class OpenClawChatDataProviderTests
     }
 
     [Fact]
+    public async Task InputCustody_CachedLoadCannotRollBackNewerGatewayIncarnation()
+    {
+        var old = MainSession();
+        old.SessionId = "old-incarnation";
+        old.Model = "old/model";
+        var (bridge, provider, _, _) = CreateProvider([old]);
+        await provider.LoadAsync();
+        var oldOrigin = provider.CaptureInputOrigin("main");
+        var current = MainSession();
+        current.SessionId = "new-incarnation";
+        current.Model = "new/model";
+        bridge.RaiseSessions([current]);
+        bridge.Sessions = [old];
+
+        var loaded = await provider.LoadAsync();
+
+        Assert.Equal("new-incarnation", provider.CaptureInputOrigin("main").SessionId);
+        Assert.Equal("new/model", Assert.Single(loaded.Threads).Model);
+        Assert.False(provider.IsInputOriginCurrent(oldOrigin));
+        await provider.DisposeAsync();
+    }
+
+    [Fact]
     public async Task InputCustody_ExplicitQueueRemainsLocalUntilActiveRunEnds()
     {
         var (bridge, provider, snapshots, _) = CreateProvider([MainSession()]);
