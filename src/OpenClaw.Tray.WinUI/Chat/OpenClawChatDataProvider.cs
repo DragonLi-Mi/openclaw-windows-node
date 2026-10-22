@@ -33,6 +33,18 @@ internal static class LocalizationHelper
         "Chat_Permission_ResultSubmittedFormat" => "Approval {0} submitted for {1}.",
         "Chat_Error_SendReturnedStatusFormat" => "Gateway returned send status '{0}'.",
         "Chat_Error_SendFailedFormat" => "Send failed: {0}",
+        "Chat_Input_ScopeChanged" => "The originating conversation changed. No input was sent.",
+        "Chat_Input_Unconfirmed" => "Delivery is unconfirmed. Review the retained input before sending again.",
+        "Chat_Input_Unavailable" => "This input mode requires the Gateway input-custody contract and permission to send messages.",
+        "Chat_Input_ReviewRequired" => "This input has unconfirmed delivery. Review its retained outbox entry before sending again.",
+        "Chat_Input_NoReceipt" => "No authoritative receipt resolved delivery. Review or discard this retained input; it was not resent.",
+        "Chat_Input_CannotSteer" => "Gateway-owned or uncertain inputs cannot be steered again.",
+        "Chat_Input_ExternalMutationRejected" => "External prompts cannot run commands or change a conversation's location. Use its composer.",
+        "Chat_Input_RecoveryUnavailable" => "This provider does not support input recovery.",
+        "Chat_Input_QueueActionRejected" => "This input cannot be changed or retried in its current state.",
+        "Chat_Input_AccountChanged" => "The authenticated account changed. A fresh chat context is required before sending.",
+        "Chat_Input_Interrupted" => "The Gateway reports that the pending input was interrupted. No input was resent.",
+        "Chat_Input_Cancelled" => "The Gateway cancelled the pending input. It was not resent.",
         "TimeAgo_JustNow" => "Just now",
         "TimeAgo_MinutesFormat" => "{0}m ago",
         "TimeAgo_HoursFormat" => "{0}h ago",
@@ -190,6 +202,7 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         _bridge.AgentEventReceived += OnAgentEventReceived;
         _bridge.ModelsListUpdated += OnModelsListUpdated;
         _bridge.ModelCatalogInvalidated += OnModelCatalogInvalidated;
+        _bridge.InputAuthorityChanged += OnInputAuthorityChanged;
 
         // Bridge ctor may have been invoked AFTER the gateway client was
         // already Connected, in which case the StatusChanged → Connected
@@ -273,11 +286,63 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
     public Task SendMessageAsync(string threadId, string message, CancellationToken cancellationToken = default, IReadOnlyList<ChatAttachment>? attachments = null)
         => SendMessageReportingAcceptanceAsync(threadId, message, cancellationToken, attachments);
 
-    internal async Task<bool> SendMessageReportingAcceptanceAsync(string threadId, string message, CancellationToken cancellationToken = default, IReadOnlyList<ChatAttachment>? attachments = null)
+    internal bool SupportsImmediateSteer => _bridge.SupportsInputCustody && _bridge.CanWriteInputs;
+
+    internal ChatInputLease CaptureInputOrigin(string threadId, IChatInputOrigin? externalOrigin = null) =>
+        _state.CaptureInputLease(_bridge.ConnectionOwner, threadId, externalOrigin);
+
+    private bool IsInputConnectionCurrent(ChatInputLease origin) =>
+        !_state.IsInputAuthorityRetired &&
+        ReferenceEquals(origin.ConnectionOwner, _bridge.ConnectionOwner) &&
+        origin.Generation.TransportEpoch == _bridge.ConnectionEpoch &&
+        (origin.ExternalOrigin is not { } external ||
+            ReferenceEquals(external.Client, _bridge.ConnectionOwner) &&
+            external.ConnectionEpoch == _bridge.ConnectionEpoch &&
+            external.SessionKey == origin.ThreadId &&
+            !external.CancellationToken.IsCancellationRequested && external.IsCurrent);
+
+    internal bool IsInputOriginCurrent(ChatInputLease origin) =>
+        IsInputConnectionCurrent(origin) && _state.IsInputLeaseCurrent(origin);
+
+    internal ChatInputLease? ContinueInputPreparation(
+        ChatInputLease original, ChatPlacementMaterializationReceipt receipt)
+    {
+        if (!IsInputConnectionCurrent(original) ||
+            !ReferenceEquals(receipt.Client, _bridge.ConnectionOwner))
+            return null;
+        var continuation = _state.ContinueMaterializedInput(original, receipt);
+        if (continuation is not null)
+            Publish(_state.Snapshot(ProjectionContext()));
+        return continuation;
+    }
+
+    internal async Task<bool> SendMessageReportingAcceptanceAsync(
+        string threadId, string message, CancellationToken cancellationToken = default,
+        IReadOnlyList<ChatAttachment>? attachments = null) =>
+        (await SendInputCoreAsync(threadId, message, cancellationToken, attachments,
+            ChatInputAction.Send, origin: null, rethrow: true).ConfigureAwait(false)).OwnsPayload;
+
+    internal Task<ChatInputSubmissionResult> SendInputAsync(
+        string threadId, string message, IReadOnlyList<ChatAttachment> attachments,
+        ChatInputAction action, ChatInputLease? origin, CancellationToken cancellationToken) =>
+        SendInputCoreAsync(threadId, message, cancellationToken, attachments, action, origin, rethrow: false);
+
+    private async Task<ChatInputSubmissionResult> SendInputCoreAsync(
+        string threadId, string message, CancellationToken cancellationToken,
+        IReadOnlyList<ChatAttachment>? attachments, ChatInputAction action,
+        ChatInputLease? origin, bool rethrow)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        attachments = attachments?.ToArray();
         if (string.IsNullOrWhiteSpace(threadId))
             throw new InvalidOperationException("chat.send requires an explicit sessionKey before sending a message.");
+        origin ??= CaptureInputOrigin(threadId);
+        if (origin.ThreadId != threadId || !IsInputOriginCurrent(origin))
+            return new(ChatInputSubmissionState.Stale, Error: ChatInputMessages.ScopeChanged);
+        if (_bridge.SupportsInputCustody && !_bridge.CanWriteInputs ||
+            ChatInputCustody.WireMode(action) is not null && !SupportsImmediateSteer)
+            return new(ChatInputSubmissionState.Rejected,
+                Error: ChatInputMessages.Unavailable);
 
         var hasAttachments = attachments is { Count: > 0 };
         if (string.IsNullOrWhiteSpace(message) && !hasAttachments)
@@ -337,7 +402,10 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
             ProjectionContext(),
             timelineText: safeUserText,
             attachmentPresentations: attachmentPresentations,
-            attachmentCorrelationSignature: attachmentCorrelationSignature);
+            attachmentCorrelationSignature: attachmentCorrelationSignature,
+            action: action,
+            useInputCustody: _bridge.SupportsInputCustody,
+            origin: origin);
         _telemetry.StartLocalTurn(
             admission.MessageId,
             threadId,
@@ -362,12 +430,15 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         Publish(admission.Snapshot);
 
         if (dispatch is not null)
-            return await DispatchQueuedSendAsync(
+        {
+            var accepted = await DispatchQueuedSendAsync(
                 dispatch,
                 queueCompletion,
-                rethrow: true,
+                rethrow,
                 cancellationToken);
-        return true;
+            return _state.GetInputSubmissionResult(threadId, admission.MessageId, accepted);
+        }
+        return new(ChatInputSubmissionState.Queued, admission.MessageId);
     }
 
     internal Task<bool> EnqueueCompactCommandAsync(
@@ -479,6 +550,74 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         return Task.FromResult(canceled);
     }
 
+    internal Task<bool> EditQueuedInputAsync(string threadId, string messageId, string text)
+    {
+        var request = _state.GetQueuedInput(threadId, messageId);
+        if (request?.Origin is { } origin && !IsInputOriginCurrent(origin))
+            return Task.FromResult(false);
+        var snapshot = _state.EditQueuedInput(threadId, messageId, text, ProjectionContext());
+        if (snapshot is not null)
+            Publish(snapshot);
+        return Task.FromResult(snapshot is not null);
+    }
+
+    internal Task<bool> MoveQueuedInputAsync(string threadId, string messageId, int direction)
+    {
+        var request = _state.GetQueuedInput(threadId, messageId);
+        if (request?.Origin is { } origin && !IsInputOriginCurrent(origin))
+            return Task.FromResult(false);
+        var snapshot = _state.MoveQueuedInput(threadId, messageId, direction, ProjectionContext());
+        if (snapshot is not null)
+            Publish(snapshot);
+        return Task.FromResult(snapshot is not null);
+    }
+
+    internal async Task<ChatInputSubmissionResult> RetryQueuedInputAsync(
+        string threadId, string messageId, bool steer, CancellationToken cancellationToken)
+    {
+        var request = _state.GetQueuedInput(threadId, messageId);
+        if (request is null || request.Origin is not { } origin || !IsInputOriginCurrent(origin))
+            return new(ChatInputSubmissionState.Stale, messageId, ChatInputMessages.ScopeChanged);
+        if (_state.GetInputSubmissionResult(threadId, messageId, false).State is
+            ChatInputSubmissionState.Unconfirmed or ChatInputSubmissionState.Accepted)
+        {
+            if (steer)
+                return new(ChatInputSubmissionState.Rejected, messageId, ChatInputMessages.CannotSteer);
+            if (!_bridge.SupportsInputCustody)
+                return _state.GetInputSubmissionResult(threadId, messageId, false) with
+                {
+                    Error = ChatInputMessages.RecoveryUnavailable,
+                };
+            await LoadHistoryAsync(threadId, force: true, cancellationToken, authoritative: true).ConfigureAwait(false);
+            if (_state.GetInputReceiptOutcome(threadId, messageId) is { } settled)
+                return settled;
+            if (!IsInputOriginCurrent(origin))
+                return new(ChatInputSubmissionState.Stale, messageId, ChatInputMessages.ScopeChanged);
+            return _state.GetInputSubmissionResult(threadId, messageId, accepted: false);
+        }
+        if (steer && !SupportsImmediateSteer)
+            return new(ChatInputSubmissionState.Rejected, messageId, ChatInputMessages.Unavailable);
+        var start = _state.RetryQueuedInput(threadId, messageId, steer, ProjectionContext());
+        if (start.Snapshot is null)
+            return new(ChatInputSubmissionState.Rejected, messageId, ChatInputMessages.QueueActionRejected);
+        Publish(start.Snapshot);
+        if (start.Dispatch is { } dispatch)
+        {
+            var completion = _telemetry.PrepareDispatchLocalTurn(request.Id, request.SendRunId);
+            var accepted = await DispatchQueuedSendAsync(dispatch, completion, rethrow: false, cancellationToken).ConfigureAwait(false);
+            return _state.GetInputSubmissionResult(threadId, messageId, accepted);
+        }
+        return new(ChatInputSubmissionState.Queued, messageId);
+    }
+
+    internal Task<bool> DiscardUnconfirmedInputAsync(string threadId, string messageId)
+    {
+        var snapshot = _state.DiscardUnconfirmedInput(threadId, messageId, ProjectionContext());
+        if (snapshot is not null)
+            Publish(snapshot);
+        return Task.FromResult(snapshot is not null);
+    }
+
     private async Task<bool> DispatchQueuedSendAsync(
         ChatQueuedSendDispatch dispatch,
         ChatTelemetryTracker.QueuePhaseCompletion? queueCompletion,
@@ -499,10 +638,14 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         var threadId = request.ThreadId;
         var hasAttachments = request.Attachments is { Count: > 0 };
         ChatTelemetryOperation? sendOperation = null;
+        var chatAttempted = false;
 
         try
         {
             await AwaitPendingSessionOptionPatchAsync(threadId, cancellationToken);
+            if (request.Origin is { } origin &&
+                (!IsInputOriginCurrent(origin) || request.Action == ChatInputAction.Steer && !_state.IsInputRunCurrent(origin)))
+                throw new ChatSendDeliveryException(ChatInputMessages.ScopeChanged, false);
             var preparation = _state.PrepareSendAttempt(
                 dispatch,
                 ProjectionContext());
@@ -516,13 +659,25 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
                 return false;
             }
             sendOperation = _telemetry.StartSendAttempt(request.Id);
-            var sendResult = await _bridge.SendChatMessageForRunAtEpochAsync(
+            chatAttempted = true;
+            var sendResult = await _bridge.SendChatInputAtEpochAsync(
                 request.Text,
                 threadId,
                 dispatch.SessionId,
                 request.Attachments,
                 idempotencyKey: request.SendRunId,
-                expectedConnectionEpoch: dispatch.TransportEpoch);
+                expectedConnectionEpoch: dispatch.TransportEpoch,
+                new ChatSendOptions(
+                    request.UseInputCustody,
+                    ChatInputCustody.WireMode(request.Action),
+                    request.Origin?.ExternalOrigin?.AgentId,
+                    request.Origin?.ExternalOrigin,
+                    () => request.Origin is null ||
+                        IsInputOriginCurrent(request.Origin) &&
+                        (request.Action != ChatInputAction.Steer || _state.IsInputRunCurrent(request.Origin))));
+            if (request.UseInputCustody && (sendResult.StopReason == "restart" ||
+                !sendResult.IsTerminalFailure && sendResult.Status is not ("started" or "in_flight" or "ok")))
+                throw new ChatSendDeliveryException(ChatInputMessages.Unconfirmed, true);
             var admissionStatus = ToTelemetryAdmissionStatus(
                 ChatSendQueuePolicy.ClassifyAdmission(sendResult));
             var admissionOutcome = admissionStatus == ChatAdmissionTelemetryStatus.Canceled
@@ -538,6 +693,9 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
                 _telemetry.ObserveAdmissionAccepted(request.Id);
             if (sendResult.IsTerminalFailure)
             {
+                if (request.UseInputCustody && (sendResult.Status == "timeout" || sendResult.StopReason == "restart"))
+                    throw new ChatSendDeliveryException(
+                        ChatInputMessages.Unconfirmed, true);
                 var rejectedCompletion = _telemetry.PrepareFinishByMessageId(
                     request.Id,
                     admissionOutcome,
@@ -583,7 +741,7 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
             if (commit.RetryDeferredSend)
                 ScheduleQueuedSendDrain(threadId, commit.DeferredRetryDelay);
 
-            if (commit.StaleRunIdToAbort is not null)
+            if (commit.StaleRunIdToAbort is not null && !_state.IsInputAuthorityRetired)
             {
                 _telemetry.CompletePreparedTurn(staleCompletion);
                 try
@@ -600,7 +758,8 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
             if (!commit.IsCurrent && commit.AcceptedSnapshot is not null)
                 TryDispatchNextQueuedSend(threadId);
 
-            if (hasAttachments && commit.IsCurrent)
+            if (hasAttachments && commit.IsCurrent && !request.UseInputCustody &&
+                !ChatSendQueuePolicy.IsInFlightAdmissionStatus(sendResult.Status))
             {
                 _metadataStore.CacheAttachments(
                     threadId,
@@ -615,21 +774,26 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         }
         catch (Exception ex)
         {
+            var uncertain = chatAttempted &&
+                ex is ChatSendDeliveryException { DeliveryUncertain: true } or TimeoutException;
+            var displayError = uncertain ? ChatInputMessages.Unconfirmed :
+                ex is ChatSendDeliveryException ? ChatInputMessages.ScopeChanged : ex.Message;
             _telemetry.FinishSendAttempt(
                 sendOperation,
-                ChatAdmissionTelemetryStatus.Exception,
+                uncertain ? ChatAdmissionTelemetryStatus.Unconfirmed : ChatAdmissionTelemetryStatus.Exception,
                 ex is OperationCanceledException
                     ? ChatTelemetryOutcome.Canceled
                     : ChatTelemetryOutcome.Failure,
                 ex);
             var failure = _state.FailSend(
                 dispatch,
-                ex.Message,
+                displayError,
                 string.Format(
                     CultureInfo.CurrentCulture,
                     LocalizationHelper.GetString("Chat_Error_SendFailedFormat"),
-                    ex.Message),
-                ProjectionContext());
+                    displayError),
+                ProjectionContext(),
+                deliveryUncertain: uncertain);
             if (!failure.IsCurrent)
             {
                 if (failure.Snapshot is not null)
@@ -642,13 +806,20 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
                 // false tells the composer this send was not accepted.
                 return false;
             }
+            if (failure.DeliveryResolved)
+            {
+                Logger.Warn($"[Queue] The send acknowledgement failed after input custody was independently confirmed: {ex.Message}");
+                if (failure.Snapshot is not null)
+                    Publish(failure.Snapshot);
+                return true;
+            }
 
             var rejectedCompletion = _telemetry.PrepareFinishByMessageId(
                 request.Id,
                 ex is OperationCanceledException
                     ? ChatTelemetryOutcome.Canceled
                     : ChatTelemetryOutcome.Failure,
-                ChatTurnTelemetryReason.SendRejected);
+                uncertain ? ChatTurnTelemetryReason.SendUnconfirmed : ChatTurnTelemetryReason.SendRejected);
             _telemetry.CompletePreparedTurn(rejectedCompletion);
             Logger.Warn($"[Queue] chat.send failed threadId='{threadId}' queuedMessageId='{request.Id}' sendRunId='{request.SendRunId}': {ex.Message}");
             // Surface as an error in the timeline + notification, while the
@@ -660,8 +831,10 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
                     threadId,
                     LocalizationHelper.GetString(
                         "Chat_Notification_SendFailed"),
-                    ex.Message));
+                    displayError));
             TryDispatchNextQueuedSend(threadId);
+            if (uncertain)
+                return true;
             if (rethrow)
                 throw;
             return false;
@@ -728,6 +901,8 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
     public async Task StopResponseAsync(string threadId, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (_state.IsInputAuthorityRetired)
+            throw new InvalidOperationException(ChatInputMessages.AccountChanged);
 
         var abort = _state.BeginAbort(threadId);
         var runId = abort.RunId;
@@ -826,11 +1001,14 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
             if (snapshot is null)
                 return;
             if (result.PublishSnapshot)
+            {
                 DeliverPublishBatch(
                     snapshot,
                     result.Notification is null
                         ? []
                         : [result.Notification]);
+                TryDispatchNextQueuedSend(result.Token.ThreadId);
+            }
             else if (result.Notification is not null)
                 DeliverPublishBatch(
                     snapshot,
@@ -860,7 +1038,7 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         // string; a blank value here is a no-op rather than a clear. Use
         // ClearModelAsync to revert a session to the gateway default.
         if (string.IsNullOrWhiteSpace(model)) return;
-        await TrackSessionOptionPatchAsync(threadId, () => _bridge.PatchSessionModelAsync(threadId, model));
+        await TrackSessionOptionPatchAsync(threadId, epoch => _bridge.PatchSessionModelAtEpochAsync(threadId, model, epoch));
     }
 
     public async Task ClearModelAsync(string threadId, CancellationToken cancellationToken = default)
@@ -868,11 +1046,14 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         cancellationToken.ThrowIfCancellationRequested();
         // Tri-state clear: removes the session's model override (explicit null)
         // so it tracks the gateway/agent default again.
-        await TrackSessionOptionPatchAsync(threadId, () => _bridge.ClearSessionModelAsync(threadId));
+        await TrackSessionOptionPatchAsync(threadId, epoch => _bridge.ClearSessionModelAtEpochAsync(threadId, epoch));
     }
 
-    private async Task TrackSessionOptionPatchAsync(string threadId, Func<Task> patchOperation)
+    private async Task TrackSessionOptionPatchAsync(string threadId, Func<long, Task> patchOperation)
     {
+        var origin = CaptureInputOrigin(threadId);
+        if (!IsInputOriginCurrent(origin))
+            throw new InvalidOperationException(ChatInputMessages.ScopeChanged);
         var lease = _state.BeginSessionOptionPatch(threadId);
         Exception? failure = null;
         try
@@ -885,7 +1066,9 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
                     Logger.Debug($"ChatDataProvider: continuing session option patch after previous patch failed: {ex.Message}");
                 }
             }
-            await patchOperation();
+            if (!IsInputOriginCurrent(origin))
+                throw new InvalidOperationException(ChatInputMessages.ScopeChanged);
+            await patchOperation(origin.Generation.TransportEpoch);
         }
         catch (Exception ex)
         {
@@ -903,12 +1086,7 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         var pending = _state.GetPendingSessionOptionPatch(threadId);
         if (pending is not null)
         {
-            try { await pending.WaitAsync(cancellationToken); }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                Logger.Debug($"ChatDataProvider: continuing send after session option patch failed: {ex.Message}");
-            }
+            await pending.WaitAsync(cancellationToken);
         }
     }
 
@@ -917,7 +1095,7 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         cancellationToken.ThrowIfCancellationRequested();
         await TrackSessionOptionPatchAsync(
             threadId,
-            () => _bridge.PatchSessionThinkingLevelAsync(threadId, thinkingLevel));
+            epoch => _bridge.PatchSessionThinkingLevelAtEpochAsync(threadId, thinkingLevel, epoch));
     }
 
     public async Task ClearThinkingLevelAsync(string threadId, CancellationToken cancellationToken = default)
@@ -925,7 +1103,7 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         cancellationToken.ThrowIfCancellationRequested();
         await TrackSessionOptionPatchAsync(
             threadId,
-            () => _bridge.ClearSessionThinkingLevelAsync(threadId));
+            epoch => _bridge.ClearSessionThinkingLevelAtEpochAsync(threadId, epoch));
     }
 
     public async Task EnsureCommandCatalogAsync(CancellationToken cancellationToken = default)
@@ -1154,6 +1332,7 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
             _bridge.AgentEventReceived -= OnAgentEventReceived;
             _bridge.ModelsListUpdated -= OnModelsListUpdated;
             _bridge.ModelCatalogInvalidated -= OnModelCatalogInvalidated;
+            _bridge.InputAuthorityChanged -= OnInputAuthorityChanged;
             _bridge.Dispose();
             return ValueTask.CompletedTask;
         }
@@ -1184,6 +1363,16 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         _bridge.DownloadAssistantFileAsync(sessionKey, media, cancellationToken);
 
     // ── Event handlers ──
+
+    private void OnInputAuthorityChanged(object? sender, EventArgs args)
+    {
+        if (!_state.IsDisposed)
+        {
+            lock (_publishGate)
+                _pendingPublishNotifications.Clear();
+            Publish(_state.RetireInputAuthority(ProjectionContext()));
+        }
+    }
 
     private void OnStatusChanged(object? sender, ConnectionStatus status)
     {
@@ -1229,6 +1418,11 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         foreach (var threadId in transition.QueuedThreadsToDrain)
         {
             TryDispatchNextQueuedSend(threadId);
+        }
+        if (_bridge.SupportsInputCustody)
+        {
+            foreach (var threadId in _state.RetainedInputThreads())
+                _ = _historyLoader.ReconcileInputsAsync(threadId);
         }
     }
 
@@ -1345,7 +1539,7 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
 
     private void OnChatMessageReceived(object? sender, ChatMessageInfo message)
     {
-        if (message is null || _state.IsDisposed)
+        if (message is null || _state.IsDisposed || _state.IsInputAuthorityRetired)
         {
             message?.SuppressNotification();
             return;
@@ -1569,7 +1763,7 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
 
     private void OnAgentEventReceived(object? sender, AgentEventInfo evt)
     {
-        if (evt is null || _state.IsDisposed)
+        if (evt is null || _state.IsDisposed || _state.IsInputAuthorityRetired)
             return;
         if (string.IsNullOrEmpty(evt.SessionKey))
         {
@@ -2121,6 +2315,8 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         Deliver(
             () =>
             {
+                if (_state.IsInputAuthorityRetired)
+                    snapshot = _state.Snapshot(ProjectionContext());
                 var failure = InvokeChangedSubscribers(snapshot);
                 try
                 {
@@ -2139,6 +2335,11 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         IReadOnlyList<ChatProviderNotification> notifications,
         bool publishSnapshot = true)
     {
+        if (_state.IsInputAuthorityRetired)
+        {
+            snapshot = _state.Snapshot(ProjectionContext());
+            notifications = [];
+        }
         ExceptionDispatchInfo? failure = null;
         if (publishSnapshot)
         {

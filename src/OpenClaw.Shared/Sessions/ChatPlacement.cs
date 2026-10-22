@@ -49,6 +49,28 @@ public sealed record ChatWorkspaceDirectory(
 
 public sealed record ChatPlacementSelection(ChatEnvironment Environment, ChatWorkspace Workspace);
 
+/// <summary>Identity returned by the actual connection's accepted session-creation request.</summary>
+public sealed class ChatPlacementMaterializationReceipt
+{
+    internal ChatPlacementMaterializationReceipt(
+        IOperatorGatewayClient client, long connectionEpoch, string sessionKey, string sessionId)
+    {
+        ArgumentNullException.ThrowIfNull(client);
+        ArgumentOutOfRangeException.ThrowIfNegative(connectionEpoch);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        Client = client;
+        ConnectionEpoch = connectionEpoch;
+        SessionKey = sessionKey;
+        SessionId = sessionId;
+    }
+
+    public IOperatorGatewayClient Client { get; }
+    public long ConnectionEpoch { get; }
+    public string SessionKey { get; }
+    public string SessionId { get; }
+}
+
 /// <summary>A preparation failed after a mutation was handed to the Gateway transport.</summary>
 public sealed class ChatPlacementOutcomeUncertainException(Exception innerException)
     : InvalidOperationException("The chat location may have changed before preparation failed.", innerException);
@@ -62,18 +84,26 @@ public interface IChatPlacementGateway
     /// <summary>Rechecks the caller's session authority before each mutation when a guard is supplied.</summary>
     Task PrepareAsync(string sessionKey, string agentId, ChatPlacementSelection selection,
         long connectionEpoch, CancellationToken cancellationToken, Func<CancellationToken, Task>? beforeMutation = null);
+    Task PrepareWithMaterializationAsync(
+        string sessionKey, string agentId, ChatPlacementSelection selection, long connectionEpoch,
+        CancellationToken cancellationToken, Func<CancellationToken, Task>? beforeMutation,
+        Func<ChatPlacementMaterializationReceipt, CancellationToken, Task> materialized) =>
+        PrepareAsync(sessionKey, agentId, selection, connectionEpoch, cancellationToken, beforeMutation);
 }
 
 public sealed class GatewayChatPlacementClient : IChatPlacementGateway
 {
     private readonly Func<long?> _connectionEpoch;
     private readonly Func<string, object, int, long, Task<JsonElement>> _request;
+    private readonly IOperatorGatewayClient? _client;
 
     internal GatewayChatPlacementClient(Func<long?> connectionEpoch,
-        Func<string, object, int, long, Task<JsonElement>> request)
+        Func<string, object, int, long, Task<JsonElement>> request,
+        IOperatorGatewayClient? client = null)
     {
         _connectionEpoch = connectionEpoch;
         _request = request;
+        _client = client;
     }
 
     public long? ConnectionEpoch => _connectionEpoch();
@@ -110,8 +140,15 @@ public sealed class GatewayChatPlacementClient : IChatPlacementGateway
                 .ToArray());
     }
 
-    public async Task PrepareAsync(string sessionKey, string agentId, ChatPlacementSelection selection,
-        long connectionEpoch, CancellationToken cancellationToken, Func<CancellationToken, Task>? beforeMutation = null)
+    public Task PrepareAsync(string sessionKey, string agentId, ChatPlacementSelection selection,
+        long connectionEpoch, CancellationToken cancellationToken, Func<CancellationToken, Task>? beforeMutation = null) =>
+        PrepareWithMaterializationAsync(sessionKey, agentId, selection, connectionEpoch, cancellationToken,
+            beforeMutation, static (_, _) => Task.CompletedTask);
+
+    public async Task PrepareWithMaterializationAsync(
+        string sessionKey, string agentId, ChatPlacementSelection selection, long connectionEpoch,
+        CancellationToken cancellationToken, Func<CancellationToken, Task>? beforeMutation,
+        Func<ChatPlacementMaterializationReceipt, CancellationToken, Task> materialized)
     {
         if (!selection.Environment.IsSelectable)
             throw new InvalidOperationException("The selected environment is unavailable.");
@@ -177,6 +214,9 @@ public sealed class GatewayChatPlacementClient : IChatPlacementGateway
                 cancellationToken, timeoutMs: 120_000, onAdmitted: () => mutationAdmitted = true,
                 beforeAdmitted: beforeMutation).ConfigureAwait(false);
             RequireSessionResult(created, sessionKey);
+            if (_client is not null && OptionalString(created, "sessionId") is { Length: > 0 } sessionId)
+                await materialized(new(_client, connectionEpoch, sessionKey, sessionId), cancellationToken)
+                    .ConfigureAwait(false);
             if (environment.IsLocal)
                 return;
 

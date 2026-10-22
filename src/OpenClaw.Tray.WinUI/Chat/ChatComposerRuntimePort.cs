@@ -21,6 +21,39 @@ internal sealed class ChatComposerRuntimePort(IChatDataProvider provider) : ICha
         provider is OpenClawChatDataProvider { SupportsSessionScopedModelCatalog: true };
     public long ModelCatalogRevision =>
         provider is OpenClawChatDataProvider native ? native.ModelCatalogRevision : 0;
+    public bool SupportsImmediateSteer =>
+        provider is OpenClawChatDataProvider { SupportsImmediateSteer: true };
+
+    public ChatInputLease? CaptureInputOrigin(string threadId, IChatInputOrigin? externalOrigin = null) =>
+        provider is OpenClawChatDataProvider native ? native.CaptureInputOrigin(threadId, externalOrigin) : null;
+
+    public bool IsInputOriginCurrent(ChatInputLease origin) =>
+        provider is OpenClawChatDataProvider native && native.IsInputOriginCurrent(origin);
+
+    public ChatInputLease? ContinueInputPreparation(
+        ChatInputLease original, ChatPlacementMaterializationReceipt receipt) =>
+        provider is OpenClawChatDataProvider native ? native.ContinueInputPreparation(original, receipt) : null;
+
+    public async Task<ChatInputSubmissionResult> SendInputAsync(
+        string threadId, string message, IReadOnlyList<ChatAttachment> attachments,
+        ChatInputAction action, ChatInputLease? origin, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (provider is OpenClawChatDataProvider native)
+                return await native.SendInputAsync(threadId, message, attachments, action, origin, cancellationToken)
+                    .ConfigureAwait(true);
+            if (ChatInputCustody.WireMode(action) is not null || origin?.ExternalOrigin is not null)
+                return new(ChatInputSubmissionState.Rejected, Error: ChatInputMessages.Unavailable);
+            await provider.SendMessageAsync(threadId, message, cancellationToken, attachments).ConfigureAwait(true);
+            return new(ChatInputSubmissionState.Accepted);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Trace.WriteLine($"[chat] scoped input failed: {ex}");
+            return new(ChatInputSubmissionState.Rejected, Error: ex.Message);
+        }
+    }
 
     public async Task<bool> SendMessageAsync(
         string threadId,
@@ -78,6 +111,25 @@ internal sealed class ChatComposerRuntimePort(IChatDataProvider provider) : ICha
         catch (OperationCanceledException) { }
         catch (Exception ex) { System.Diagnostics.Trace.WriteLine($"[chat] operation failed: {ex}"); }
     }
+
+    public Task<bool> EditQueuedInputAsync(string threadId, string messageId, string text) =>
+        provider is OpenClawChatDataProvider native
+            ? native.EditQueuedInputAsync(threadId, messageId, text) : Task.FromResult(false);
+
+    public Task<bool> MoveQueuedInputAsync(string threadId, string messageId, int direction) =>
+        provider is OpenClawChatDataProvider native
+            ? native.MoveQueuedInputAsync(threadId, messageId, direction) : Task.FromResult(false);
+
+    public Task<ChatInputSubmissionResult> RetryQueuedInputAsync(
+        string threadId, string messageId, bool steer, CancellationToken cancellationToken) =>
+        provider is OpenClawChatDataProvider native
+            ? native.RetryQueuedInputAsync(threadId, messageId, steer, cancellationToken)
+            : Task.FromResult(new ChatInputSubmissionResult(ChatInputSubmissionState.Rejected, messageId,
+                ChatInputMessages.RecoveryUnavailable));
+
+    public Task<bool> DiscardUnconfirmedInputAsync(string threadId, string messageId) =>
+        provider is OpenClawChatDataProvider native
+            ? native.DiscardUnconfirmedInputAsync(threadId, messageId) : Task.FromResult(false);
 
     public async Task SetModelAsync(string threadId, string model, CancellationToken cancellationToken)
     {

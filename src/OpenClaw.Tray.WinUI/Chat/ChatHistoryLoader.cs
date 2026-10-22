@@ -94,6 +94,10 @@ internal sealed class ChatHistoryLoader : IDisposable
 
     internal event EventHandler<ChatHistoryLoadResult>? Completed;
 
+    internal Task ReconcileInputsAsync(string threadId) =>
+        LoadCoreAsync(threadId, true, CancellationToken.None, true, null, false, false,
+            requireInputQuery: true);
+
     internal Task LoadAsync(
         string threadId,
         bool force = false,
@@ -230,7 +234,8 @@ internal sealed class ChatHistoryLoader : IDisposable
         bool authoritative,
         ChatHistoryCommitToken? expectedToken,
         bool replacement,
-        bool supersedeReplacement)
+        bool supersedeReplacement,
+        bool requireInputQuery = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (string.IsNullOrEmpty(threadId))
@@ -253,6 +258,8 @@ internal sealed class ChatHistoryLoader : IDisposable
             }
             if (_inFlight.ContainsKey(threadId))
             {
+                if (requireInputQuery)
+                    return;
                 if (replacement)
                 {
                     var replacementToken = expectedToken ??
@@ -319,7 +326,8 @@ internal sealed class ChatHistoryLoader : IDisposable
                         authoritative,
                         commitToken,
                         replacement,
-                        supersedeReplacement: false)
+                        supersedeReplacement: false,
+                        requireInputQuery)
                     .ConfigureAwait(false);
             }
             return;
@@ -336,11 +344,26 @@ internal sealed class ChatHistoryLoader : IDisposable
         Task<ChatHistoryInfo>? request = null;
         try
         {
-            request = _bridge.RequestChatHistoryAsync(threadId);
+            var inputQuery = _bridge.SupportsInputCustody
+                ? _state.CaptureInputReceiptQuery(threadId, _bridge.ConnectionOwner, _bridge.ConnectionEpoch)
+                : null;
+            if (requireInputQuery && inputQuery is null)
+            {
+                outcome = ChatTelemetryOutcome.Canceled;
+                return;
+            }
+            request = inputQuery is null
+                ? _bridge.RequestChatHistoryAsync(threadId)
+                : _bridge.RequestChatInputHistoryAsync(threadId, inputQuery.SessionId,
+                    inputQuery.Requests.Select(input => input.SendRunId).ToArray(),
+                    inputQuery.TransportEpoch, inputQuery.AgentId);
             var history = await request
                 .WaitAsync(linkedCancellation.Token)
                 .ConfigureAwait(false);
-            if (!_state.IsHistoryRequestCurrent(commitToken))
+            if (!_state.IsHistoryRequestCurrent(commitToken) ||
+                inputQuery is not null &&
+                    (_bridge.ConnectionEpoch != inputQuery.TransportEpoch ||
+                     !ReferenceEquals(_bridge.ConnectionOwner, inputQuery.ConnectionOwner)))
             {
                 outcome = ChatTelemetryOutcome.Canceled;
                 return;
@@ -355,7 +378,9 @@ internal sealed class ChatHistoryLoader : IDisposable
                 commitToken,
                 plan,
                 requestStartedAt,
-                authoritative);
+                authoritative,
+                history,
+                inputQuery);
             if (!committed)
             {
                 outcome = ChatTelemetryOutcome.Canceled;

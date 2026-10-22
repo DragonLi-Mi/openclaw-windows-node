@@ -275,7 +275,9 @@ internal sealed class ChatPlacementController(
         Notify();
     }
 
-    internal async Task<bool> PrepareAsync(string threadId, CancellationToken cancellationToken)
+    internal async Task<bool> PrepareAsync(
+        string threadId, CancellationToken cancellationToken, Func<bool>? isOriginCurrent = null,
+        Func<ChatPlacementMaterializationReceipt, bool>? materialized = null)
     {
         int generation;
         string agent;
@@ -326,8 +328,27 @@ internal sealed class ChatPlacementController(
         Notify();
         try
         {
-            await gateway.PrepareAsync(threadId, agent, selection, epoch, operation.Token,
-                token => WaitForCurrentHistoryAsync(generation, epoch, token)).ConfigureAwait(false);
+            if (isOriginCurrent?.Invoke() == false)
+                return false;
+            await gateway.PrepareWithMaterializationAsync(threadId, agent, selection, epoch, operation.Token,
+                async token =>
+                {
+                    await WaitForCurrentHistoryAsync(generation, epoch, token).ConfigureAwait(false);
+                    if (isOriginCurrent?.Invoke() == false)
+                        throw new OperationCanceledException(token);
+                },
+                (receipt, token) =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    lock (_gate)
+                    {
+                        if (_disposed || generation != _generation || gateway.ConnectionEpoch != epoch)
+                            throw new OperationCanceledException(token);
+                    }
+                    if (materialized?.Invoke(receipt) == false)
+                        throw new OperationCanceledException(token);
+                    return Task.CompletedTask;
+                }).ConfigureAwait(false);
             await WaitForCurrentHistoryAsync(generation, epoch, operation.Token).ConfigureAwait(false);
             operation.Token.ThrowIfCancellationRequested();
             lock (_gate)

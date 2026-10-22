@@ -10,7 +10,7 @@ using OpenClaw.TestSupport;
 
 namespace OpenClaw.Shared.Tests;
 
-public class OpenClawGatewayClientTests
+public partial class OpenClawGatewayClientTests
 {
     private static readonly TimeSpan CloseHandshakeTimeout = TimeSpan.FromSeconds(3);
 
@@ -3510,8 +3510,9 @@ public class OpenClawGatewayClientTests
         }
         """);
 
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(async () => await task);
+        var ex = await Assert.ThrowsAsync<ChatSendRejectedException>(async () => await task);
         Assert.Contains("operator.write", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(ex.Code);
     }
 
     [Fact]

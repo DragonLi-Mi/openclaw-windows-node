@@ -13,6 +13,9 @@ public interface IChatGatewayBridge : IDisposable
     bool IsConnected { get; }
     ConnectionStatus CurrentStatus { get; }
     long ConnectionEpoch => 0;
+    object ConnectionOwner => this;
+    bool SupportsInputCustody => false;
+    bool CanWriteInputs => false;
     /// <summary>Canonical main session key resolved by the gateway handshake; <c>null</c> until ready.</summary>
     string? MainSessionKey { get; }
     /// <summary>True once the gateway handshake has resolved session defaults.</summary>
@@ -55,6 +58,21 @@ public interface IChatGatewayBridge : IDisposable
             throw new InvalidOperationException("The Gateway connection changed before chat.send could be sent.");
         return SendChatMessageForRunAsync(message, sessionKey, sessionId, attachments, idempotencyKey);
     }
+    Task<ChatSendResult> SendChatInputAtEpochAsync(
+        string message, string sessionKey, string? sessionId, IReadOnlyList<ChatAttachment>? attachments,
+        string idempotencyKey, long expectedConnectionEpoch, ChatSendOptions options)
+    {
+        if (options.QueueMode is not null)
+            throw new NotSupportedException("The Gateway does not advertise the input-custody transport contract.");
+        if (options.IsCurrent?.Invoke() == false)
+            throw new ChatSendDeliveryException("The originating conversation changed. No input was sent.", false);
+        return SendChatMessageForRunAtEpochAsync(
+            message, sessionKey, sessionId, attachments, idempotencyKey, expectedConnectionEpoch);
+    }
+    Task<ChatHistoryInfo> RequestChatInputHistoryAsync(
+        string sessionKey, string? sessionId, IReadOnlyList<string> inputRunIds, long expectedConnectionEpoch,
+        string? agentId = null) =>
+        throw new NotSupportedException("The Gateway does not advertise input receipts.");
     /// <summary>
     /// Fetches the gateway command catalog (<c>commands.list</c>) via the typed
     /// protocol API. Returns a <see cref="CommandCatalog"/> whose
@@ -101,6 +119,26 @@ public interface IChatGatewayBridge : IDisposable
     /// restoring the gateway/provider default.
     /// </summary>
     Task ClearSessionThinkingLevelAsync(string sessionKey);
+    Task PatchSessionModelAtEpochAsync(string key, string model, long epoch)
+    {
+        if (ConnectionEpoch != epoch) throw new InvalidOperationException("The Gateway connection changed before the model update.");
+        return PatchSessionModelAsync(key, model);
+    }
+    Task ClearSessionModelAtEpochAsync(string key, long epoch)
+    {
+        if (ConnectionEpoch != epoch) throw new InvalidOperationException("The Gateway connection changed before the model update.");
+        return ClearSessionModelAsync(key);
+    }
+    Task PatchSessionThinkingLevelAtEpochAsync(string key, string level, long epoch)
+    {
+        if (ConnectionEpoch != epoch) throw new InvalidOperationException("The Gateway connection changed before the reasoning update.");
+        return PatchSessionThinkingLevelAsync(key, level);
+    }
+    Task ClearSessionThinkingLevelAtEpochAsync(string key, long epoch)
+    {
+        if (ConnectionEpoch != epoch) throw new InvalidOperationException("The Gateway connection changed before the reasoning update.");
+        return ClearSessionThinkingLevelAsync(key);
+    }
     Task<ChatHistoryInfo> RequestChatHistoryAsync(string? sessionKey);
     Task<AssistantMediaResolutionResult> ResolveAssistantMediaAsync(
         string sessionKey,
@@ -145,6 +183,11 @@ public interface IChatGatewayBridge : IDisposable
         add { }
         remove { }
     }
+    event EventHandler? InputAuthorityChanged
+    {
+        add { }
+        remove { }
+    }
 }
 
 /// <summary>
@@ -161,6 +204,7 @@ public sealed class GatewayClientChatBridge : IChatGatewayBridge
     private readonly EventHandler<AgentEventInfo> _agentEventReceivedHandler;
     private readonly EventHandler<ModelsListInfo> _modelsListUpdatedHandler;
     private readonly EventHandler _modelCatalogInvalidatedHandler;
+    private readonly EventHandler _inputAuthorityChangedHandler;
     // _currentStatus is written from the gateway client's StatusChanged
     // callback (arbitrary thread) and read from CurrentStatus on the UI
     // thread. ``volatile`` gives us a memory barrier so the reader can't
@@ -209,6 +253,7 @@ public sealed class GatewayClientChatBridge : IChatGatewayBridge
             ModelsListUpdated?.Invoke(s, e);
         };
         _modelCatalogInvalidatedHandler = (s, e) => ModelCatalogInvalidated?.Invoke(s, e);
+        _inputAuthorityChangedHandler = (s, e) => InputAuthorityChanged?.Invoke(s, e);
 
         // Subscribe StatusChanged BEFORE reading the seed so any
         // ``StatusChanged → X`` edge that fires during construction is
@@ -231,6 +276,7 @@ public sealed class GatewayClientChatBridge : IChatGatewayBridge
         _client.AgentEventReceived += _agentEventReceivedHandler;
         _client.ModelsListUpdated += _modelsListUpdatedHandler;
         _client.ModelCatalogInvalidated += _modelCatalogInvalidatedHandler;
+        _client.SelfProfileChanged += _inputAuthorityChangedHandler;
 
         if (_currentStatus == ConnectionStatus.Disconnected)
         {
@@ -261,6 +307,10 @@ public sealed class GatewayClientChatBridge : IChatGatewayBridge
     public IChatPlacementGateway PlacementGateway { get; }
     public ConnectionStatus CurrentStatus => _currentStatus;
     public long ConnectionEpoch => _client.SessionMutationConnectionEpoch ?? -1;
+    public object ConnectionOwner => _client;
+    public bool SupportsInputCustody => _client.AdvertisedServerCapabilities.Contains(ChatInputCustody.Capability);
+    public bool CanWriteInputs => _client.IsConnectedToGateway &&
+        _client.GrantedOperatorScopes.Any(scope => scope is "operator.write" or "operator.admin");
     public string? MainSessionKey => _client.MainSessionKey;
     public bool HasHandshakeSnapshot => _client.HasHandshakeSnapshot;
     public SessionInfo[] GetSessionList() => _client.GetSessionList();
@@ -289,6 +339,17 @@ public sealed class GatewayClientChatBridge : IChatGatewayBridge
         _client.SendChatMessageForRunAsync(message, sessionKey, sessionId, attachments, idempotencyKey,
             expectedConnectionEpoch);
 
+    public Task<ChatSendResult> SendChatInputAtEpochAsync(
+        string message, string sessionKey, string? sessionId, IReadOnlyList<ChatAttachment>? attachments,
+        string idempotencyKey, long expectedConnectionEpoch, ChatSendOptions options) =>
+        _client.SendChatMessageForRunAsync(message, sessionKey, sessionId, attachments, idempotencyKey,
+            expectedConnectionEpoch, options);
+
+    public Task<ChatHistoryInfo> RequestChatInputHistoryAsync(
+        string sessionKey, string? sessionId, IReadOnlyList<string> inputRunIds, long expectedConnectionEpoch,
+        string? agentId = null) =>
+        _client.RequestChatInputHistoryAsync(sessionKey, sessionId, inputRunIds, expectedConnectionEpoch, agentId);
+
     public Task PatchSessionModelAsync(string sessionKey, string model) =>
         _client.PatchSessionAsync(sessionKey, new SessionPatch { Model = model });
 
@@ -300,6 +361,22 @@ public sealed class GatewayClientChatBridge : IChatGatewayBridge
 
     public Task ClearSessionThinkingLevelAsync(string sessionKey) =>
         _client.PatchSessionAsync(sessionKey, new SessionPatch { ThinkingLevel = SessionPatch.Clear });
+
+    public Task PatchSessionModelAtEpochAsync(string key, string model, long epoch) =>
+        PatchChatSessionOptionsAsync(key, new SessionPatch { Model = model }, epoch);
+    public Task ClearSessionModelAtEpochAsync(string key, long epoch) =>
+        PatchChatSessionOptionsAsync(key, new SessionPatch { Model = SessionPatch.Clear }, epoch);
+    public Task PatchSessionThinkingLevelAtEpochAsync(string key, string level, long epoch) =>
+        PatchChatSessionOptionsAsync(key, new SessionPatch { ThinkingLevel = level }, epoch);
+    public Task ClearSessionThinkingLevelAtEpochAsync(string key, long epoch) =>
+        PatchChatSessionOptionsAsync(key, new SessionPatch { ThinkingLevel = SessionPatch.Clear }, epoch);
+
+    private async Task PatchChatSessionOptionsAsync(string key, SessionPatch patch, long epoch)
+    {
+        await _client.PatchSessionConfirmedAsync(key, patch, epoch).ConfigureAwait(false);
+        if (_client.SessionMutationConnectionEpoch == epoch)
+            await _client.RequestSessionsAsync().ConfigureAwait(false);
+    }
 
     public Task<CommandCatalog> ListCommandsAsync(CommandCatalogQuery? query = null) =>
         _client.ListCommandsAsync(query);
@@ -370,6 +447,7 @@ public sealed class GatewayClientChatBridge : IChatGatewayBridge
     public event EventHandler<AgentEventInfo>? AgentEventReceived;
     public event EventHandler<ModelsListInfo>? ModelsListUpdated;
     public event EventHandler? ModelCatalogInvalidated;
+    public event EventHandler? InputAuthorityChanged;
 
     public void Dispose()
     {
@@ -384,6 +462,7 @@ public sealed class GatewayClientChatBridge : IChatGatewayBridge
         _client.AgentEventReceived -= _agentEventReceivedHandler;
         _client.ModelsListUpdated -= _modelsListUpdatedHandler;
         _client.ModelCatalogInvalidated -= _modelCatalogInvalidatedHandler;
+        _client.SelfProfileChanged -= _inputAuthorityChangedHandler;
 
         StatusChanged = null;
         SessionsUpdated = null;

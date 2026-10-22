@@ -18,6 +18,21 @@ internal interface IChatComposerRuntimePort
     bool SupportsNativeLifecycle { get; }
     bool SupportsSessionScopedModelCatalog { get; }
     long ModelCatalogRevision { get; }
+    bool SupportsImmediateSteer => false;
+    ChatInputLease? CaptureInputOrigin(string threadId, IChatInputOrigin? externalOrigin = null) => null;
+    bool IsInputOriginCurrent(ChatInputLease origin) => false;
+    ChatInputLease? ContinueInputPreparation(
+        ChatInputLease original, ChatPlacementMaterializationReceipt receipt) => null;
+
+    async Task<ChatInputSubmissionResult> SendInputAsync(
+        string threadId, string message, IReadOnlyList<ChatAttachment> attachments,
+        ChatInputAction action, ChatInputLease? origin, CancellationToken cancellationToken)
+    {
+        if (ChatInputCustody.WireMode(action) is not null || origin?.ExternalOrigin is not null)
+            return new(ChatInputSubmissionState.Rejected, Error: ChatInputMessages.Unavailable);
+        return new(await SendMessageAsync(threadId, message, attachments, cancellationToken)
+            ? ChatInputSubmissionState.Accepted : ChatInputSubmissionState.Rejected);
+    }
 
     Task<bool> SendMessageAsync(
         string threadId,
@@ -32,6 +47,13 @@ internal interface IChatComposerRuntimePort
     Task StopResponseAsync(string threadId, CancellationToken cancellationToken);
 
     Task CancelQueuedMessageAsync(string threadId, string queuedMessageId, CancellationToken cancellationToken);
+    Task<bool> EditQueuedInputAsync(string threadId, string messageId, string text) => Task.FromResult(false);
+    Task<bool> MoveQueuedInputAsync(string threadId, string messageId, int direction) => Task.FromResult(false);
+    Task<ChatInputSubmissionResult> RetryQueuedInputAsync(
+        string threadId, string messageId, bool steer, CancellationToken cancellationToken) =>
+        Task.FromResult(new ChatInputSubmissionResult(ChatInputSubmissionState.Rejected, messageId,
+            ChatInputMessages.RecoveryUnavailable));
+    Task<bool> DiscardUnconfirmedInputAsync(string threadId, string messageId) => Task.FromResult(false);
 
     Task SetModelAsync(string threadId, string model, CancellationToken cancellationToken);
 
