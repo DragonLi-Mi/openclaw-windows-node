@@ -1971,7 +1971,7 @@ public class SetupStepsTests : IDisposable
             GatewayInstallPolicy.NodeVersion);
 
         Assert.Contains(
-            $"bash -s -- --node-version '{GatewayInstallPolicy.NodeVersion}' < \"$installer\"",
+            "bash -s -- --node-version '24.22.1' < \"$installer\"",
             command);
         Assert.DoesNotContain(" --version ", command, StringComparison.Ordinal);
         Assert.DoesNotContain("| bash", command, StringComparison.Ordinal);
@@ -1999,7 +1999,7 @@ public class SetupStepsTests : IDisposable
         Assert.Contains("--output \"$installer\"", command);
         Assert.Contains("'https://openclaw.ai/install-cli.sh'", command);
         Assert.Contains("if ! test -s \"$installer\"", command);
-        Assert.Contains("bash -s -- --version '2026.5.22' --node-version '24.19.0' < \"$installer\"", command);
+        Assert.Contains("bash -s -- --version '2026.5.22' --node-version '24.22.1' < \"$installer\"", command);
         Assert.DoesNotContain("--retry", command);
         Assert.DoesNotContain("| bash", command);
     }
