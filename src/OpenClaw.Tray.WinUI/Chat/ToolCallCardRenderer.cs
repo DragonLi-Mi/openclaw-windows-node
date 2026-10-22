@@ -27,41 +27,33 @@ internal static class ToolCallCardRenderer
     public static Element BuildStandalone(
         ChatTimelinePresentationContext props,
         ChatTimelineItem entry,
-        bool isNested = false)
+        bool isNested = false,
+        int? activityPosition = null)
     {
-        var details = new List<Element>();
-        var displayArgs = entry.ToolArgs is { Count: > 0 }
-            ? FormatToolDisplayArgs(entry.ToolArgs)
-            : string.Empty;
-        if (!string.IsNullOrWhiteSpace(displayArgs))
+        var details = BuildDetailSections(entry);
+        if (!string.IsNullOrWhiteSpace(props.SessionId)
+            && props.OnOpenToolDetails is { } openDetails)
         {
-            details.Add(BuildDetailSection(
-                LocalizedOrDefault("Chat_Tool_InputSection", "Tool input"),
-                displayArgs));
-        }
-        else if (!string.IsNullOrWhiteSpace(entry.Text))
-        {
-            details.Add(BuildDetailSection(
-                LocalizedOrDefault("Chat_Tool_InputSection", "Tool input"),
-                entry.Text));
-        }
-
-        if (!string.IsNullOrWhiteSpace(entry.ToolOutput))
-        {
-            details.Add(BuildDetailSection(
-                LocalizedOrDefault(
-                    entry.ToolResult == ChatToolCallStatus.Error
-                        ? "Chat_Tool_ErrorLabel"
-                        : "Chat_Tool_OutputLabel",
-                    entry.ToolResult == ChatToolCallStatus.Error
-                        ? "Tool error"
-                        : "Tool output"),
-                entry.ToolOutput));
+            var label = LocalizedOrDefault("Chat_Tool_OpenDetails", "Open details");
+            var request = new ChatToolDetailRequest(
+                props.SessionId, props.TimelineGeneration, entry.Id, entry.ToolRunId,
+                props.HistoryRevision, entry.ToolCallId, entry.ToolName);
+            var accessibleName = $"{label}: {DisplayToolName(entry)}. {StatusLabel(entry.ToolResult)}";
+            if (activityPosition is { } position)
+            {
+                accessibleName = string.Format(
+                    LocalizedOrDefault("Chat_Tool_OpenDetailsPositionFormat", "{0}. Tool {1}"),
+                    accessibleName, position);
+            }
+            details.Add(Button(label, () => openDetails(request))
+                .MinHeight(32)
+                .HAlign(HorizontalAlignment.Left)
+                .AutomationId($"ChatToolOpenDetails_{SanitizeAutomationId(entry.Id)}")
+                .AutomationName(accessibleName)
+                .WithKey($"tool-details:{entry.Id}"));
         }
 
-        var toolName = string.IsNullOrWhiteSpace(entry.ToolName)
-            ? LocalizedOrDefault("Chat_Tool_FooterLabel", "Tool")
-            : entry.ToolName;
+        var toolName = DisplayToolName(entry);
         var statusLabel = StatusLabel(entry.ToolResult);
         var expander = Expander(
                 $"{toolName} · {statusLabel}",
@@ -101,6 +93,55 @@ internal static class ToolCallCardRenderer
                 isNested
                     ? Color.FromArgb(0, 0, 0, 0)
                     : Color.FromArgb(0x40, 0x80, 0x80, 0x80)));
+    }
+
+    /// <summary>
+    /// Renders literal details from the host's current snapshot, not a click-time
+    /// copy. The host must validate session/generation, resolve the requested entry
+    /// on every render, and show an explicit unavailable state if it disappears.
+    /// </summary>
+    internal static Element BuildPanelDetails(ChatTimelineItem entry) =>
+        VStack(8, BuildDetailSections(entry).ToArray())
+            .HAlign(HorizontalAlignment.Stretch);
+
+    private static string DisplayToolName(ChatTimelineItem entry) =>
+        string.IsNullOrWhiteSpace(entry.ToolName)
+            ? LocalizedOrDefault("Chat_Tool_FooterLabel", "Tool")
+            : entry.ToolName;
+
+    private static List<Element> BuildDetailSections(ChatTimelineItem entry)
+    {
+        var details = new List<Element>();
+        var displayArgs = entry.ToolArgs is { Count: > 0 }
+            ? FormatToolDisplayArgs(entry.ToolArgs)
+            : string.Empty;
+        if (!string.IsNullOrWhiteSpace(displayArgs))
+        {
+            details.Add(BuildDetailSection(
+                LocalizedOrDefault("Chat_Tool_InputSection", "Tool input"),
+                displayArgs).WithKey("input"));
+        }
+        else if (!string.IsNullOrWhiteSpace(entry.Text))
+        {
+            details.Add(BuildDetailSection(
+                LocalizedOrDefault("Chat_Tool_InputSection", "Tool input"),
+                entry.Text).WithKey("input"));
+        }
+
+        if (!string.IsNullOrWhiteSpace(entry.ToolOutput))
+        {
+            details.Add(BuildDetailSection(
+                LocalizedOrDefault(
+                    entry.ToolResult == ChatToolCallStatus.Error
+                        ? "Chat_Tool_ErrorLabel"
+                        : "Chat_Tool_OutputLabel",
+                    entry.ToolResult == ChatToolCallStatus.Error
+                        ? "Tool error"
+                        : "Tool output"),
+                entry.ToolOutput).WithKey("output"));
+        }
+
+        return details;
     }
 
     private static Element BuildDetailSection(string label, string content)
@@ -178,7 +219,8 @@ internal static class ToolCallCardRenderer
             ? VStack(
                 0,
                 activity.Tools
-                    .Select(tool => BuildStandalone(props, tool, isNested: true)
+                    .Select((tool, index) => BuildStandalone(
+                            props, tool, isNested: true, activityPosition: index + 1)
                         .WithKey($"activity-tool:{tool.Id}"))
                     .ToArray())
             : Empty();
