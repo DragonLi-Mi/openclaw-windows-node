@@ -22,6 +22,7 @@ namespace OpenClaw.Tray.UITests;
 public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
 {
     private static readonly TimeSpan NativeReadinessTimeout = TimeSpan.FromSeconds(10);
+    private const int MaximumReaderScrollAttempts = 2;
     private Window? _proofWindow;
 
     [Theory]
@@ -51,7 +52,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 editor.Focus(FocusState.Programmatic);
             });
             await SettleAsync();
-            await ScrollReaderAsync(readerScroll, 120);
+            await ScrollReaderAsync(surface, readerScroll, 120);
             await SettleAsync();
             await ui.RunOnUIAsync(() =>
             {
@@ -172,14 +173,18 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
         await WithRootAsync(960, async (surface, panels, _, changeAccountStatus) =>
         {
             TextBlock? originalNotice = null;
+            TextBlock? captionReference = null;
             await ui.RunOnUIAsync(() =>
             {
                 var notice = Find<TextBlock>(surface, "ConversationPanelAccountStatus");
                 originalNotice = notice;
+                captionReference = new TextBlock { Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"] };
                 Assert.Equal(Visibility.Visible, notice.Visibility);
                 Assert.Equal("This Gateway cannot verify the operator account. Conversation panels are unavailable.", notice.Text);
                 Assert.Equal(notice.Text, AutomationProperties.GetName(notice));
                 Assert.Equal(AutomationLiveSetting.Polite, AutomationProperties.GetLiveSetting(notice));
+                Assert.Equal(12, notice.FontSize);
+                Assert.Equal(captionReference.FontWeight, notice.FontWeight);
                 Assert.True(Find<TextBox>(surface, "ChatComposerInput").IsEnabled);
                 Assert.False(panels.Open("details"));
                 Assert.Null(panels.Context);
@@ -194,6 +199,8 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 Assert.Same(originalNotice, notice);
                 Assert.Equal("Verifying the operator account for this conversation.", notice.Text);
                 Assert.Equal(notice.Text, AutomationProperties.GetName(notice));
+                Assert.Equal(12, notice.FontSize);
+                Assert.Equal(captionReference!.FontWeight, notice.FontWeight);
             });
             await CaptureAsync(surface, "Account-loading");
             await ui.RunOnUIAsync(() => changeAccountStatus(ChatConversationAccountStatus.RequiresReconnect));
@@ -204,6 +211,8 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 Assert.Same(originalNotice, notice);
                 Assert.Equal("The operator account changed. Reconnect before opening conversation panels.", notice.Text);
                 Assert.Equal(notice.Text, AutomationProperties.GetName(notice));
+                Assert.Equal(12, notice.FontSize);
+                Assert.Equal(captionReference!.FontWeight, notice.FontWeight);
             });
             await CaptureAsync(surface, "Account-reconnect-required");
         }, unverifiedAccount: true);
@@ -360,45 +369,69 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
         });
     }
 
-    private Task WaitForInitialTailAsync(Border surface, ScrollView scroll, bool requireScrollable = true) => ui.RunOnUIAsync(async () =>
+    private Task WaitForInitialTailAsync(Border surface, ScrollView scroll, bool requireScrollable = true) =>
+        WaitForStablePositionAsync(surface, scroll,
+            () => (!requireScrollable || scroll.ScrollableHeight > 160) &&
+                Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight) <= 1,
+            $"initial tail (requiresScrollableOver160={requireScrollable})");
+
+    private Task WaitForStablePositionAsync(
+        Border surface, ScrollView scroll, Func<bool> positionReady, string description) => ui.RunOnUIAsync(async () =>
     {
         var settled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var active = true;
         var stablePasses = 0;
         var previousExtent = double.NaN;
         var previousViewport = double.NaN;
-        void CheckLayout()
+        void CheckLayout(object? sender, object args)
         {
-            if (!active) return;
-            surface.UpdateLayout();
-            var atTail = scroll.IsLoaded && scroll.ViewportHeight > 0 && scroll.ExtentHeight > 0 &&
-                (!requireScrollable || scroll.ScrollableHeight > 160) &&
-                Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight) <= 1;
-            stablePasses = atTail && Math.Abs(previousExtent - scroll.ExtentHeight) < 0.5 &&
+            var atPosition = scroll.IsLoaded && scroll.ViewportHeight > 0 && scroll.ExtentHeight > 0 && positionReady();
+            stablePasses = atPosition && Math.Abs(previousExtent - scroll.ExtentHeight) < 0.5 &&
                 Math.Abs(previousViewport - scroll.ViewportHeight) < 0.5 ? stablePasses + 1 : 0;
             previousExtent = scroll.ExtentHeight;
             previousViewport = scroll.ViewportHeight;
             if (stablePasses >= 2) settled.TrySetResult();
-            else if (!ui.Dispatcher.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, CheckLayout))
-                settled.TrySetException(new InvalidOperationException("Dispatcher rejected initial-tail readiness."));
         }
-        CheckLayout();
+        surface.LayoutUpdated += CheckLayout;
+        Microsoft.UI.Xaml.Media.CompositionTarget.Rendering += CheckLayout;
+        CheckLayout(null, EventArgs.Empty);
         try
         {
             await settled.Task.WaitAsync(NativeReadinessTimeout);
             Assert.True(stablePasses >= 2);
-            Assert.InRange(Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight), 0, 1);
+            Assert.True(positionReady());
         }
         catch (TimeoutException)
         {
-            Assert.Fail($"Initial tail never settled for two low-priority layout checks " +
-                $"(requiresScrollableOver160={requireScrollable}): offset={scroll.VerticalOffset}, " +
+            Assert.Fail($"{description} never settled for two native layout/render observations: offset={scroll.VerticalOffset}, " +
                 $"maximum={scroll.ScrollableHeight}, extent={scroll.ExtentHeight}, viewport={scroll.ViewportHeight}.");
         }
-        finally { active = false; }
+        finally
+        {
+            surface.LayoutUpdated -= CheckLayout;
+            Microsoft.UI.Xaml.Media.CompositionTarget.Rendering -= CheckLayout;
+        }
     });
 
-    private Task ScrollReaderAsync(ScrollView scroll, double offset) => ui.RunOnUIAsync(async () =>
+    private async Task ScrollReaderAsync(Border surface, ScrollView scroll, double offset)
+    {
+        var attempts = new List<string>();
+        for (var attempt = 1; attempt <= MaximumReaderScrollAttempts; attempt++)
+        {
+            var correlation = await ScrollOnceAsync(scroll, offset);
+            await WaitForStablePositionAsync(surface, scroll, () => true, "reader extent after correlated scroll");
+            var reached = await ui.RunOnUIAsync(() =>
+            {
+                attempts.Add($"attempt={attempt},correlation={correlation},requested={offset},actual={scroll.VerticalOffset}," +
+                    $"extent={scroll.ExtentHeight},viewport={scroll.ViewportHeight}");
+                Console.WriteLine(attempts[^1]);
+                return Task.FromResult(Math.Abs(scroll.VerticalOffset - offset) <= 1);
+            });
+            if (reached) return;
+        }
+        Assert.Fail($"Native reader did not reach the requested position after bounded remeasurement: {string.Join(";", attempts)}");
+    }
+
+    private Task<int> ScrollOnceAsync(ScrollView scroll, double offset) => ui.RunOnUIAsync(async () =>
     {
         var completed = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
         var expected = -2;
@@ -415,12 +448,13 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 ScrollingAnimationMode.Disabled, ScrollingSnapPointsMode.Ignore));
             Assert.True(expected >= 0, "The native reader scroll was not admitted.");
             Assert.Equal(expected, await completed.Task.WaitAsync(NativeReadinessTimeout));
-            Assert.InRange(scroll.VerticalOffset, offset - 1, offset + 1);
+            return expected;
         }
         catch (TimeoutException)
         {
             Assert.Fail($"Native reader scroll {expected} never completed: " +
                 $"offset={scroll.VerticalOffset}, extent={scroll.ExtentHeight}, observed={string.Join(",", observed)}.");
+            throw;
         }
         finally { scroll.ScrollCompleted -= handler; }
     });

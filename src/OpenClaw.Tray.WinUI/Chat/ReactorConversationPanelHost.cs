@@ -149,6 +149,8 @@ internal sealed class ReactorConversationPanelHost : Component<ReactorConversati
                         .Set(text =>
                         {
                             text.Style = (Style)Application.Current.Resources["CaptionTextBlockStyle"];
+                            text.ClearValue(Microsoft.UI.Xaml.Controls.TextBlock.FontSizeProperty);
+                            text.ClearValue(Microsoft.UI.Xaml.Controls.TextBlock.FontWeightProperty);
                             AutomationProperties.SetLiveSetting(text, Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite);
                             var announcement = showAccountNotice ? accountMessage : null;
                             if (announcedAccount.Current == announcement) return;
