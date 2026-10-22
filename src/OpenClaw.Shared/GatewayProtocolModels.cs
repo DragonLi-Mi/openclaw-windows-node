@@ -401,6 +401,7 @@ public sealed class SessionListResult
 public sealed class SessionFileEntry
 {
     public string Path { get; set; } = "";
+    public string? WorkspacePath { get; set; }
     public string Name { get; set; } = "";
 
     /// <summary>Relevance: "modified" or "read".</summary>
@@ -414,6 +415,10 @@ public sealed class SessionFileEntry
 
     /// <summary>File content (present on <c>sessions.files.get</c>; usually omitted in list results).</summary>
     public string? Content { get; set; }
+    public string? Hash { get; set; }
+    public string? MimeType { get; set; }
+    public string? ContentEncoding { get; set; }
+    public string? PreviewKind { get; set; }
 }
 
 /// <summary>One file or folder in the session-rooted workspace browser.</summary>
@@ -451,6 +456,7 @@ public sealed class SessionFileList
 
     /// <summary>Absolute workspace root reported by the gateway, when available.</summary>
     public string? Root { get; set; }
+    public bool? GitCheckout { get; set; }
 
     public IReadOnlyList<SessionFileEntry> Files { get; set; } = Array.Empty<SessionFileEntry>();
 
@@ -466,10 +472,16 @@ public sealed class SessionFileContent
 {
     public string Key { get; set; } = "";
     public string? Root { get; set; }
+    public SessionFileSource? Source { get; set; }
+    public string? WorkspacePath { get; set; }
     public string Path { get; set; } = "";
     public string? Name { get; set; }
     public string? Kind { get; set; }
     public string? Content { get; set; }
+    public string? Hash { get; set; }
+    public string? MimeType { get; set; }
+    public string? ContentEncoding { get; set; }
+    public string? PreviewKind { get; set; }
     public long? Size { get; set; }
     public DateTime? UpdatedAt { get; set; }
 

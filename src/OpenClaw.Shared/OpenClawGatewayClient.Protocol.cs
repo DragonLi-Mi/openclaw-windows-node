@@ -651,6 +651,7 @@ public partial class OpenClawGatewayClient
         {
             Key = FirstNonEmpty(GetStringSafe(payload, "sessionKey"), key) ?? key,
             Root = GetStringSafe(payload, "root"),
+            GitCheckout = GetOptionalBool(payload, "gitCheckout"),
             Files = files,
             Browser = browser,
             IsSupported = true
@@ -674,10 +675,16 @@ public partial class OpenClawGatewayClient
         {
             Key = FirstNonEmpty(GetStringSafe(payload, "sessionKey"), key) ?? key,
             Root = GetStringSafe(payload, "root"),
+            Source = ParseSessionFileSource(payload),
             Path = FirstNonEmpty(GetString(file, "path"), path) ?? path,
+            WorkspacePath = GetString(file, "workspacePath"),
             Name = GetString(file, "name"),
             Kind = GetString(file, "kind"),
             Content = GetString(file, "content"),
+            Hash = GetString(file, "hash"),
+            MimeType = GetString(file, "mimeType"),
+            ContentEncoding = GetString(file, "contentEncoding"),
+            PreviewKind = GetString(file, "previewKind"),
             Size = GetLongOrNull(file, "size"),
             UpdatedAt = ParseUnixTimestampMs(file, "updatedAtMs"),
             Missing = GetOptionalBool(file, "missing") ?? false,
@@ -688,12 +695,17 @@ public partial class OpenClawGatewayClient
     private static SessionFileEntry ParseFileEntry(JsonElement item) => new()
     {
         Path = GetString(item, "path") ?? "",
+        WorkspacePath = GetString(item, "workspacePath"),
         Name = GetString(item, "name") ?? "",
         Kind = GetString(item, "kind"),
         Missing = GetOptionalBool(item, "missing") ?? false,
         Size = GetLongOrNull(item, "size"),
         UpdatedAt = ParseUnixTimestampMs(item, "updatedAtMs"),
-        Content = GetString(item, "content")
+        Content = GetString(item, "content"),
+        Hash = GetString(item, "hash"),
+        MimeType = GetString(item, "mimeType"),
+        ContentEncoding = GetString(item, "contentEncoding"),
+        PreviewKind = GetString(item, "previewKind")
     };
 
     private static SessionFileBrowser ParseFileBrowser(JsonElement browserEl)

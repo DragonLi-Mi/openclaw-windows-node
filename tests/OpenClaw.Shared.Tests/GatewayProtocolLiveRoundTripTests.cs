@@ -734,6 +734,9 @@ public sealed partial class GatewayProtocolLiveRoundTripTests : IDisposable
         private volatile string? _greeting;
         private WebSocket? _currentSocket;
         private readonly HashSet<string> _silentMethods = new(StringComparer.Ordinal);
+        private byte[]? _downloadBytes;
+        public ConcurrentQueue<string> HttpRequests { get; } = new();
+        public void ServeDownload(byte[] bytes) => _downloadBytes = bytes;
 
         public int Port { get; }
         public string WebSocketUrl => $"ws://127.0.0.1:{Port}/";
@@ -918,7 +921,14 @@ public sealed partial class GatewayProtocolLiveRoundTripTests : IDisposable
 
                 if (!ctx.Request.IsWebSocketRequest)
                 {
-                    ctx.Response.StatusCode = 400;
+                    HttpRequests.Enqueue(ctx.Request.RawUrl ?? "");
+                    ctx.Response.StatusCode = _downloadBytes is null ? 400 : 200;
+                    if (_downloadBytes is { } bytes)
+                    {
+                        ctx.Response.ContentLength64 = bytes.Length;
+                        ctx.Response.ContentType = "application/octet-stream";
+                        await ctx.Response.OutputStream.WriteAsync(bytes, _cts.Token);
+                    }
                     ctx.Response.Close();
                     continue;
                 }

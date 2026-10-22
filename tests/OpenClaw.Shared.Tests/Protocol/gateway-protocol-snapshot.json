@@ -55,7 +55,8 @@
   },
   "clientFoundationCommit": "2cae69ba",
   "_clientFoundationCommitNote": "The commit on main that introduced the typed gateway protocol client (OpenClawGatewayClient.Protocol.cs + GatewayProtocolModels.cs) this guard cross-checks.",
-  "snapshotUpdated": "2026-10-19",
+  "snapshotUpdated": "2026-10-22",
+  "_filesContractRef": "Files fields and new set/download/diff methods verified at openclaw/openclaw 776c8da8f06c6ed244b8ce22ea33165e4463f23b, packages/gateway-protocol/src/schema/sessions.ts:200-416. Earlier unrelated snapshot provenance is unchanged.",
   "scopePrefixes": ["sessions.", "agents.files.", "commands."],
   "methods": [
     {
@@ -188,21 +189,44 @@
       "method": "sessions.files.list",
       "kind": "request",
       "windowsUsage": "used",
-      "requestFields": ["sessionKey", "path", "search"],
+      "requestFields": ["sessionKey", "agentId", "path", "search"],
       "responseEnvelope": ["files"],
       "responseEnvelopeSource": "ParseSessionFileList(JsonElement payload",
-      "itemFields": ["path", "name", "kind", "missing", "size", "updatedAtMs", "content"],
+      "itemFields": ["path", "workspacePath", "name", "kind", "missing", "size", "updatedAtMs", "content", "hash", "mimeType", "contentEncoding", "previewKind"],
       "_itemFieldsNote": "File entry fields parsed by ParseFileEntry; documentation-only (covered by GatewayProtocolModelsTests.ParseSessionFileList_*)."
     },
     {
       "method": "sessions.files.get",
       "kind": "request",
       "windowsUsage": "used",
-      "requestFields": ["sessionKey", "path"],
+      "requestFields": ["sessionKey", "agentId", "path", "messageEntryId"],
+      "requestFieldsSource": "FileParameters(SessionFileRequest request)",
       "responseEnvelope": ["file"],
       "responseEnvelopeSource": "ParseSessionFileContent(JsonElement payload",
-      "itemFields": ["path", "name", "kind", "content", "size", "updatedAtMs", "missing"],
+      "itemFields": ["path", "workspacePath", "name", "kind", "content", "size", "updatedAtMs", "missing", "hash", "mimeType", "contentEncoding", "previewKind"],
       "_itemFieldsNote": "Nested file fields parsed by ParseSessionFileContent; documentation-only."
+    },
+    {
+      "method": "sessions.files.set",
+      "kind": "request",
+      "windowsUsage": "used",
+      "requestFields": ["sessionKey", "agentId", "path", "content", "expectedHash", "expectedSource"],
+      "requestFieldsSource": "BuildSessionFileWriteParameters(SessionFileWrite request)",
+      "responseEnvelope": ["file"],
+      "responseEnvelopeSource": "ReadFileSnapshot(JsonElement payload"
+    },
+    {
+      "method": "sessions.files.download",
+      "kind": "request",
+      "windowsUsage": "used",
+      "requestFields": ["sessionKey", "agentId", "path", "messageEntryId"],
+      "requestFieldsSource": "FileParameters(SessionFileRequest request)"
+    },
+    {
+      "method": "sessions.diff",
+      "kind": "request",
+      "windowsUsage": "used",
+      "requestFields": ["sessionKey", "agentId", "scope", "commit", "summaryOnly", "poll"]
     },
     {
       "method": "sessions.compaction.list",
