@@ -21,6 +21,9 @@ namespace OpenClaw.Tray.UITests;
 [Collection(UICollection.Name)]
 public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
 {
+    private static readonly TimeSpan InitialTailReadinessTimeout = TimeSpan.FromSeconds(10);
+    private Window? _proofWindow;
+
     [Theory]
     [InlineData(960)]
     [InlineData(480)]
@@ -38,10 +41,16 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 timeline = Assert.Single(FindDescendants<ItemsView>(surface));
                 scroll = timeline.ScrollView;
                 Assert.True(scroll.ScrollableHeight > 160);
-                scroll.ScrollTo(0, 120, new ScrollingScrollOptions(
+            });
+            var readerScroll = scroll ?? throw new InvalidOperationException("The production timeline has no ScrollView.");
+            var editor = input ?? throw new InvalidOperationException("The production composer has no input.");
+            await WaitForInitialTailAsync(surface, readerScroll);
+            await ui.RunOnUIAsync(() =>
+            {
+                readerScroll.ScrollTo(0, 120, new ScrollingScrollOptions(
                     ScrollingAnimationMode.Disabled, ScrollingSnapPointsMode.Ignore));
-                input.Select(5, 8);
-                input.Focus(FocusState.Programmatic);
+                editor.Select(5, 8);
+                editor.Focus(FocusState.Programmatic);
             });
             await SettleAsync();
             await ui.RunOnUIAsync(() =>
@@ -228,8 +237,18 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                     new(provider, composer, InitialThreadId: "one", Panels: panels)));
                 surface = new Border { Width = width, Height = 720, Child = host, RequestedTheme = theme.ElementTheme };
                 window = new Window { Content = surface };
+                _proofWindow = window;
                 window.AppWindow.MoveAndResize(new(-32000, -32000, 1200, 900));
                 window.Activate();
+                RecordOwnedWindow(window);
+            });
+            await SettleAsync();
+            await ui.RunOnUIAsync(() =>
+            {
+                var scale = surface!.XamlRoot.RasterizationScale;
+                window!.AppWindow.ResizeClient(new(
+                    (int)Math.Ceiling(surface.Width * scale), (int)Math.Ceiling(surface.Height * scale)));
+                surface.UpdateLayout();
                 RecordOwnedWindow(window);
             });
             await SettleAsync();
@@ -255,6 +274,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 if (surface is not null) surface.Child = null;
                 host?.Dispose();
                 window?.Close();
+                _proofWindow = null;
                 theme?.Dispose();
             });
             await provider.DisposeAsync();
@@ -276,6 +296,8 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
             Executable = Environment.ProcessPath,
             CommandLine = Environment.CommandLine,
             Window = handle.ToInt64(),
+            ClientWidth = window.AppWindow.ClientSize.Width,
+            ClientHeight = window.AppWindow.ClientSize.Height,
             Port = (int?)null,
             Data = Environment.GetEnvironmentVariable("OPENCLAW_TRAY_DATA_DIR"),
             AppData = Environment.GetEnvironmentVariable("OPENCLAW_TRAY_APPDATA_DIR"),
@@ -309,8 +331,16 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
             var path = Path.Combine(directory, name, "capture-00.png");
             Assert.True(File.Exists(path), $"Missing current-state capture: {path}");
             using var bitmap = new System.Drawing.Bitmap(path);
-            Assert.True(bitmap.Width >= surface.ActualWidth && bitmap.Height >= surface.ActualHeight,
-                "The capture must contain the complete asserted component root.");
+            var window = _proofWindow ?? throw new InvalidOperationException("No owned capture window.");
+            Assert.Same(surface, window.Content);
+            var scale = surface.XamlRoot.RasterizationScale;
+            var expectedWidth = (int)Math.Ceiling(surface.ActualWidth * scale);
+            var expectedHeight = (int)Math.Ceiling(surface.ActualHeight * scale);
+            Assert.True(window.AppWindow.ClientSize.Width >= expectedWidth &&
+                window.AppWindow.ClientSize.Height >= expectedHeight,
+                "The owned physical client viewport must not clip the asserted component root.");
+            Assert.InRange(bitmap.Width, expectedWidth - 1, expectedWidth + 1);
+            Assert.InRange(bitmap.Height, expectedHeight - 1, expectedHeight + 1);
             var colors = new HashSet<int>();
             for (var y = 0; y < bitmap.Height; y += Math.Max(1, bitmap.Height / 64))
                 for (var x = 0; x < bitmap.Width; x += Math.Max(1, bitmap.Width / 64))
@@ -326,6 +356,42 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 }));
         });
     }
+
+    private Task WaitForInitialTailAsync(Border surface, ScrollView scroll) => ui.RunOnUIAsync(async () =>
+    {
+        var settled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var active = true;
+        var stablePasses = 0;
+        var previousExtent = double.NaN;
+        var previousViewport = double.NaN;
+        void CheckLayout()
+        {
+            if (!active) return;
+            surface.UpdateLayout();
+            var atTail = scroll.IsLoaded && scroll.ScrollableHeight > 160 &&
+                Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight) <= 1;
+            stablePasses = atTail && Math.Abs(previousExtent - scroll.ExtentHeight) < 0.5 &&
+                Math.Abs(previousViewport - scroll.ViewportHeight) < 0.5 ? stablePasses + 1 : 0;
+            previousExtent = scroll.ExtentHeight;
+            previousViewport = scroll.ViewportHeight;
+            if (stablePasses >= 2) settled.TrySetResult();
+            else if (!ui.Dispatcher.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, CheckLayout))
+                settled.TrySetException(new InvalidOperationException("Dispatcher rejected initial-tail readiness."));
+        }
+        CheckLayout();
+        try
+        {
+            await settled.Task.WaitAsync(InitialTailReadinessTimeout);
+            Assert.True(stablePasses >= 2);
+            Assert.InRange(Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight), 0, 1);
+        }
+        catch (TimeoutException)
+        {
+            Assert.Fail($"Initial tail never settled for two layout passes: offset={scroll.VerticalOffset}, " +
+                $"maximum={scroll.ScrollableHeight}, extent={scroll.ExtentHeight}, viewport={scroll.ViewportHeight}.");
+        }
+        finally { active = false; }
+    });
 
     private async Task SettleAsync()
     {
