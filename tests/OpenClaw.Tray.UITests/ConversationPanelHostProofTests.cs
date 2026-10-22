@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Microsoft.UI.Reactor.Hosting;
 using Microsoft.UI.Xaml;
@@ -25,6 +26,8 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
     private static readonly TimeSpan NativeReadinessTimeout = TimeSpan.FromSeconds(10);
     private Window? _proofWindow;
     private uint? _inputTick;
+    private nint _activationForeground;
+    private string? _caseName;
 
     private static bool OnScreen => Environment.GetEnvironmentVariable("OPENCLAW_UITEST_ONSCREEN") == "1";
 
@@ -121,8 +124,10 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
     public async Task InitialTailRecapturesSameKeyIndexChangedBeforeDispatch()
     {
         await ui.ResetContainerAsync();
+        _caseName = nameof(InitialTailRecapturesSameKeyIndexChangedBeforeDispatch);
         InitialTailPositioner? positioner = null;
         Window? window = null;
+        var proofCompleted = false;
         try
         {
             Border? surface = null;
@@ -142,7 +147,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 window = new Window { Content = surface };
                 _proofWindow = window;
                 PlaceOwnedWindow(window, 800, 900);
-                window.Activate();
+                ActivateOwnedWindow(window);
                 RecordOwnedWindow(window);
             });
             await SettleAsync();
@@ -168,6 +173,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 () => scroll.ScrollableHeight - scroll.VerticalOffset <= 60 &&
                     IsMessageVisible(surface!, scroll, "Tail item"),
                 "current same-key tail after index/count changed before queued dispatch");
+            proofCompleted = true;
         }
         finally
         {
@@ -177,7 +183,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 window?.Close();
                 _proofWindow = null;
             });
-            VerifyNoInputCollision();
+            VerifyNoInputCollision(proofCompleted);
         }
     }
 
@@ -308,9 +314,10 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
 
     private async Task WithRootAsync(
         int width, Func<Border, ChatConversationPanelState, PanelProvider, Action<ChatConversationAccountStatus>, ChatComposerSession, Task> proof, bool dense = true,
-        bool unverifiedAccount = false)
+        bool unverifiedAccount = false, [CallerMemberName] string? caseName = null)
     {
         await ui.ResetContainerAsync();
+        _caseName = $"{caseName}:{width}";
         var provider = new PanelProvider(dense);
         var client = DispatchProxy.Create<IOperatorGatewayClient, ReadyClient>();
         var accountStatus = unverifiedAccount ? ChatConversationAccountStatus.Unavailable : ChatConversationAccountStatus.Known;
@@ -322,6 +329,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
         ReactorHostControl? host = null;
         ChatComposerSession? composer = null;
         ChatThemeProofScope? theme = null;
+        var proofCompleted = false;
         try
         {
             await ui.RunOnUIAsync(() =>
@@ -339,7 +347,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 window = new Window { Content = surface };
                 _proofWindow = window;
                 PlaceOwnedWindow(window, 1200, 900);
-                window.Activate();
+                ActivateOwnedWindow(window);
                 RecordOwnedWindow(window);
             });
             await SettleAsync();
@@ -365,6 +373,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 accountStatus = status;
                 panels.Refresh();
             }, composer!);
+            proofCompleted = true;
         }
         finally
         {
@@ -378,7 +387,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 theme?.Dispose();
             });
             await provider.DisposeAsync();
-            VerifyNoInputCollision();
+            VerifyNoInputCollision(proofCompleted);
         }
     }
 
@@ -398,13 +407,44 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
         }
     }
 
-    private void VerifyNoInputCollision()
+    private void ActivateOwnedWindow(Window window)
+    {
+        window.Activate();
+        _activationForeground = GetForegroundWindow();
+        var own = WinRT.Interop.WindowNative.GetWindowHandle(window);
+        Console.WriteLine($"Owned native activation: case={_caseName},own={own},foreground={_activationForeground},matched={own == _activationForeground}");
+    }
+
+    private void VerifyNoInputCollision(bool proofCompleted)
     {
         if (_inputTick is not { } before) return;
         _inputTick = null;
-        var after = ReadInputTick();
-        Console.WriteLine($"Owned native input audit: before={before},after={after},onScreen={OnScreen}");
-        Assert.Equal(before, after);
+        var input = new LastInputInfo { Size = (uint)Marshal.SizeOf<LastInputInfo>() };
+        var read = GetLastInputInfo(ref input);
+        var error = read ? 0 : Marshal.GetLastWin32Error();
+        var audit = new
+        {
+            Case = _caseName, Before = before, After = input.Tick,
+            OnScreen, BodyPassed = proofCompleted, ReadSucceeded = read, Win32Error = error,
+            Collision = read && before != input.Tick
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(audit);
+        Console.WriteLine($"Owned native input audit: {json}");
+        if (Environment.GetEnvironmentVariable("OPENCLAW_CONVERSATION_PANEL_PROOF_DIR") is { Length: > 0 } directory)
+        {
+            try
+            {
+                File.WriteAllText(Path.Combine(directory, $"input-audit-{Guid.NewGuid():N}.json"), json);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Console.WriteLine($"Additional native input audit write failure: {ex.GetType().Name}.");
+                if (proofCompleted) throw;
+            }
+        }
+        if (!proofCompleted) return;
+        Assert.True(read, $"Could not complete the physical-input collision audit (Win32 error {error}).");
+        Assert.Equal(before, input.Tick);
     }
 
     private static uint ReadInputTick()
@@ -432,7 +472,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
     [DllImport("user32.dll")]
     private static extern nint GetForegroundWindow();
 
-    private static void RecordOwnedWindow(Window window)
+    private void RecordOwnedWindow(Window window)
     {
         if (Environment.GetEnvironmentVariable("OPENCLAW_CONVERSATION_PANEL_PROOF_DIR") is not { Length: > 0 } directory)
             return;
@@ -452,6 +492,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
         var metadata = new
         {
             RunId = Path.GetFileName(directory),
+            Case = _caseName,
             ProcessId = process.Id,
             StartedUtc = process.StartTime.ToUniversalTime(),
             Executable = Environment.ProcessPath,
@@ -464,6 +505,8 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
             MonitorWorkArea = new { area.X, area.Y, area.Width, area.Height },
             WindowDpi = GetDpiForWindow(handle),
             ForegroundWindow = GetForegroundWindow().ToInt64(),
+            ActivationForegroundWindow = _activationForeground.ToInt64(),
+            ActivationMatchedOwnWindow = _activationForeground == handle,
             ClientWidth = window.AppWindow.ClientSize.Width,
             ClientHeight = window.AppWindow.ClientSize.Height,
             Port = (int?)null,
