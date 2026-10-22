@@ -8090,4 +8090,53 @@ Ga na inschrijving terug naar Instellingen &gt; Windows Update en controleer op 
   <data name="Chat_Panel_WidthFormat" xml:space="preserve"><value>{0} pixels breed</value></data>
   <data name="Chat_Panel_Waiting" xml:space="preserve"><value>Wachten tot dit gesprek verbinding maakt. Uw paneelselectie blijft behouden.</value></data>
   <data name="Chat_Panel_Unavailable" xml:space="preserve"><value>Deze inhoud is niet meer beschikbaar in dit gesprek.</value></data>
+  <data name="Chat_Files_Files" xml:space="preserve"><value>Bestanden</value></data>
+  <data name="Chat_Files_Outputs" xml:space="preserve"><value>Resultaten</value></data>
+  <data name="Chat_Files_Changes" xml:space="preserve"><value>Wijzigingen</value></data>
+  <data name="Chat_Files_Directory" xml:space="preserve"><value>Map</value></data>
+  <data name="Chat_Files_File" xml:space="preserve"><value>Bestand</value></data>
+  <data name="Chat_Files_Preview" xml:space="preserve"><value>Bestandsvoorbeeld</value></data>
+  <data name="Chat_Files_Search" xml:space="preserve"><value>Bestanden zoeken</value></data>
+  <data name="Chat_Files_Parent" xml:space="preserve"><value>Bovenliggende map</value></data>
+  <data name="Chat_Files_Refresh" xml:space="preserve"><value>Vernieuwen</value></data>
+  <data name="Chat_Files_RemoteRoot" xml:space="preserve"><value>Gespreksbestanden bepaald door de Gateway. Er wordt geen lokale hoofdmap aangenomen.</value></data>
+  <data name="Chat_Files_Truncated" xml:space="preserve"><value>Dit resultaat is afgekapt. Verfijn de zoekopdracht of download het oorspronkelijke bestand.</value></data>
+  <data name="Chat_Files_ChooseFile" xml:space="preserve"><value>Kies een bestand om te bekijken.</value></data>
+  <data name="Chat_Files_Edit" xml:space="preserve"><value>Bewerken</value></data>
+  <data name="Chat_Files_Save" xml:space="preserve"><value>Opslaan</value></data>
+  <data name="Chat_Files_Discard" xml:space="preserve"><value>Bewerkingen verwijderen</value></data>
+  <data name="Chat_Files_Download" xml:space="preserve"><value>Origineel downloaden</value></data>
+  <data name="Chat_Files_Historical" xml:space="preserve"><value>Dit berichtgebonden bestand is een alleen-lezen momentopname.</value></data>
+  <data name="Chat_Files_ReadOnly" xml:space="preserve"><value>Alleen-lezen. Bewerken vereist beheerderstoegang, een aangekondigde opslagmethode, een ondersteunde bron en hash, en uniforme tekst binnen de limiet van de native editor.</value></data>
+  <data name="Chat_Files_UnsupportedPreview" xml:space="preserve"><value>Dit bestand kan hier niet worden bekeken. Download het origineel als deze Gateway dat ondersteunt.</value></data>
+  <data name="Chat_Files_Conflict" xml:space="preserve"><value>Het bestand is gewijzigd. Uw concept blijft behouden. Bekijk de huidige servertekst hieronder voordat u opnieuw laadt of overschrijft.</value></data>
+  <data name="Chat_Files_Reload" xml:space="preserve"><value>Serverversie opnieuw laden</value></data>
+  <data name="Chat_Files_Overwrite" xml:space="preserve"><value>Gecontroleerde versie overschrijven</value></data>
+  <data name="Chat_Files_Counts" xml:space="preserve"><value>+{0} / -{1}</value></data>
+  <data name="Chat_Files_Binary" xml:space="preserve"><value>Binair bestand. Er is geen tekstpatch beschikbaar.</value></data>
+  <data name="Chat_Files_UnavailablePatch" xml:space="preserve"><value>Er is geen patch voor dit bestand geleverd.</value></data>
+  <data name="Chat_Files_Patch" xml:space="preserve"><value>Uniforme patch</value></data>
+  <data name="Chat_Files_AllChanges" xml:space="preserve"><value>Alle wijzigingen</value></data>
+  <data name="Chat_Files_Uncommitted" xml:space="preserve"><value>Niet vastgelegd</value></data>
+  <data name="Chat_Files_Computing" xml:space="preserve"><value>Wijzigingen berekenen. Vernieuw om opnieuw te controleren.</value></data>
+  <data name="Chat_Files_NoChanges" xml:space="preserve"><value>Geen wijzigingen in dit bereik.</value></data>
+  <data name="Chat_Files_Diff_unknown_session" xml:space="preserve"><value>De werkmap van het gesprek is niet beschikbaar.</value></data>
+  <data name="Chat_Files_Diff_not_git" xml:space="preserve"><value>Dit gesprek bevindt zich niet in een Git-werkmap.</value></data>
+  <data name="Chat_Files_Diff_unknown_commit" xml:space="preserve"><value>De geselecteerde commit is niet beschikbaar.</value></data>
+  <data name="Chat_Files_Diff_workspace_stopped" xml:space="preserve"><value>Start de werkruimte van dit gesprek om wijzigingen te bekijken.</value></data>
+  <data name="Chat_Files_Waiting" xml:space="preserve"><value>Wachten op de identiteit van dit gesprek en de mogelijkheden van de Gateway.</value></data>
+  <data name="Chat_Files_Loading" xml:space="preserve"><value>Gespreksbestanden laden...</value></data>
+  <data name="Chat_Files_Unsupported" xml:space="preserve"><value>Deze bewerking wordt niet aangekondigd door de verbonden Gateway.</value></data>
+  <data name="Chat_Files_Error" xml:space="preserve"><value>Bestandstoegang mislukt. Vernieuw om het opnieuw te proberen.</value></data>
+  <data name="Chat_Files_Offline" xml:space="preserve"><value>Verbinding verbroken. Niet-opgeslagen concepten blijven in dit venster behouden en worden na opnieuw verbinden gecontroleerd.</value></data>
+  <data name="Chat_Files_Rejected" xml:space="preserve"><value>De Gateway heeft bestandstoegang geweigerd. Uw concept blijft behouden.</value></data>
+  <data name="Chat_Files_Permission" xml:space="preserve"><value>Bestandstoegang is niet meer toegestaan. Uw concept blijft behouden.</value></data>
+  <data name="Chat_Files_SourceChanged" xml:space="preserve"><value>De bestandsbron is gewijzigd. Uw concept blijft behouden en kan niet naar de vervangende bron worden opgeslagen.</value></data>
+  <data name="Chat_Files_InvalidContent" xml:space="preserve"><value>Deze inhoud overschrijdt de voorbeeldlimiet of kan niet veilig worden bewerkt.</value></data>
+  <data name="Chat_Files_DraftLimit" xml:space="preserve"><value>De limiet voor concepten in het geheugen is bereikt. Sla een ander concept op of verwijder het voordat u bewerkt.</value></data>
+  <data name="Chat_Files_Restored" xml:space="preserve"><value>Niet-opgeslagen concept hersteld. De oorspronkelijke bestandsbron is opnieuw gecontroleerd.</value></data>
+  <data name="Chat_Files_Saved" xml:space="preserve"><value>Opgeslagen door de Gateway.</value></data>
+  <data name="Chat_Files_DownloadFailed" xml:space="preserve"><value>Download mislukt of verbinding gewijzigd. Er is geen bestand vastgelegd. Probeer opnieuw voor een nieuwe machtiging.</value></data>
+  <data name="Chat_Files_Downloaded" xml:space="preserve"><value>Oorspronkelijk bestand gedownload.</value></data>
+  <data name="Chat_Files_Uncertain" xml:space="preserve"><value>De bewerking is onderbroken of verlopen. Uw concept blijft behouden. Controleer opnieuw voordat u het opnieuw probeert.</value></data>
 </root>

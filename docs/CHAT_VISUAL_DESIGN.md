@@ -102,6 +102,71 @@ Files requires the selected session's Gateway-provided source and conflict-safe
 save contract. Hosted Canvas content requires its separate isolated content
 boundary; a native panel alone does not establish Canvas parity.
 
+### Conversation Files consumer
+
+`ReactorConversationFilesPanel` supplies the native Files, Outputs and Changes
+consumer for the conversation host. Root integration must inject the same
+`ChatConversationPanelState`, a window-owned `ConversationFileDrafts` store,
+and the actual native window handle. The store survives a reconnect remount,
+but contains no transport authorization. Retire the panel lifetime before
+clearing the store on final surface close, Gateway removal or sign-out.
+The full canonical conversation identity must be known before buffers are
+restored. Merely compiling this consumer does not establish a reachable
+mounted panel or current-build UI proof.
+
+Files uses `sessions.files.list/get/set/download` and `sessions.diff` with the
+selected session key and explicit agent ID. Folder paths and source roots are
+Gateway data, never local filesystem authority. Missing identity or an omitted
+method advertisement remains waiting. A known advertisement can mark an
+individual operation unsupported. The Files client samples the ready epoch
+before and after reading method facts; a reconnect invalidates that sample.
+The source contract is upstream commit
+`776c8da8f06c6ed244b8ce22ea33165e4463f23b`,
+`packages/gateway-protocol/src/schema/sessions.ts:200-416`.
+`src/gateway/methods/core-descriptors.ts:181-186` owns the read/admin scopes.
+
+Browse opens server-provided folder rows and server-side search results.
+Outputs includes transcript-referenced files from the same list response.
+Structured artifacts are separate immutable summaries supplied by the current
+transcript owner. Their artifact ID and optional agent ID are resolved through
+the existing connection-owned media bridge, not inferred from a display name,
+local transcript row ID or nearby run. Message-qualified files are read-only.
+Plain text and supported bounded images have native previews. Other formats
+remain explicitly unavailable for inline preview with original download when
+advertised. HTML is inert source text here; this consumer does not execute HTML,
+fetch relative assets or implement `sessions.files.assets`. `sessions.files.reveal`
+is deliberately omitted: a Gateway-host reveal is not a local Explorer action.
+
+Edit requires current admin authority, advertised `sessions.files.set`, a
+64-character lowercase content hash, a managed source, uniform line endings
+and at most 524287 native editor characters. Sources without a write
+precondition remain read-only rather than risking an unsafe retarget. Preview
+text and image bytes are bounded to 1 MiB. Window retention is limited to
+32 buffers and 67,108,864 UTF-16 code units across original and edited text
+(128 MiB of text data, excluding object overhead).
+These native limits are not claims about the Gateway's own limits.
+WinUI CR normalization stays inside the editor: saves restore the original
+LF/CRLF/CR convention, BOM and final-newline choice.
+
+Save rereads and validates the original source before a hash-conditioned write
+on the captured ready epoch. A changed source never adopts the replacement.
+Conflict recovery shows current server text alongside the retained editable
+draft. Reload is an explicit discard to the same source. Overwrite is explicit
+and can only CAS the reviewed fresh hash; another race returns to conflict.
+Closing or disconnecting does not discard drafts. Reopening revalidates source
+and hash before showing restored edits or admitting writes.
+The native textbox is retained across updates; model echoes do not rewrite
+its text, caret or composition. Ctrl+S applies only to the focused editor.
+
+Download requests a connection-bound original-byte grant, then opens a
+window-owned native save picker with a sanitized leaf suggestion. It writes
+through a storage transaction and commits only after a successful current
+download. It never opens server paths, launches the downloaded file, or
+substitutes preview text for original bytes.
+Changes preserves all/uncommitted/commit scope, binary and truncated patch
+states, computing and unavailable reasons. An empty computing result is not
+presented as no changes.
+
 Queued submissions leave the textbox and remain after the current turn as normal
 right-aligned user bubbles. A transparent `ChatPendingUserBrush`, subtle `ChatStrokeBrush`
 outline, and slightly faded `ChatSecondaryTextBrush` distinguish them from sent messages without

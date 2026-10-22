@@ -8156,4 +8156,53 @@ After enrolling, return to Settings &gt; Windows Update and check for updates. I
   <data name="Chat_Panel_WidthFormat" xml:space="preserve"><value>{0} pixels wide</value></data>
   <data name="Chat_Panel_Waiting" xml:space="preserve"><value>Waiting for this conversation to connect. Your panel selection is retained.</value></data>
   <data name="Chat_Panel_Unavailable" xml:space="preserve"><value>This content is no longer available in this conversation.</value></data>
+  <data name="Chat_Files_Files" xml:space="preserve"><value>Files</value></data>
+  <data name="Chat_Files_Outputs" xml:space="preserve"><value>Outputs</value></data>
+  <data name="Chat_Files_Changes" xml:space="preserve"><value>Changes</value></data>
+  <data name="Chat_Files_Directory" xml:space="preserve"><value>Folder</value></data>
+  <data name="Chat_Files_File" xml:space="preserve"><value>File</value></data>
+  <data name="Chat_Files_Preview" xml:space="preserve"><value>File preview</value></data>
+  <data name="Chat_Files_Search" xml:space="preserve"><value>Search files</value></data>
+  <data name="Chat_Files_Parent" xml:space="preserve"><value>Parent folder</value></data>
+  <data name="Chat_Files_Refresh" xml:space="preserve"><value>Refresh</value></data>
+  <data name="Chat_Files_RemoteRoot" xml:space="preserve"><value>Gateway-resolved conversation files. No local root is assumed.</value></data>
+  <data name="Chat_Files_Truncated" xml:space="preserve"><value>This result is truncated. Narrow the search or download the original file.</value></data>
+  <data name="Chat_Files_ChooseFile" xml:space="preserve"><value>Choose a file to preview.</value></data>
+  <data name="Chat_Files_Edit" xml:space="preserve"><value>Edit</value></data>
+  <data name="Chat_Files_Save" xml:space="preserve"><value>Save</value></data>
+  <data name="Chat_Files_Discard" xml:space="preserve"><value>Discard edits</value></data>
+  <data name="Chat_Files_Download" xml:space="preserve"><value>Download original</value></data>
+  <data name="Chat_Files_Historical" xml:space="preserve"><value>This message-qualified file is a read-only snapshot.</value></data>
+  <data name="Chat_Files_ReadOnly" xml:space="preserve"><value>Read-only. Editing requires admin access, an advertised save method, a supported source and hash, and uniform text within the native editor limit.</value></data>
+  <data name="Chat_Files_UnsupportedPreview" xml:space="preserve"><value>This file cannot be previewed here. Download the original if available on this Gateway.</value></data>
+  <data name="Chat_Files_Conflict" xml:space="preserve"><value>The file changed. Your draft is retained. Review the current server text below before choosing Reload or Overwrite.</value></data>
+  <data name="Chat_Files_Reload" xml:space="preserve"><value>Reload server version</value></data>
+  <data name="Chat_Files_Overwrite" xml:space="preserve"><value>Overwrite reviewed version</value></data>
+  <data name="Chat_Files_Counts" xml:space="preserve"><value>+{0} / -{1}</value></data>
+  <data name="Chat_Files_Binary" xml:space="preserve"><value>Binary file. No text patch is available.</value></data>
+  <data name="Chat_Files_UnavailablePatch" xml:space="preserve"><value>No patch was supplied for this file.</value></data>
+  <data name="Chat_Files_Patch" xml:space="preserve"><value>Unified patch</value></data>
+  <data name="Chat_Files_AllChanges" xml:space="preserve"><value>All changes</value></data>
+  <data name="Chat_Files_Uncommitted" xml:space="preserve"><value>Uncommitted</value></data>
+  <data name="Chat_Files_Computing" xml:space="preserve"><value>Computing changes. Refresh to check again.</value></data>
+  <data name="Chat_Files_NoChanges" xml:space="preserve"><value>No changes in this scope.</value></data>
+  <data name="Chat_Files_Diff_unknown_session" xml:space="preserve"><value>The conversation checkout is unavailable.</value></data>
+  <data name="Chat_Files_Diff_not_git" xml:space="preserve"><value>This conversation is not in a Git checkout.</value></data>
+  <data name="Chat_Files_Diff_unknown_commit" xml:space="preserve"><value>The selected commit is unavailable.</value></data>
+  <data name="Chat_Files_Diff_workspace_stopped" xml:space="preserve"><value>Start this conversation's workspace to view changes.</value></data>
+  <data name="Chat_Files_Waiting" xml:space="preserve"><value>Waiting for this conversation's identity and Gateway capabilities.</value></data>
+  <data name="Chat_Files_Loading" xml:space="preserve"><value>Loading conversation files...</value></data>
+  <data name="Chat_Files_Unsupported" xml:space="preserve"><value>This operation is not advertised by the connected Gateway.</value></data>
+  <data name="Chat_Files_Error" xml:space="preserve"><value>File access failed. Refresh to retry.</value></data>
+  <data name="Chat_Files_Offline" xml:space="preserve"><value>Disconnected. Unsaved drafts are retained in this window and revalidated after reconnect.</value></data>
+  <data name="Chat_Files_Rejected" xml:space="preserve"><value>The Gateway rejected file access. Your draft is retained.</value></data>
+  <data name="Chat_Files_Permission" xml:space="preserve"><value>File access is no longer permitted. Your draft is retained.</value></data>
+  <data name="Chat_Files_SourceChanged" xml:space="preserve"><value>The file source changed. Your draft is retained and cannot be saved to the replacement source.</value></data>
+  <data name="Chat_Files_InvalidContent" xml:space="preserve"><value>This content exceeds preview limits or cannot be edited safely.</value></data>
+  <data name="Chat_Files_DraftLimit" xml:space="preserve"><value>The in-memory draft limit is reached. Save or discard another draft before editing.</value></data>
+  <data name="Chat_Files_Restored" xml:space="preserve"><value>Restored unsaved draft. The original file source has been revalidated.</value></data>
+  <data name="Chat_Files_Saved" xml:space="preserve"><value>Saved by the Gateway.</value></data>
+  <data name="Chat_Files_DownloadFailed" xml:space="preserve"><value>Download failed or the connection changed. No file was committed. Retry to obtain a new grant.</value></data>
+  <data name="Chat_Files_Downloaded" xml:space="preserve"><value>Original file downloaded.</value></data>
+  <data name="Chat_Files_Uncertain" xml:space="preserve"><value>The operation was interrupted or timed out. Your draft is retained. Revalidate before retrying.</value></data>
 </root>

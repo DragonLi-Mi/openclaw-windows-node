@@ -8089,4 +8089,53 @@ Après votre inscription, revenez dans Paramètres &gt; Windows Update et recher
   <data name="Chat_Panel_WidthFormat" xml:space="preserve"><value>Largeur de {0} pixels</value></data>
   <data name="Chat_Panel_Waiting" xml:space="preserve"><value>En attente de connexion de cette conversation. Votre sélection de panneau est conservée.</value></data>
   <data name="Chat_Panel_Unavailable" xml:space="preserve"><value>Ce contenu n'est plus disponible dans cette conversation.</value></data>
+  <data name="Chat_Files_Files" xml:space="preserve"><value>Fichiers</value></data>
+  <data name="Chat_Files_Outputs" xml:space="preserve"><value>Résultats</value></data>
+  <data name="Chat_Files_Changes" xml:space="preserve"><value>Modifications</value></data>
+  <data name="Chat_Files_Directory" xml:space="preserve"><value>Dossier</value></data>
+  <data name="Chat_Files_File" xml:space="preserve"><value>Fichier</value></data>
+  <data name="Chat_Files_Preview" xml:space="preserve"><value>Aperçu du fichier</value></data>
+  <data name="Chat_Files_Search" xml:space="preserve"><value>Rechercher des fichiers</value></data>
+  <data name="Chat_Files_Parent" xml:space="preserve"><value>Dossier parent</value></data>
+  <data name="Chat_Files_Refresh" xml:space="preserve"><value>Actualiser</value></data>
+  <data name="Chat_Files_RemoteRoot" xml:space="preserve"><value>Fichiers de la conversation résolus par le Gateway. Aucun dossier local n&apos;est supposé.</value></data>
+  <data name="Chat_Files_Truncated" xml:space="preserve"><value>Ce résultat est tronqué. Affinez la recherche ou téléchargez le fichier original.</value></data>
+  <data name="Chat_Files_ChooseFile" xml:space="preserve"><value>Choisissez un fichier à afficher.</value></data>
+  <data name="Chat_Files_Edit" xml:space="preserve"><value>Modifier</value></data>
+  <data name="Chat_Files_Save" xml:space="preserve"><value>Enregistrer</value></data>
+  <data name="Chat_Files_Discard" xml:space="preserve"><value>Abandonner les modifications</value></data>
+  <data name="Chat_Files_Download" xml:space="preserve"><value>Télécharger l&apos;original</value></data>
+  <data name="Chat_Files_Historical" xml:space="preserve"><value>Ce fichier associé à un message est un instantané en lecture seule.</value></data>
+  <data name="Chat_Files_ReadOnly" xml:space="preserve"><value>Lecture seule. La modification exige un accès administrateur, une méthode d&apos;enregistrement annoncée, une source et un hachage pris en charge, et du texte uniforme dans la limite de l&apos;éditeur natif.</value></data>
+  <data name="Chat_Files_UnsupportedPreview" xml:space="preserve"><value>Ce fichier ne peut pas être affiché ici. Téléchargez l&apos;original si ce Gateway le permet.</value></data>
+  <data name="Chat_Files_Conflict" xml:space="preserve"><value>Le fichier a changé. Votre brouillon est conservé. Examinez le texte actuel du serveur ci-dessous avant de recharger ou d&apos;écraser.</value></data>
+  <data name="Chat_Files_Reload" xml:space="preserve"><value>Recharger la version du serveur</value></data>
+  <data name="Chat_Files_Overwrite" xml:space="preserve"><value>Écraser la version examinée</value></data>
+  <data name="Chat_Files_Counts" xml:space="preserve"><value>+{0} / -{1}</value></data>
+  <data name="Chat_Files_Binary" xml:space="preserve"><value>Fichier binaire. Aucun correctif texte n&apos;est disponible.</value></data>
+  <data name="Chat_Files_UnavailablePatch" xml:space="preserve"><value>Aucun correctif n&apos;a été fourni pour ce fichier.</value></data>
+  <data name="Chat_Files_Patch" xml:space="preserve"><value>Correctif unifié</value></data>
+  <data name="Chat_Files_AllChanges" xml:space="preserve"><value>Toutes les modifications</value></data>
+  <data name="Chat_Files_Uncommitted" xml:space="preserve"><value>Non validées</value></data>
+  <data name="Chat_Files_Computing" xml:space="preserve"><value>Calcul des modifications. Actualisez pour vérifier à nouveau.</value></data>
+  <data name="Chat_Files_NoChanges" xml:space="preserve"><value>Aucune modification dans cette portée.</value></data>
+  <data name="Chat_Files_Diff_unknown_session" xml:space="preserve"><value>La copie de travail de la conversation est indisponible.</value></data>
+  <data name="Chat_Files_Diff_not_git" xml:space="preserve"><value>Cette conversation n&apos;est pas dans une copie de travail Git.</value></data>
+  <data name="Chat_Files_Diff_unknown_commit" xml:space="preserve"><value>Le commit sélectionné est indisponible.</value></data>
+  <data name="Chat_Files_Diff_workspace_stopped" xml:space="preserve"><value>Démarrez l&apos;espace de travail de cette conversation pour voir les modifications.</value></data>
+  <data name="Chat_Files_Waiting" xml:space="preserve"><value>En attente de l&apos;identité de cette conversation et des capacités du Gateway.</value></data>
+  <data name="Chat_Files_Loading" xml:space="preserve"><value>Chargement des fichiers de la conversation...</value></data>
+  <data name="Chat_Files_Unsupported" xml:space="preserve"><value>Cette opération n&apos;est pas annoncée par le Gateway connecté.</value></data>
+  <data name="Chat_Files_Error" xml:space="preserve"><value>Échec de l&apos;accès au fichier. Actualisez pour réessayer.</value></data>
+  <data name="Chat_Files_Offline" xml:space="preserve"><value>Déconnecté. Les brouillons non enregistrés sont conservés dans cette fenêtre et revérifiés après reconnexion.</value></data>
+  <data name="Chat_Files_Rejected" xml:space="preserve"><value>Le Gateway a refusé l&apos;accès au fichier. Votre brouillon est conservé.</value></data>
+  <data name="Chat_Files_Permission" xml:space="preserve"><value>L&apos;accès au fichier n&apos;est plus autorisé. Votre brouillon est conservé.</value></data>
+  <data name="Chat_Files_SourceChanged" xml:space="preserve"><value>La source du fichier a changé. Votre brouillon est conservé et ne peut pas être enregistré dans la source de remplacement.</value></data>
+  <data name="Chat_Files_InvalidContent" xml:space="preserve"><value>Ce contenu dépasse les limites de l&apos;aperçu ou ne peut pas être modifié en toute sécurité.</value></data>
+  <data name="Chat_Files_DraftLimit" xml:space="preserve"><value>La limite des brouillons en mémoire est atteinte. Enregistrez ou abandonnez un autre brouillon avant de modifier.</value></data>
+  <data name="Chat_Files_Restored" xml:space="preserve"><value>Brouillon non enregistré restauré. La source originale du fichier a été revérifiée.</value></data>
+  <data name="Chat_Files_Saved" xml:space="preserve"><value>Enregistré par le Gateway.</value></data>
+  <data name="Chat_Files_DownloadFailed" xml:space="preserve"><value>Échec du téléchargement ou connexion modifiée. Aucun fichier n&apos;a été validé. Réessayez pour obtenir une nouvelle autorisation.</value></data>
+  <data name="Chat_Files_Downloaded" xml:space="preserve"><value>Fichier original téléchargé.</value></data>
+  <data name="Chat_Files_Uncertain" xml:space="preserve"><value>L&apos;opération a été interrompue ou a expiré. Votre brouillon est conservé. Revérifiez avant de réessayer.</value></data>
 </root>
