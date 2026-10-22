@@ -21,8 +21,9 @@ internal interface IChatComposerRuntimePort
     bool SupportsImmediateSteer => false;
     ChatInputLease? CaptureInputOrigin(string threadId, IChatInputOrigin? externalOrigin = null) => null;
     bool IsInputOriginCurrent(ChatInputLease origin) => false;
-    ChatInputLease? ContinueInputPreparation(
-        ChatInputLease original, ChatPlacementMaterializationReceipt receipt) => null;
+    Task<ChatInputLease?> ContinueInputPreparationAsync(
+        ChatInputLease original, ChatPlacementMaterializationReceipt receipt, CancellationToken cancellationToken) =>
+        Task.FromResult<ChatInputLease?>(null);
 
     async Task<ChatInputSubmissionResult> SendInputAsync(
         string threadId, string message, IReadOnlyList<ChatAttachment> attachments,
@@ -44,7 +45,8 @@ internal interface IChatComposerRuntimePort
 
     Task<ChatLifecycleCommandResult> ExecuteLifecycleCommandAsync(string threadId, ChatLifecycleCommandKind command);
 
-    Task StopResponseAsync(string threadId, CancellationToken cancellationToken);
+    Task StopResponseAsync(string threadId, CancellationToken cancellationToken,
+        ChatInputLease? origin = null, Func<bool>? isCurrent = null);
 
     Task CancelQueuedMessageAsync(string threadId, string queuedMessageId, CancellationToken cancellationToken);
     Task<bool> EditQueuedInputAsync(string threadId, string messageId, string text) => Task.FromResult(false);
@@ -55,17 +57,21 @@ internal interface IChatComposerRuntimePort
             ChatInputMessages.RecoveryUnavailable));
     Task<bool> DiscardUnconfirmedInputAsync(string threadId, string messageId) => Task.FromResult(false);
 
-    Task SetModelAsync(string threadId, string model, CancellationToken cancellationToken);
+    Task SetModelAsync(string threadId, string model, CancellationToken cancellationToken,
+        ChatInputLease? origin = null, Func<bool>? isCurrent = null);
 
-    Task ClearModelAsync(string threadId, CancellationToken cancellationToken);
+    Task ClearModelAsync(string threadId, CancellationToken cancellationToken,
+        ChatInputLease? origin = null, Func<bool>? isCurrent = null);
 
     Task<ModelsListInfo?> RequestSessionModelsListAsync(
         string threadId,
         CancellationToken cancellationToken);
 
-    Task SetThinkingLevelAsync(string threadId, string thinkingLevel, CancellationToken cancellationToken);
+    Task SetThinkingLevelAsync(string threadId, string thinkingLevel, CancellationToken cancellationToken,
+        ChatInputLease? origin = null, Func<bool>? isCurrent = null);
 
-    Task ClearThinkingLevelAsync(string threadId, CancellationToken cancellationToken);
+    Task ClearThinkingLevelAsync(string threadId, CancellationToken cancellationToken,
+        ChatInputLease? origin = null, Func<bool>? isCurrent = null);
 
     Task EnsureCommandCatalogAsync(CancellationToken cancellationToken);
 }

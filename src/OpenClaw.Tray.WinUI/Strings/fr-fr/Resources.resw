@@ -1,5 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <root xmlns:ns1="urn:schemas-microsoft-com:xml-msdata" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <data name="Chat_Input_SettingUnconfirmed" xml:space="preserve"><value>Réglage de session non confirmé</value></data>
+  <data name="Chat_Input_SettingUnconfirmedFormat" xml:space="preserve"><value>Échec de la mise à jour du réglage : {0} Sélectionnez-le à nouveau ou reconnectez-vous avant l’envoi.</value></data>
   <data name="Chat_Input_Cancelled" xml:space="preserve"><value>Le Gateway a annulé le message en attente. Il n’a pas été renvoyé.</value></data>
   <data name="Chat_Input_Interrupted" xml:space="preserve"><value>Le Gateway indique que le message en attente a été interrompu. Aucun message n’a été renvoyé.</value></data>
   <data name="Chat_Input_ScopeChanged" xml:space="preserve"><value>La conversation d’origine a changé. Aucun message n’a été envoyé.</value></data>

@@ -87,8 +87,13 @@ public interface IChatPlacementGateway
     Task PrepareWithMaterializationAsync(
         string sessionKey, string agentId, ChatPlacementSelection selection, long connectionEpoch,
         CancellationToken cancellationToken, Func<CancellationToken, Task>? beforeMutation,
-        Func<ChatPlacementMaterializationReceipt, CancellationToken, Task> materialized) =>
-        PrepareAsync(sessionKey, agentId, selection, connectionEpoch, cancellationToken, beforeMutation);
+        Func<ChatPlacementMaterializationReceipt, CancellationToken, Task> materialized,
+        Func<bool>? beforeWrite = null)
+    {
+        if (beforeWrite is not null)
+            throw new NotSupportedException("This Gateway adapter does not support origin-bound location writes.");
+        return PrepareAsync(sessionKey, agentId, selection, connectionEpoch, cancellationToken, beforeMutation);
+    }
 }
 
 public sealed class GatewayChatPlacementClient : IChatPlacementGateway
@@ -96,14 +101,17 @@ public sealed class GatewayChatPlacementClient : IChatPlacementGateway
     private readonly Func<long?> _connectionEpoch;
     private readonly Func<string, object, int, long, Task<JsonElement>> _request;
     private readonly IOperatorGatewayClient? _client;
+    private readonly Func<string, object, int, long, Func<bool>, Task<JsonElement>>? _scopedRequest;
 
     internal GatewayChatPlacementClient(Func<long?> connectionEpoch,
         Func<string, object, int, long, Task<JsonElement>> request,
-        IOperatorGatewayClient? client = null)
+        IOperatorGatewayClient? client = null,
+        Func<string, object, int, long, Func<bool>, Task<JsonElement>>? scopedRequest = null)
     {
         _connectionEpoch = connectionEpoch;
         _request = request;
         _client = client;
+        _scopedRequest = scopedRequest;
     }
 
     public long? ConnectionEpoch => _connectionEpoch();
@@ -148,7 +156,8 @@ public sealed class GatewayChatPlacementClient : IChatPlacementGateway
     public async Task PrepareWithMaterializationAsync(
         string sessionKey, string agentId, ChatPlacementSelection selection, long connectionEpoch,
         CancellationToken cancellationToken, Func<CancellationToken, Task>? beforeMutation,
-        Func<ChatPlacementMaterializationReceipt, CancellationToken, Task> materialized)
+        Func<ChatPlacementMaterializationReceipt, CancellationToken, Task> materialized,
+        Func<bool>? beforeWrite = null)
     {
         if (!selection.Environment.IsSelectable)
             throw new InvalidOperationException("The selected environment is unavailable.");
@@ -185,7 +194,7 @@ public sealed class GatewayChatPlacementClient : IChatPlacementGateway
             {
                 var project = await RequestAsync("projects.add", new { gitUrl }, connectionEpoch,
                     cancellationToken, timeoutMs: 120_000, onAdmitted: () => mutationAdmitted = true,
-                    beforeAdmitted: beforeMutation).ConfigureAwait(false);
+                    beforeAdmitted: beforeMutation, beforeWrite: beforeWrite).ConfigureAwait(false);
                 workspace = new("project:" + RequiredString(project, "id"),
                     RequiredString(project, "displayName"), OptionalString(project, "repoRoot"),
                     RequiredString(project, "id"));
@@ -212,7 +221,7 @@ public sealed class GatewayChatPlacementClient : IChatPlacementGateway
             // sessions.create can adopt an existing empty session's cwd without resetting its transcript.
             var created = await RequestAsync("sessions.create", parameters, connectionEpoch,
                 cancellationToken, timeoutMs: 120_000, onAdmitted: () => mutationAdmitted = true,
-                beforeAdmitted: beforeMutation).ConfigureAwait(false);
+                beforeAdmitted: beforeMutation, beforeWrite: beforeWrite).ConfigureAwait(false);
             RequireSessionResult(created, sessionKey);
             if (_client is not null && OptionalString(created, "sessionId") is { Length: > 0 } sessionId)
                 await materialized(new(_client, connectionEpoch, sessionKey, sessionId), cancellationToken)
@@ -223,7 +232,7 @@ public sealed class GatewayChatPlacementClient : IChatPlacementGateway
             var dispatched = await RequestAsync("sessions.dispatch",
                 new { key = sessionKey, agentId, deviceId = environment.Id["node:".Length..] },
                 connectionEpoch, cancellationToken, timeoutMs: 120_000, onAdmitted: () => mutationAdmitted = true,
-                beforeAdmitted: beforeMutation).ConfigureAwait(false);
+                beforeAdmitted: beforeMutation, beforeWrite: beforeWrite).ConfigureAwait(false);
             RequireSessionResult(dispatched, sessionKey);
             if (!dispatched.TryGetProperty("placement", out var active) ||
                 OptionalString(active, "state") != "active")
@@ -240,16 +249,20 @@ public sealed class GatewayChatPlacementClient : IChatPlacementGateway
 
     private async Task<JsonElement> RequestAsync(string method, object parameters, long epoch,
         CancellationToken cancellationToken, int timeoutMs = 15_000, Action? onAdmitted = null,
-        Func<CancellationToken, Task>? beforeAdmitted = null)
+        Func<CancellationToken, Task>? beforeAdmitted = null, Func<bool>? beforeWrite = null)
     {
         if (beforeAdmitted is not null)
             await beforeAdmitted(cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         if (ConnectionEpoch != epoch)
             throw new InvalidOperationException("The Gateway connection changed. Refresh the location choices.");
+        if (beforeWrite is not null && _scopedRequest is null)
+            throw new NotSupportedException("This Gateway adapter does not support origin-bound location writes.");
         // Drain an admitted mutation even when the view closes; do not imply that cancellation rolled it back.
         onAdmitted?.Invoke();
-        var result = await _request(method, parameters, timeoutMs, epoch).ConfigureAwait(false);
+        var result = beforeWrite is null
+            ? await _request(method, parameters, timeoutMs, epoch).ConfigureAwait(false)
+            : await _scopedRequest!(method, parameters, timeoutMs, epoch, beforeWrite).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
         if (ConnectionEpoch != epoch)
             throw new InvalidOperationException("The Gateway connection changed. Refresh the location choices.");

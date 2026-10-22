@@ -119,23 +119,27 @@ public interface IChatGatewayBridge : IDisposable
     /// restoring the gateway/provider default.
     /// </summary>
     Task ClearSessionThinkingLevelAsync(string sessionKey);
-    Task PatchSessionModelAtEpochAsync(string key, string model, long epoch)
+    Task PatchSessionModelAtEpochAsync(string key, string model, long epoch, Func<bool>? isCurrent = null)
     {
+        if (isCurrent is not null) throw new NotSupportedException("This adapter does not support origin-bound model writes.");
         if (ConnectionEpoch != epoch) throw new InvalidOperationException("The Gateway connection changed before the model update.");
         return PatchSessionModelAsync(key, model);
     }
-    Task ClearSessionModelAtEpochAsync(string key, long epoch)
+    Task ClearSessionModelAtEpochAsync(string key, long epoch, Func<bool>? isCurrent = null)
     {
+        if (isCurrent is not null) throw new NotSupportedException("This adapter does not support origin-bound model writes.");
         if (ConnectionEpoch != epoch) throw new InvalidOperationException("The Gateway connection changed before the model update.");
         return ClearSessionModelAsync(key);
     }
-    Task PatchSessionThinkingLevelAtEpochAsync(string key, string level, long epoch)
+    Task PatchSessionThinkingLevelAtEpochAsync(string key, string level, long epoch, Func<bool>? isCurrent = null)
     {
+        if (isCurrent is not null) throw new NotSupportedException("This adapter does not support origin-bound reasoning writes.");
         if (ConnectionEpoch != epoch) throw new InvalidOperationException("The Gateway connection changed before the reasoning update.");
         return PatchSessionThinkingLevelAsync(key, level);
     }
-    Task ClearSessionThinkingLevelAtEpochAsync(string key, long epoch)
+    Task ClearSessionThinkingLevelAtEpochAsync(string key, long epoch, Func<bool>? isCurrent = null)
     {
+        if (isCurrent is not null) throw new NotSupportedException("This adapter does not support origin-bound reasoning writes.");
         if (ConnectionEpoch != epoch) throw new InvalidOperationException("The Gateway connection changed before the reasoning update.");
         return ClearSessionThinkingLevelAsync(key);
     }
@@ -157,9 +161,11 @@ public interface IChatGatewayBridge : IDisposable
         Task.FromResult(AssistantFileDownloadStatus.Unavailable);
     Task SendChatAbortAsync(string runId, string? sessionKey = null);
     Task ResolveExecApprovalAsync(string approvalId, string decision);
-    Task SendChatAbortAtEpochAsync(string runId, string sessionKey, long expectedConnectionEpoch)
+    Task SendChatAbortAtEpochAsync(string runId, string sessionKey, long expectedConnectionEpoch, Func<bool>? isCurrent = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionKey);
+        if (isCurrent is not null)
+            throw new NotSupportedException("This adapter cannot enforce scoped chat.abort writes.");
         if (ConnectionEpoch != expectedConnectionEpoch)
             throw new InvalidOperationException("The Gateway connection changed before chat.abort could be sent.");
         return SendChatAbortAsync(runId, sessionKey);
@@ -362,19 +368,22 @@ public sealed class GatewayClientChatBridge : IChatGatewayBridge
     public Task ClearSessionThinkingLevelAsync(string sessionKey) =>
         _client.PatchSessionAsync(sessionKey, new SessionPatch { ThinkingLevel = SessionPatch.Clear });
 
-    public Task PatchSessionModelAtEpochAsync(string key, string model, long epoch) =>
-        PatchChatSessionOptionsAsync(key, new SessionPatch { Model = model }, epoch);
-    public Task ClearSessionModelAtEpochAsync(string key, long epoch) =>
-        PatchChatSessionOptionsAsync(key, new SessionPatch { Model = SessionPatch.Clear }, epoch);
-    public Task PatchSessionThinkingLevelAtEpochAsync(string key, string level, long epoch) =>
-        PatchChatSessionOptionsAsync(key, new SessionPatch { ThinkingLevel = level }, epoch);
-    public Task ClearSessionThinkingLevelAtEpochAsync(string key, long epoch) =>
-        PatchChatSessionOptionsAsync(key, new SessionPatch { ThinkingLevel = SessionPatch.Clear }, epoch);
+    public Task PatchSessionModelAtEpochAsync(string key, string model, long epoch, Func<bool>? isCurrent = null) =>
+        PatchChatSessionOptionsAsync(key, new SessionPatch { Model = model }, epoch, isCurrent);
+    public Task ClearSessionModelAtEpochAsync(string key, long epoch, Func<bool>? isCurrent = null) =>
+        PatchChatSessionOptionsAsync(key, new SessionPatch { Model = SessionPatch.Clear }, epoch, isCurrent);
+    public Task PatchSessionThinkingLevelAtEpochAsync(string key, string level, long epoch, Func<bool>? isCurrent = null) =>
+        PatchChatSessionOptionsAsync(key, new SessionPatch { ThinkingLevel = level }, epoch, isCurrent);
+    public Task ClearSessionThinkingLevelAtEpochAsync(string key, long epoch, Func<bool>? isCurrent = null) =>
+        PatchChatSessionOptionsAsync(key, new SessionPatch { ThinkingLevel = SessionPatch.Clear }, epoch, isCurrent);
 
-    private async Task PatchChatSessionOptionsAsync(string key, SessionPatch patch, long epoch)
+    private async Task PatchChatSessionOptionsAsync(string key, SessionPatch patch, long epoch, Func<bool>? isCurrent)
     {
-        await _client.PatchSessionConfirmedAsync(key, patch, epoch).ConfigureAwait(false);
-        if (_client.SessionMutationConnectionEpoch == epoch)
+        if (isCurrent is null)
+            await _client.PatchSessionConfirmedAsync(key, patch, epoch).ConfigureAwait(false);
+        else
+            await _client.PatchSessionConfirmedScopedAsync(key, patch, epoch, isCurrent).ConfigureAwait(false);
+        if (_client.SessionMutationConnectionEpoch == epoch && (isCurrent?.Invoke() ?? true))
             await _client.RequestSessionsAsync().ConfigureAwait(false);
     }
 
@@ -433,8 +442,10 @@ public sealed class GatewayClientChatBridge : IChatGatewayBridge
     public Task ResolveExecApprovalAsync(string approvalId, string decision) =>
         _client.ResolveExecApprovalAsync(approvalId, decision);
 
-    public Task SendChatAbortAtEpochAsync(string runId, string sessionKey, long expectedConnectionEpoch) =>
-        _client.SendChatAbortAsync(runId, sessionKey, expectedConnectionEpoch: expectedConnectionEpoch);
+    public Task SendChatAbortAtEpochAsync(string runId, string sessionKey, long expectedConnectionEpoch, Func<bool>? isCurrent = null) =>
+        isCurrent is null
+            ? _client.SendChatAbortAsync(runId, sessionKey, expectedConnectionEpoch: expectedConnectionEpoch)
+            : _client.SendChatAbortScopedAsync(runId, sessionKey, expectedConnectionEpoch, isCurrent);
 
     public Task ResolveExecApprovalAtEpochAsync(string approvalId, string decision, long expectedConnectionEpoch) =>
         _client.ResolveExecApprovalAsync(approvalId, decision, expectedConnectionEpoch);

@@ -45,6 +45,8 @@ internal static class LocalizationHelper
         "Chat_Input_AccountChanged" => "The authenticated account changed. A fresh chat context is required before sending.",
         "Chat_Input_Interrupted" => "The Gateway reports that the pending input was interrupted. No input was resent.",
         "Chat_Input_Cancelled" => "The Gateway cancelled the pending input. It was not resent.",
+        "Chat_Input_SettingUnconfirmed" => "Session setting not confirmed",
+        "Chat_Input_SettingUnconfirmedFormat" => "Setting update failed: {0} Choose it again or reconnect before sending.",
         "TimeAgo_JustNow" => "Just now",
         "TimeAgo_MinutesFormat" => "{0}m ago",
         "TimeAgo_HoursFormat" => "{0}h ago",
@@ -291,10 +293,13 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
     internal ChatInputLease CaptureInputOrigin(string threadId, IChatInputOrigin? externalOrigin = null) =>
         _state.CaptureInputLease(_bridge.ConnectionOwner, threadId, externalOrigin);
 
-    private bool IsInputConnectionCurrent(ChatInputLease origin) =>
+    private bool IsInputTransportCurrent(ChatInputLease origin) =>
         !_state.IsInputAuthorityRetired &&
         ReferenceEquals(origin.ConnectionOwner, _bridge.ConnectionOwner) &&
-        origin.Generation.TransportEpoch == _bridge.ConnectionEpoch &&
+        origin.Generation.TransportEpoch == _bridge.ConnectionEpoch;
+
+    private bool IsInputConnectionCurrent(ChatInputLease origin) =>
+        IsInputTransportCurrent(origin) &&
         (origin.ExternalOrigin is not { } external ||
             ReferenceEquals(external.Client, _bridge.ConnectionOwner) &&
             external.ConnectionEpoch == _bridge.ConnectionEpoch &&
@@ -304,13 +309,33 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
     internal bool IsInputOriginCurrent(ChatInputLease origin) =>
         IsInputConnectionCurrent(origin) && _state.IsInputLeaseCurrent(origin);
 
-    internal ChatInputLease? ContinueInputPreparation(
-        ChatInputLease original, ChatPlacementMaterializationReceipt receipt)
+    internal async Task<ChatInputLease?> ContinueInputPreparationAsync(
+        ChatInputLease original, ChatPlacementMaterializationReceipt receipt, CancellationToken cancellationToken)
     {
-        if (!IsInputConnectionCurrent(original) ||
-            !ReferenceEquals(receipt.Client, _bridge.ConnectionOwner))
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsInputTransportCurrent(original) ||
+            !ReferenceEquals(receipt.Client, _bridge.ConnectionOwner) ||
+            receipt.ConnectionEpoch != original.Generation.TransportEpoch || receipt.SessionKey != original.ThreadId)
             return null;
-        var continuation = _state.ContinueMaterializedInput(original, receipt);
+        var candidate = original;
+        if (original.ExternalOrigin is { } producer)
+        {
+            if (producer.CancellationToken.IsCancellationRequested ||
+                !ReferenceEquals(producer.Client, receipt.Client) ||
+                producer.ConnectionEpoch != receipt.ConnectionEpoch || producer.SessionKey != receipt.SessionKey)
+                return null;
+            var next = await producer.ContinueMaterializationAsync(receipt, cancellationToken).ConfigureAwait(false);
+            if (next is null || !ReferenceEquals(next.Client, receipt.Client) ||
+                next.ConnectionEpoch != receipt.ConnectionEpoch || next.SessionKey != receipt.SessionKey ||
+                next.SessionId != receipt.SessionId || next.AgentId != producer.AgentId ||
+                next.CancellationToken.IsCancellationRequested || !next.IsCurrent)
+                return null;
+            candidate = original with { ExternalOrigin = next };
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsInputConnectionCurrent(candidate))
+            return null;
+        var continuation = _state.ContinueMaterializedInput(candidate, receipt);
         if (continuation is not null)
             Publish(_state.Snapshot(ProjectionContext()));
         return continuation;
@@ -588,7 +613,7 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
                 {
                     Error = ChatInputMessages.RecoveryUnavailable,
                 };
-            await LoadHistoryAsync(threadId, force: true, cancellationToken, authoritative: true).ConfigureAwait(false);
+            await _historyLoader.ReconcileInputsAsync(threadId).WaitAsync(cancellationToken).ConfigureAwait(false);
             if (_state.GetInputReceiptOutcome(threadId, messageId) is { } settled)
                 return settled;
             if (!IsInputOriginCurrent(origin))
@@ -898,11 +923,20 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         _ => ChatAdmissionTelemetryStatus.Other,
     };
 
-    public async Task StopResponseAsync(string threadId, CancellationToken cancellationToken = default)
+    public Task StopResponseAsync(string threadId, CancellationToken cancellationToken = default) =>
+        StopResponseAsync(threadId, cancellationToken, null, null);
+
+    internal async Task StopResponseAsync(string threadId, CancellationToken cancellationToken,
+        ChatInputLease? origin, Func<bool>? callerCurrent)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (_state.IsInputAuthorityRetired)
             throw new InvalidOperationException(ChatInputMessages.AccountChanged);
+        origin ??= CaptureInputOrigin(threadId);
+        bool Current() => !cancellationToken.IsCancellationRequested &&
+            (callerCurrent?.Invoke() ?? true) && origin.ThreadId == threadId && IsInputOriginCurrent(origin);
+        if (!Current())
+            throw new InvalidOperationException(ChatInputMessages.ScopeChanged);
 
         var abort = _state.BeginAbort(threadId);
         var runId = abort.RunId;
@@ -919,7 +953,8 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
             try
             {
                 Logger.Info($"[ABORT] Sending chat.abort for runId='{runId}'");
-                await _bridge.SendChatAbortAtEpochAsync(runId, threadId, abort.RuntimeGeneration.TransportEpoch);
+                await _bridge.SendChatAbortAtEpochAsync(runId, threadId, abort.RuntimeGeneration.TransportEpoch,
+                    () => Current() && _state.IsAbortRunCurrent(threadId, runId, abort.RuntimeGeneration));
                 Logger.Info($"[ABORT] chat.abort sent successfully");
             }
             catch (Exception ex)
@@ -1031,28 +1066,54 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         return Task.CompletedTask; // Not supported by gateway — no-op.
     }
 
-    public async Task SetModelAsync(string threadId, string model, CancellationToken cancellationToken = default)
+    public Task SetModelAsync(string threadId, string model, CancellationToken cancellationToken = default) =>
+        SetModelAsync(threadId, model, cancellationToken, null, null);
+
+    internal async Task SetModelAsync(string threadId, string model, CancellationToken cancellationToken,
+        ChatInputLease? origin, Func<bool>? isCurrent)
     {
         cancellationToken.ThrowIfCancellationRequested();
         // The gateway's sessions.patch schema treats `model` as a non-empty
         // string; a blank value here is a no-op rather than a clear. Use
         // ClearModelAsync to revert a session to the gateway default.
         if (string.IsNullOrWhiteSpace(model)) return;
-        await TrackSessionOptionPatchAsync(threadId, epoch => _bridge.PatchSessionModelAtEpochAsync(threadId, model, epoch));
+        await TrackSessionOptionPatchAsync(threadId,
+            (epoch, guard) => _bridge.PatchSessionModelAtEpochAsync(threadId, model, epoch, guard),
+            origin, isCurrent, cancellationToken);
     }
 
-    public async Task ClearModelAsync(string threadId, CancellationToken cancellationToken = default)
+    public Task ClearModelAsync(string threadId, CancellationToken cancellationToken = default) =>
+        ClearModelAsync(threadId, cancellationToken, null, null);
+
+    internal async Task ClearModelAsync(string threadId, CancellationToken cancellationToken,
+        ChatInputLease? origin, Func<bool>? isCurrent)
     {
         cancellationToken.ThrowIfCancellationRequested();
         // Tri-state clear: removes the session's model override (explicit null)
         // so it tracks the gateway/agent default again.
-        await TrackSessionOptionPatchAsync(threadId, epoch => _bridge.ClearSessionModelAtEpochAsync(threadId, epoch));
+        await TrackSessionOptionPatchAsync(threadId,
+            (epoch, guard) => _bridge.ClearSessionModelAtEpochAsync(threadId, epoch, guard),
+            origin, isCurrent, cancellationToken);
     }
 
-    private async Task TrackSessionOptionPatchAsync(string threadId, Func<long, Task> patchOperation)
+    private async Task TrackSessionOptionPatchAsync(string threadId, Func<long, Func<bool>, Task> patchOperation,
+        ChatInputLease? origin, Func<bool>? callerCurrent, CancellationToken cancellationToken)
     {
-        var origin = CaptureInputOrigin(threadId);
-        if (!IsInputOriginCurrent(origin))
+        origin ??= CaptureInputOrigin(threadId);
+        bool IsCurrent()
+        {
+            try
+            {
+                return !cancellationToken.IsCancellationRequested &&
+                    (callerCurrent?.Invoke() ?? true) && IsInputOriginCurrent(origin);
+            }
+            catch (Exception ex)
+            {
+                Logger.Warn($"[chat] Setting origin validation failed ({ex.GetType().Name}).");
+                return false;
+            }
+        }
+        if (origin.ThreadId != threadId || !IsCurrent())
             throw new InvalidOperationException(ChatInputMessages.ScopeChanged);
         var lease = _state.BeginSessionOptionPatch(threadId);
         Exception? failure = null;
@@ -1060,19 +1121,31 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         {
             if (lease.Previous is not null)
             {
-                try { await lease.Previous; }
+                try { await lease.Previous.WaitAsync(cancellationToken); }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
                 catch (Exception ex)
                 {
                     Logger.Debug($"ChatDataProvider: continuing session option patch after previous patch failed: {ex.Message}");
                 }
             }
-            if (!IsInputOriginCurrent(origin))
+            if (!IsCurrent())
                 throw new InvalidOperationException(ChatInputMessages.ScopeChanged);
-            await patchOperation(origin.Generation.TransportEpoch);
+            await patchOperation(origin.Generation.TransportEpoch, IsCurrent);
+            if (!IsCurrent())
+                throw new ChatMutationDeliveryException(
+                    "The setting response belongs to a retired conversation context. Reconcile before sending.", true);
         }
         catch (Exception ex)
         {
             failure = ex;
+            if (IsCurrent())
+            {
+                var message = string.Format(CultureInfo.CurrentCulture,
+                    LocalizationHelper.GetString("Chat_Input_SettingUnconfirmedFormat"), ex.Message);
+                Publish(_state.ApplyEvent(threadId, new ChatStatusEvent(message, ChatTone.Error), null, ProjectionContext()),
+                    new ChatProviderNotification(ChatProviderNotificationKind.Error, threadId,
+                        LocalizationHelper.GetString("Chat_Input_SettingUnconfirmed"), message));
+            }
             throw;
         }
         finally
@@ -1090,20 +1163,30 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
         }
     }
 
-    public async Task SetThinkingLevelAsync(string threadId, string thinkingLevel, CancellationToken cancellationToken = default)
+    public Task SetThinkingLevelAsync(string threadId, string thinkingLevel, CancellationToken cancellationToken = default) =>
+        SetThinkingLevelAsync(threadId, thinkingLevel, cancellationToken, null, null);
+
+    internal async Task SetThinkingLevelAsync(string threadId, string thinkingLevel, CancellationToken cancellationToken,
+        ChatInputLease? origin, Func<bool>? isCurrent)
     {
         cancellationToken.ThrowIfCancellationRequested();
         await TrackSessionOptionPatchAsync(
             threadId,
-            epoch => _bridge.PatchSessionThinkingLevelAtEpochAsync(threadId, thinkingLevel, epoch));
+            (epoch, guard) => _bridge.PatchSessionThinkingLevelAtEpochAsync(threadId, thinkingLevel, epoch, guard),
+            origin, isCurrent, cancellationToken);
     }
 
-    public async Task ClearThinkingLevelAsync(string threadId, CancellationToken cancellationToken = default)
+    public Task ClearThinkingLevelAsync(string threadId, CancellationToken cancellationToken = default) =>
+        ClearThinkingLevelAsync(threadId, cancellationToken, null, null);
+
+    internal async Task ClearThinkingLevelAsync(string threadId, CancellationToken cancellationToken,
+        ChatInputLease? origin, Func<bool>? isCurrent)
     {
         cancellationToken.ThrowIfCancellationRequested();
         await TrackSessionOptionPatchAsync(
             threadId,
-            epoch => _bridge.ClearSessionThinkingLevelAtEpochAsync(threadId, epoch));
+            (epoch, guard) => _bridge.ClearSessionThinkingLevelAtEpochAsync(threadId, epoch, guard),
+            origin, isCurrent, cancellationToken);
     }
 
     public async Task EnsureCommandCatalogAsync(CancellationToken cancellationToken = default)
@@ -1882,7 +1965,8 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
             {
                 try
                 {
-                    await _bridge.SendChatAbortAtEpochAsync(runId, threadId, runtimeGeneration.TransportEpoch);
+                    await _bridge.SendChatAbortAtEpochAsync(runId, threadId, runtimeGeneration.TransportEpoch,
+                        () => _state.IsAbortRunCurrent(threadId, runId, runtimeGeneration));
                 }
                 catch (Exception ex)
                 {

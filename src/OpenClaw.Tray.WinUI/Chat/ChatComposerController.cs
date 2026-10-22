@@ -66,6 +66,7 @@ internal sealed partial class ChatComposerController : IDisposable
     private ModelCatalogRequestKey? _modelCatalogRequestKey;
     private int _generation;
     private long _selectionRevision;
+    private long SelectionRevision => Interlocked.Read(ref _selectionRevision);
 
     /// <summary>Controller-owned single-flight send gate, independent of the
     /// rendered/projected <see cref="ChatComposerViewModel.IsSending"/> value.
@@ -133,7 +134,7 @@ internal sealed partial class ChatComposerController : IDisposable
     /// <summary>Exposed for disposal characterization tests.</summary>
     internal bool IsDisposed => _disposed;
 
-    internal void InvalidatePendingSessionNavigation() => _selectionRevision++;
+    internal void InvalidatePendingSessionNavigation() => Interlocked.Increment(ref _selectionRevision);
 
     /// <summary>Returns false until the root is ready, or after disposal, so an
     /// external host can retain its initial-selection handoff instead.</summary>
@@ -257,7 +258,7 @@ internal sealed partial class ChatComposerController : IDisposable
             return false;
 
         var generationAtStart = _generation;
-        var targetSelectionRevision = _selectionRevision;
+        var targetSelectionRevision = SelectionRevision;
         var origin = _port.CaptureInputOrigin(threadId, _vm.Inputs?.InputOrigin);
 #if OPENCLAW_TRAY_TESTS
         if (TestOnlyAfterEntryBeforePortInvocation is { } hook)
@@ -265,7 +266,7 @@ internal sealed partial class ChatComposerController : IDisposable
 #endif
 
         bool StillLive() => !_disposed && generationAtStart == _generation;
-        bool StillSelected() => StillLive() && targetSelectionRevision == _selectionRevision;
+        bool StillSelected() => StillLive() && targetSelectionRevision == SelectionRevision;
         bool StillTargeted() => StillSelected() &&
             (origin is null || _port.IsInputOriginCurrent(origin));
 
@@ -290,12 +291,12 @@ internal sealed partial class ChatComposerController : IDisposable
             if (!StillTargeted())
                 return false;
 
-            var selectionRevision = _selectionRevision;
+            var selectionRevision = SelectionRevision;
             var result = await _port.ExecuteLifecycleCommandAsync(threadId, command).ConfigureAwait(true);
             if (!StillLive())
                 return false;
             if (result.Succeeded && result.NewSessionKey is { } sessionKey &&
-                selectionRevision == _selectionRevision)
+                selectionRevision == SelectionRevision)
                 TrySelectSession(sessionKey);
             return result.Succeeded;
         }
@@ -305,18 +306,18 @@ internal sealed partial class ChatComposerController : IDisposable
             var requiresPreparation = _placement.RequiresPreparation;
             if (!await _placement.PrepareAsync(threadId, _lifetimeToken,
                     () => StillTargeted(),
-                    receipt =>
+                    async (receipt, token) =>
                     {
                         if (!StillSelected())
                             return false;
                         if (origin is null)
                             return true;
-                        var continuation = _port.ContinueInputPreparation(origin, receipt);
-                        if (continuation is null)
+                        var continuation = await _port.ContinueInputPreparationAsync(origin, receipt, token).ConfigureAwait(false);
+                        if (continuation is null || !StillSelected())
                             return false;
                         origin = continuation;
                         return true;
-                    }).ConfigureAwait(true)
+                    }, beforeWrite: origin is null ? null : StillTargeted).ConfigureAwait(true)
                 || !StillTargeted() || (requiresPreparation && !_placement.IsCurrent(threadId)))
                 return false;
         }
@@ -358,7 +359,9 @@ internal sealed partial class ChatComposerController : IDisposable
         if (_vm.Inputs?.CurrentThread.Id is not { } threadId)
             return;
 
-        FireAndForget(_ => _port.StopResponseAsync(threadId, _lifetimeToken));
+        var current = CaptureMutationCurrentness();
+        var origin = _port.CaptureInputOrigin(threadId, _vm.Inputs?.InputOrigin);
+        FireAndForget(_ => _port.StopResponseAsync(threadId, _lifetimeToken, origin, current));
     }
 
     public void CancelQueuedMessage(string queuedMessageId)
@@ -385,12 +388,12 @@ internal sealed partial class ChatComposerController : IDisposable
     {
         if (_disposed || _vm.Inputs is not { } inputs)
             return new(ChatInputSubmissionState.Stale, messageId);
-        var selection = _selectionRevision;
+        var selection = SelectionRevision;
         try
         {
             var result = await _port.RetryQueuedInputAsync(
                 inputs.CurrentThread.Id, messageId, steer, _lifetimeToken).ConfigureAwait(true);
-            if (!_disposed && selection == _selectionRevision)
+            if (!_disposed && selection == SelectionRevision)
                 _vm.SetSubmissionResult(result);
             return result;
         }
@@ -398,7 +401,7 @@ internal sealed partial class ChatComposerController : IDisposable
         {
             System.Diagnostics.Trace.WriteLine($"[chat] input recovery failed: {ex}");
             var failure = new ChatInputSubmissionResult(ChatInputSubmissionState.Rejected, messageId, ex.Message);
-            if (!_disposed && selection == _selectionRevision)
+            if (!_disposed && selection == SelectionRevision)
                 _vm.SetSubmissionResult(failure);
             return failure;
         }
@@ -414,7 +417,9 @@ internal sealed partial class ChatComposerController : IDisposable
         if (!TryGetSessionOptionThread(out var threadId))
             return;
 
-        FireAndForget(_ => _port.SetModelAsync(threadId, model, _lifetimeToken));
+        var current = CaptureMutationCurrentness();
+        FireAndForget(_ => _port.SetModelAsync(threadId, model, _lifetimeToken,
+            _port.CaptureInputOrigin(threadId, _vm.Inputs?.InputOrigin), current));
     }
 
     public void ClearModel()
@@ -422,7 +427,9 @@ internal sealed partial class ChatComposerController : IDisposable
         if (!TryGetSessionOptionThread(out var threadId))
             return;
 
-        FireAndForget(_ => _port.ClearModelAsync(threadId, _lifetimeToken));
+        var current = CaptureMutationCurrentness();
+        FireAndForget(_ => _port.ClearModelAsync(threadId, _lifetimeToken,
+            _port.CaptureInputOrigin(threadId, _vm.Inputs?.InputOrigin), current));
     }
 
     public void SetThinkingLevel(string level)
@@ -435,7 +442,9 @@ internal sealed partial class ChatComposerController : IDisposable
             return;
         }
 
-        FireAndForget(_ => _port.SetThinkingLevelAsync(threadId, level, _lifetimeToken));
+        var current = CaptureMutationCurrentness();
+        FireAndForget(_ => _port.SetThinkingLevelAsync(threadId, level, _lifetimeToken,
+            _port.CaptureInputOrigin(threadId, _vm.Inputs?.InputOrigin), current));
     }
 
     public void ClearThinkingLevel()
@@ -443,7 +452,17 @@ internal sealed partial class ChatComposerController : IDisposable
         if (!TryGetSessionOptionThread(out var threadId))
             return;
 
-        FireAndForget(_ => _port.ClearThinkingLevelAsync(threadId, _lifetimeToken));
+        var current = CaptureMutationCurrentness();
+        FireAndForget(_ => _port.ClearThinkingLevelAsync(threadId, _lifetimeToken,
+            _port.CaptureInputOrigin(threadId, _vm.Inputs?.InputOrigin), current));
+    }
+
+    private Func<bool> CaptureMutationCurrentness()
+    {
+        var generation = _generation;
+        var selection = SelectionRevision;
+        return () => !_disposed && !_lifetimeToken.IsCancellationRequested &&
+            generation == _generation && selection == SelectionRevision;
     }
 
     private bool TryGetSessionOptionThread(out string threadId)

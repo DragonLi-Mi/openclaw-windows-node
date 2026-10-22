@@ -30,9 +30,11 @@ internal sealed class ChatComposerRuntimePort(IChatDataProvider provider) : ICha
     public bool IsInputOriginCurrent(ChatInputLease origin) =>
         provider is OpenClawChatDataProvider native && native.IsInputOriginCurrent(origin);
 
-    public ChatInputLease? ContinueInputPreparation(
-        ChatInputLease original, ChatPlacementMaterializationReceipt receipt) =>
-        provider is OpenClawChatDataProvider native ? native.ContinueInputPreparation(original, receipt) : null;
+    public Task<ChatInputLease?> ContinueInputPreparationAsync(
+        ChatInputLease original, ChatPlacementMaterializationReceipt receipt, CancellationToken cancellationToken) =>
+        provider is OpenClawChatDataProvider native
+            ? native.ContinueInputPreparationAsync(original, receipt, cancellationToken)
+            : Task.FromResult<ChatInputLease?>(null);
 
     public async Task<ChatInputSubmissionResult> SendInputAsync(
         string threadId, string message, IReadOnlyList<ChatAttachment> attachments,
@@ -95,9 +97,16 @@ internal sealed class ChatComposerRuntimePort(IChatDataProvider provider) : ICha
                 Succeeded: false,
                 Error: "This gateway does not support lifecycle commands."));
 
-    public async Task StopResponseAsync(string threadId, CancellationToken cancellationToken)
+    public async Task StopResponseAsync(string threadId, CancellationToken cancellationToken,
+        ChatInputLease? origin = null, Func<bool>? isCurrent = null)
     {
-        try { await provider.StopResponseAsync(threadId, cancellationToken).ConfigureAwait(true); }
+        try
+        {
+            if (provider is OpenClawChatDataProvider native)
+                await native.StopResponseAsync(threadId, cancellationToken, origin, isCurrent).ConfigureAwait(true);
+            else
+                await provider.StopResponseAsync(threadId, cancellationToken).ConfigureAwait(true);
+        }
         catch (OperationCanceledException) { }
         catch (Exception ex) { System.Diagnostics.Trace.WriteLine($"[chat] operation failed: {ex}"); }
     }
@@ -131,16 +140,30 @@ internal sealed class ChatComposerRuntimePort(IChatDataProvider provider) : ICha
         provider is OpenClawChatDataProvider native
             ? native.DiscardUnconfirmedInputAsync(threadId, messageId) : Task.FromResult(false);
 
-    public async Task SetModelAsync(string threadId, string model, CancellationToken cancellationToken)
+    public async Task SetModelAsync(string threadId, string model, CancellationToken cancellationToken,
+        ChatInputLease? origin = null, Func<bool>? isCurrent = null)
     {
-        try { await provider.SetModelAsync(threadId, model, cancellationToken).ConfigureAwait(true); }
+        try
+        {
+            if (provider is OpenClawChatDataProvider native)
+                await native.SetModelAsync(threadId, model, cancellationToken, origin, isCurrent).ConfigureAwait(true);
+            else
+                await provider.SetModelAsync(threadId, model, cancellationToken).ConfigureAwait(true);
+        }
         catch (OperationCanceledException) { }
         catch (Exception ex) { System.Diagnostics.Trace.WriteLine($"[chat] operation failed: {ex}"); }
     }
 
-    public async Task ClearModelAsync(string threadId, CancellationToken cancellationToken)
+    public async Task ClearModelAsync(string threadId, CancellationToken cancellationToken,
+        ChatInputLease? origin = null, Func<bool>? isCurrent = null)
     {
-        try { await provider.ClearModelAsync(threadId, cancellationToken).ConfigureAwait(true); }
+        try
+        {
+            if (provider is OpenClawChatDataProvider native)
+                await native.ClearModelAsync(threadId, cancellationToken, origin, isCurrent).ConfigureAwait(true);
+            else
+                await provider.ClearModelAsync(threadId, cancellationToken).ConfigureAwait(true);
+        }
         catch (OperationCanceledException) { }
         catch (Exception ex) { System.Diagnostics.Trace.WriteLine($"[chat] operation failed: {ex}"); }
     }
@@ -157,16 +180,30 @@ internal sealed class ChatComposerRuntimePort(IChatDataProvider provider) : ICha
         return models;
     }
 
-    public async Task SetThinkingLevelAsync(string threadId, string thinkingLevel, CancellationToken cancellationToken)
+    public async Task SetThinkingLevelAsync(string threadId, string thinkingLevel, CancellationToken cancellationToken,
+        ChatInputLease? origin = null, Func<bool>? isCurrent = null)
     {
-        try { await provider.SetThinkingLevelAsync(threadId, thinkingLevel, cancellationToken).ConfigureAwait(true); }
+        try
+        {
+            if (provider is OpenClawChatDataProvider native)
+                await native.SetThinkingLevelAsync(threadId, thinkingLevel, cancellationToken, origin, isCurrent).ConfigureAwait(true);
+            else
+                await provider.SetThinkingLevelAsync(threadId, thinkingLevel, cancellationToken).ConfigureAwait(true);
+        }
         catch (OperationCanceledException) { }
         catch (Exception ex) { System.Diagnostics.Trace.WriteLine($"[chat] operation failed: {ex}"); }
     }
 
-    public async Task ClearThinkingLevelAsync(string threadId, CancellationToken cancellationToken)
+    public async Task ClearThinkingLevelAsync(string threadId, CancellationToken cancellationToken,
+        ChatInputLease? origin = null, Func<bool>? isCurrent = null)
     {
-        try { await provider.ClearThinkingLevelAsync(threadId, cancellationToken).ConfigureAwait(true); }
+        try
+        {
+            if (provider is OpenClawChatDataProvider native)
+                await native.ClearThinkingLevelAsync(threadId, cancellationToken, origin, isCurrent).ConfigureAwait(true);
+            else
+                await provider.ClearThinkingLevelAsync(threadId, cancellationToken).ConfigureAwait(true);
+        }
         catch (OperationCanceledException) { }
         catch (Exception ex) { System.Diagnostics.Trace.WriteLine($"[chat] operation failed: {ex}"); }
     }

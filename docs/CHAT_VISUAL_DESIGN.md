@@ -126,12 +126,20 @@ refusal leaves the composer as the payload owner. A possible write without an
 acknowledgement transfers the immutable text, attachment references, original
 target and idempotency key to a retained **unconfirmed** entry. The composer
 releases only its unchanged submitted revision and submitted attachments.
+A command acknowledgement with `status:"ok"` retires a leading-slash command
+that does not require input consumption; ordinary input still needs positive
+consumption or message identity.
 
 Every successful current-epoch history refresh requests retained input IDs when
 the custody contract is available. A reconnect requests reconciliation after a
 fresh session snapshot, only for the same real client and matching known
 session incarnation. This is a receipt read, not permission to replay an input.
 An unknown incarnation or retired account remains blocked.
+Receipt-only recovery does not rebuild the transcript or replace active
+assistant/reasoning entry identities. Positively consumed in-run inputs are
+appended without ending the current response segment; subsequent deltas keep
+the active assistant entry. Ordinary user-turn boundaries retain their existing
+streaming reset behavior.
 
 Recovery reads `chat.history` with exact `inputRunIds`. Pending receipts retain
 Gateway custody; consumed or cancelled receipts retire it. A missing receipt,
@@ -187,11 +195,36 @@ check runs after the socket send semaphore, immediately before writing.
 `ChatConversationState` never performs or blocks on network writes under its
 transaction lock. Origin callbacks must obey the same nonblocking lock
 direction; they cannot issue RPCs or wait for a send.
+The same guarded write path covers model/effort patches, first-turn creation and
+dispatch, and explicit Stop. A late setting acknowledgement from a retired
+origin cannot unblock a send. Stop captures its actual active run and rejects a
+changed origin/run before writing, without targeting a replacement run.
 External prompts do not borrow or clear the composer. Leading-slash command
 input, including commands with arguments or attachments, is rejected rather than
 forwarded as a possible Gateway-wide mutation. First-turn placement changes also
 require the composer. Stale origins are rejected
 instead of targeting the current selection or main session.
+
+### Scoped mutation lock boundary
+
+The socket `_sendLock` owns the outer write boundary. Provider currentness takes
+and releases the conversation `_gate` before invoking the external origin, then
+revalidates conversation state in a separate read transaction. It never holds
+that state lock across an external callback or a network operation.
+Receive-side session mutations release `_sessionsLock` before events, and the
+pending registry releases its gate before completing asynchronously continued
+tasks. Those reverse paths must not acquire or wait for the socket semaphore
+while holding a predicate lock.
+
+The permitted integration order is socket send, provider state, manager snapshot
+read, client session-list read, then profile/revision. Non-nested reads release
+their locks between stages. The current manager snapshot getter is a direct
+immutable record reference, not a claimed snapshot-lock guarantee. A genuine
+conversation-only origin and promoted canonical account owner require their own
+current-source lock audit before Root wiring. Existing panel currentness is not
+an audited substitute. Real-socket contention tests cover the implemented
+conversation and client session-list gates; they do not prove an unwired
+manager/profile producer.
 
 Chat responses are not read aloud by default. Enabling the Text-to-speech
 capability permits playback but does not enable automatic spoken replies.

@@ -714,6 +714,16 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
             expectedConnectionEpoch);
     }
 
+    public Task SendChatAbortScopedAsync(
+        string runId, string sessionKey, long expectedConnectionEpoch, Func<bool> isCurrent, int timeoutMs = 5000)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(runId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionKey);
+        ArgumentNullException.ThrowIfNull(isCurrent);
+        return SendResponseRequestAsync("chat.abort", new { runId, sessionKey }, timeoutMs,
+            expectedConnectionEpoch, isCurrent);
+    }
+
     /// <summary>
     /// Resolves a pending exec approval over the operator-approvals gateway RPC
     /// (<c>exec.approval.resolve</c>). Required scope: <c>operator.approvals</c>.
@@ -1469,12 +1479,47 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
     public Task<JsonElement> SendWizardRequestAsync(string method, object? parameters = null, int timeoutMs = 30000) =>
         SendResponseRequestAsync(method, parameters, timeoutMs);
 
-    private async Task<JsonElement> SendResponseRequestAsync(
+    private Task<JsonElement> SendResponseRequestAsync(
         string method, object? parameters, int timeoutMs, long? expectedConnectionEpoch = null)
+        => SendResponseRequestCoreAsync(method, parameters, timeoutMs, expectedConnectionEpoch, null);
+
+    private Task<JsonElement> SendResponseRequestAsync(
+        string method, object? parameters, int timeoutMs, long? expectedConnectionEpoch, Func<bool> isCurrent)
     {
-        var connectionGeneration = GetReadyConnectionGeneration(method);
+        ArgumentNullException.ThrowIfNull(isCurrent);
+        return SendResponseRequestCoreAsync(method, parameters, timeoutMs, expectedConnectionEpoch, isCurrent);
+    }
+
+    private async Task<JsonElement> SendResponseRequestCoreAsync(
+        string method, object? parameters, int timeoutMs, long? expectedConnectionEpoch, Func<bool>? isCurrent)
+    {
+        long connectionGeneration;
+        try { connectionGeneration = GetReadyConnectionGeneration(method); }
+        catch (Exception ex) when (isCurrent is not null)
+        {
+            throw new ChatMutationDeliveryException($"The Gateway context is not ready for {method}. No request was written.", false, ex);
+        }
         if (expectedConnectionEpoch.HasValue && connectionGeneration != expectedConnectionEpoch.Value)
+        {
+            if (isCurrent is not null)
+                throw new ChatMutationDeliveryException($"The Gateway connection changed before {method}. No request was written.", false);
             throw new InvalidOperationException("The Gateway connection changed before the request could be sent.");
+        }
+        bool ScopeAllowsWrite()
+        {
+            try
+            {
+                return TryGetReadyConnectionGeneration(out var current) && current == connectionGeneration &&
+                    isCurrent!.Invoke();
+            }
+            catch (Exception ex)
+            {
+                throw new ChatMutationDeliveryException(
+                    $"The originating context could not be verified for {method}. No request was written.", false, ex);
+            }
+        }
+        if (isCurrent is not null && !ScopeAllowsWrite())
+            throw new ChatMutationDeliveryException($"The originating context changed before {method}. No request was written.", false);
 
         // #1418: wizard requests are application RPCs (models.list,
         // device.pair.list, pairing approvals, update.status, chat.abort,
@@ -1489,19 +1534,35 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
         _logger.Info($"[GatewayClient] Sending frame: {method}");
         var requestId = Guid.NewGuid().ToString();
         var pending = _pendingRequests.RegisterWizard(requestId, method);
+        var writeStarted = false;
 
         try
         {
-            var sent = await SendRawAsync(
-                    SerializeRequest(requestId, method, parameters),
-                    connectionGeneration,
-                    CancellationToken)
-                .ConfigureAwait(false);
+            var serialized = SerializeRequest(requestId, method, parameters);
+            var sent = isCurrent is null
+                ? await SendRawAsync(serialized, connectionGeneration, CancellationToken).ConfigureAwait(false)
+                : await SendRawAsync(serialized, connectionGeneration, CancellationToken, ScopeAllowsWrite,
+                    () => writeStarted = true).ConfigureAwait(false);
             if (!sent)
+            {
+                if (isCurrent is not null)
+                    throw new ChatMutationDeliveryException(
+                        writeStarted ? $"The outcome of {method} is unconfirmed after a possible write."
+                            : $"The originating context changed before {method}. No request was written.",
+                        writeStarted);
                 throw new InvalidOperationException($"Gateway connection changed before {method} could be sent.");
+            }
             return await pending.Task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMs), CancellationToken);
         }
-        catch (TimeoutException ex)
+        catch (Exception ex) when (isCurrent is not null &&
+            ex is not (GatewayRequestException or ChatMutationDeliveryException))
+        {
+            throw new ChatMutationDeliveryException(
+                writeStarted ? $"The outcome of {method} is unconfirmed after a possible write."
+                    : $"No request was written for {method}.",
+                writeStarted, ex);
+        }
+        catch (TimeoutException ex) when (isCurrent is null)
         {
             throw new TimeoutException($"Timed out waiting for {method} response", ex);
         }

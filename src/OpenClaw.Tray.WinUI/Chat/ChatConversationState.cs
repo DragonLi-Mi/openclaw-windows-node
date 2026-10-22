@@ -226,6 +226,24 @@ internal sealed class ChatConversationState
                 _disposed);
     }
 
+    internal bool CommitInputReceipts(
+        ChatHistoryCommitToken token, ChatInputReceiptQuery query, ChatHistoryInfo history)
+    {
+        lock (_gate)
+        {
+            if (_inputAuthorityRetired || !_history.IsCurrent(token, GetResetVersionLocked(token.ThreadId), _disposed) ||
+                query.ThreadId != token.ThreadId || query.TransportEpoch != _transportEpoch ||
+                query.SessionId is not null && query.SessionId != history.SessionId)
+                return false;
+            foreach (var request in query.Requests)
+            {
+                if (_queue.FindRequest(token.ThreadId, request.Id) == request)
+                    ApplyInputReceiptLocked(request, history);
+            }
+            return true;
+        }
+    }
+
     internal bool CanRetryHistory(
         ChatHistoryCommitToken token,
         bool authoritative)
@@ -1006,6 +1024,19 @@ internal sealed class ChatConversationState
         var pending = pendingMatches.Length == 1 ? pendingMatches[0] : null;
         if (receipt?.State == "consumed" && !string.IsNullOrWhiteSpace(receipt.ConsumedByEventId))
         {
+            var metadata = GetOrCreateThreadMetaLocked(request.ThreadId);
+            if (!metadata.Values.Any(value => value.GatewayMessageId == receipt.ConsumedByEventId))
+            {
+                var timeline = GetOrCreateTimelineLocked(request.ThreadId);
+                var entryId = $"e{timeline.NextId}";
+                _timelines[request.ThreadId] = ChatTimelineReducer.AddConsumedInput(
+                    timeline, request.EffectiveTimelineText, request.LocalNonce);
+                var canonical = history.Messages.FirstOrDefault(message => message.OpenClawId == receipt.ConsumedByEventId);
+                metadata[entryId] = BuildLiveMetaLocked(request.ThreadId,
+                    gatewayMessageId: receipt.ConsumedByEventId, openClawSeq: canonical?.OpenClawSeq,
+                    localQueuedMessageId: request.Id, attachments: request.AttachmentPresentations)
+                    with { Timestamp = request.CreatedAt };
+            }
             _queue.RemoveMessage(request.ThreadId, request.Id);
             RememberInputReceiptOutcome(request, new(ChatInputSubmissionState.Accepted, request.Id));
         }
@@ -1136,6 +1167,19 @@ internal sealed class ChatConversationState
             if (request.UseInputCustody && _queue.FindRequest(threadId, request.Id) is null)
                 return new(true, BuildSnapshotLocked(context), null, null, false,
                     false, false, deferredRetryDelay, null, CurrentRuntimeGenerationLocked(threadId));
+            if (request.UseInputCustody && sendResult.Status == "ok" && !request.RequiresInputConsumption)
+            {
+                _queue.RemoveMessage(threadId, request.Id);
+                RememberInputReceiptOutcome(request, new(ChatInputSubmissionState.Accepted, request.Id));
+                if (!_lifecycle.HasActiveRun(threadId) && !_queue.HasSendingMessages(threadId))
+                {
+                    _timelines[threadId] = ChatTimelineReducer.Apply(
+                        GetOrCreateTimelineLocked(threadId), new ChatTurnEndEvent());
+                    _queue.ClearLocallyInitiated(threadId);
+                }
+                return new(true, BuildSnapshotLocked(context), null, null, false,
+                    false, false, deferredRetryDelay, null, CurrentRuntimeGenerationLocked(threadId));
+            }
             if (request.UseInputCustody || ChatSendQueuePolicy.IsInFlightAdmissionStatus(sendResult.Status))
             {
                 _queue.SetDelivery(request, ChatQueuedMessageSendState.Accepted);
@@ -1470,10 +1514,12 @@ internal sealed class ChatConversationState
 
         var current = GetOrCreateTimelineLocked(threadId);
         var entryId = $"e{current.NextId}";
-        _timelines[threadId] = ChatTimelineReducer.AddLocalUser(
-            current,
-            request?.EffectiveTimelineText ?? queued.Text,
-            queued.LocalNonce);
+        var text = request?.EffectiveTimelineText ?? queued.Text;
+        _timelines[threadId] = request?.UseInputCustody == true
+            ? ChatTimelineReducer.AddConsumedInput(current, text, queued.LocalNonce)
+            : ChatTimelineReducer.AddLocalUser(current, text, queued.LocalNonce);
+        if (request?.UseInputCustody == true)
+            RememberInputReceiptOutcome(request, new(ChatInputSubmissionState.Accepted, request.Id));
         var meta = confirmedMeta is not null && HasGatewayIdentity(confirmedMeta)
             ? confirmedMeta with
             {
@@ -1610,6 +1656,13 @@ internal sealed class ChatConversationState
                 RuntimeGeneration = CurrentRuntimeGenerationLocked(threadId),
             };
         }
+    }
+
+    internal bool IsAbortRunCurrent(string threadId, string runId, ChatRuntimeGeneration generation)
+    {
+        lock (_gate)
+            return !_disposed && !_inputAuthorityRetired && CurrentRuntimeGenerationLocked(threadId) == generation &&
+                _lifecycle.TryGetActiveRun(threadId, out var activeRun) && activeRun == runId;
     }
 
     internal void RollbackAbort(string threadId, string runId)

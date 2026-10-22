@@ -369,18 +369,12 @@ internal sealed class ChatHistoryLoader : IDisposable
                 return;
             }
 
-            var plan = BuildPlan(
-                history,
-                threadId,
-                model,
-                commitToken.ResetGeneration);
-            var committed = _state.CommitHistory(
-                commitToken,
-                plan,
-                requestStartedAt,
-                authoritative,
-                history,
-                inputQuery);
+            var committed = requireInputQuery
+                ? _state.CommitInputReceipts(commitToken, inputQuery!, history)
+                : _state.CommitHistory(
+                    commitToken,
+                    BuildPlan(history, threadId, model, commitToken.ResetGeneration),
+                    requestStartedAt, authoritative, history, inputQuery);
             if (!committed)
             {
                 outcome = ChatTelemetryOutcome.Canceled;
@@ -455,7 +449,8 @@ internal sealed class ChatHistoryLoader : IDisposable
                         authoritative,
                         commitToken,
                         replacement,
-                        supersedeReplacement: false)));
+                        supersedeReplacement: false,
+                        requireInputQuery)));
             }
         }
         finally

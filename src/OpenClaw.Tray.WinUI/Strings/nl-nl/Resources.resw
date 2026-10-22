@@ -1,5 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <root xmlns:ns1="urn:schemas-microsoft-com:xml-msdata" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <data name="Chat_Input_SettingUnconfirmed" xml:space="preserve"><value>Sessie-instelling niet bevestigd</value></data>
+  <data name="Chat_Input_SettingUnconfirmedFormat" xml:space="preserve"><value>Bijwerken van de instelling mislukt: {0} Kies opnieuw of maak opnieuw verbinding voordat u verzendt.</value></data>
   <data name="Chat_Input_Cancelled" xml:space="preserve"><value>De Gateway heeft de wachtende invoer geannuleerd. Deze is niet opnieuw verzonden.</value></data>
   <data name="Chat_Input_Interrupted" xml:space="preserve"><value>De Gateway meldt dat de wachtende invoer is onderbroken. Er is geen invoer opnieuw verzonden.</value></data>
   <data name="Chat_Input_ScopeChanged" xml:space="preserve"><value>Het oorspronkelijke gesprek is gewijzigd. Er is geen invoer verzonden.</value></data>

@@ -1,5 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <root xmlns:ns1="urn:schemas-microsoft-com:xml-msdata" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+  <data name="Chat_Input_SettingUnconfirmed" xml:space="preserve"><value>会话设置尚未确认</value></data>
+  <data name="Chat_Input_SettingUnconfirmedFormat" xml:space="preserve"><value>更新设置失败：{0} 请重新选择，或在重新连接后再发送。</value></data>
   <data name="Chat_Input_Cancelled" xml:space="preserve"><value>Gateway 已取消待处理输入。未重新发送此输入。</value></data>
   <data name="Chat_Input_Interrupted" xml:space="preserve"><value>Gateway 报告待处理输入已中断。未重新发送任何输入。</value></data>
   <data name="Chat_Input_ScopeChanged" xml:space="preserve"><value>原始对话已更改。未发送任何输入。</value></data>

@@ -17,6 +17,10 @@ public interface IChatInputOrigin
     /// Never send, wait for a send, or acquire a lock held while blocking on a send.
     /// </summary>
     bool IsCurrent { get; }
+    /// <summary>Only the actual conversation producer may qualify an owned materialization transition.</summary>
+    Task<IChatInputOrigin?> ContinueMaterializationAsync(
+        ChatPlacementMaterializationReceipt receipt, CancellationToken cancellationToken) =>
+        Task.FromResult<IChatInputOrigin?>(null);
 }
 
 public enum ChatInputAction
@@ -68,6 +72,13 @@ public sealed class ChatSendRejectedException(
     string? code = null) : InvalidOperationException(message)
 {
     public string? Code { get; } = code;
+}
+
+public sealed class ChatMutationDeliveryException(
+    string message, bool mayHaveApplied, Exception? innerException = null)
+    : InvalidOperationException(message, innerException)
+{
+    public bool MayHaveApplied { get; } = mayHaveApplied;
 }
 
 public sealed record ChatInputReceipt(

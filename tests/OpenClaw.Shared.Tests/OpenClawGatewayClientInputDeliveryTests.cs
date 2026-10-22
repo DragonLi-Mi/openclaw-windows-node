@@ -7,6 +7,117 @@ namespace OpenClaw.Shared.Tests;
 
 public partial class OpenClawGatewayClientTests
 {
+    private static Task<JsonElement> SendScopedMutation(
+        OpenClawGatewayClient client, string method, long epoch, Func<bool> current)
+    {
+        var sender = typeof(OpenClawGatewayClient).GetMethods(BindingFlags.Instance | BindingFlags.NonPublic)
+            .Single(candidate => candidate.Name == "SendResponseRequestAsync" && candidate.GetParameters().Length == 5);
+        return Assert.IsAssignableFrom<Task<JsonElement>>(sender.Invoke(client,
+            [method, new { key = "agent:test:source", sessionKey = "agent:test:source" }, 15000, epoch, current]));
+    }
+
+    [Theory]
+    [InlineData("sessions.patch", false)]
+    [InlineData("sessions.create", false)]
+    [InlineData("sessions.dispatch", false)]
+    [InlineData("sessions.patch", true)]
+    [InlineData("sessions.create", true)]
+    [InlineData("sessions.dispatch", true)]
+    public async Task ScopedMutation_StaleAfterSocketWaitNeverWritesAndRetiresPendingEntry(string method, bool predicateThrows)
+    {
+        using var server = new LoopbackWebSocketServer();
+        using var identity = new TempDirectory("scoped-mutation-never-written-");
+        await server.StartAsync();
+        var helper = new GatewayClientTestHelper(gatewayUrl: server.WebSocketUrl, identityPath: identity.Path);
+        using var client = helper.Client;
+        await client.ConnectAsync();
+        helper.MarkHandshakeReady();
+        var semaphore = Assert.IsType<SemaphoreSlim>(typeof(WebSocketClientBase)
+            .GetField("_sendLock", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(client));
+        var current = true;
+        await semaphore.WaitAsync();
+        Task<JsonElement> mutation;
+        try
+        {
+            mutation = SendScopedMutation(client, method, client.SessionMutationConnectionEpoch!.Value,
+                () => !current && predicateThrows ? throw new InvalidOperationException("Failed origin lookup.") : current);
+            Assert.False(mutation.IsCompleted);
+            current = false;
+        }
+        finally { semaphore.Release(); }
+        var refusal = await Assert.ThrowsAsync<ChatMutationDeliveryException>(() => mutation);
+        Assert.False(refusal.MayHaveApplied);
+        Assert.Contains("No request was written", refusal.Message, StringComparison.Ordinal);
+        Assert.Equal(0, helper.GetPendingRequestCount());
+        var probe = client.SendWizardRequestAsync("health");
+        var query = await server.ReceiveTextAsync().WaitAsync(CloseHandshakeTimeout);
+        using var frame = JsonDocument.Parse(query);
+        Assert.Equal("health", frame.RootElement.GetProperty("method").GetString());
+        await server.SendTextAsync(JsonSerializer.Serialize(new
+        {
+            type = "res", id = ReadRequestId(query), ok = true, payload = new { },
+        }));
+        await probe.WaitAsync(CloseHandshakeTimeout);
+    }
+
+    [Theory]
+    [InlineData("sessions.patch")]
+    [InlineData("sessions.create")]
+    [InlineData("sessions.dispatch")]
+    public async Task ScopedMutation_LostResponseAfterActualWriteIsUnknownWithoutReplay(string method)
+    {
+        using var server = new LoopbackWebSocketServer();
+        using var identity = new TempDirectory("scoped-mutation-unknown-");
+        await server.StartAsync();
+        var helper = new GatewayClientTestHelper(gatewayUrl: server.WebSocketUrl, identityPath: identity.Path);
+        using var client = helper.Client;
+        await client.ConnectAsync();
+        helper.MarkHandshakeReady();
+        var mutation = SendScopedMutation(client, method, client.SessionMutationConnectionEpoch!.Value, () => true);
+        var query = await server.ReceiveTextAsync().WaitAsync(CloseHandshakeTimeout);
+        using var frame = JsonDocument.Parse(query);
+        Assert.Equal(method, frame.RootElement.GetProperty("method").GetString());
+        using var close = new CancellationTokenSource(CloseHandshakeTimeout);
+        var disconnect = client.DisconnectAsync();
+        await server.CompleteClientCloseAsync(0, close.Token);
+        await disconnect.WaitAsync(CloseHandshakeTimeout);
+        var uncertain = await Assert.ThrowsAsync<ChatMutationDeliveryException>(() => mutation);
+        Assert.True(uncertain.MayHaveApplied);
+        Assert.Equal(0, helper.GetPendingRequestCount());
+    }
+
+    [Fact]
+    public async Task ScopedMutation_NullPredicateFailsClosedBeforeRegistration()
+    {
+        using var identity = new TempDirectory("scoped-mutation-null-");
+        using var client = new OpenClawGatewayClient("ws://127.0.0.1:1", "test-token", identityPath: identity.Path);
+        await Assert.ThrowsAsync<ArgumentNullException>(() =>
+            client.PatchSessionConfirmedScopedAsync("agent:test:source", new SessionPatch { Model = "test/model" }, 0, null!));
+    }
+
+    [Fact]
+    public async Task ScopedMutation_ServerRejectionRemainsDefiniteStructuredRejection()
+    {
+        using var server = new LoopbackWebSocketServer();
+        using var identity = new TempDirectory("scoped-mutation-rejection-");
+        await server.StartAsync();
+        var helper = new GatewayClientTestHelper(gatewayUrl: server.WebSocketUrl, identityPath: identity.Path);
+        using var client = helper.Client;
+        await client.ConnectAsync();
+        helper.MarkHandshakeReady();
+        var mutation = SendScopedMutation(client, "sessions.patch", client.SessionMutationConnectionEpoch!.Value, () => true);
+        var query = await server.ReceiveTextAsync().WaitAsync(CloseHandshakeTimeout);
+        await server.SendTextAsync(JsonSerializer.Serialize(new
+        {
+            type = "res", id = ReadRequestId(query), ok = false,
+            error = new { message = "Setting denied.", code = "FORBIDDEN", details = new { reason = "policy" } },
+        }));
+        var rejection = await Assert.ThrowsAsync<GatewayRequestException>(() => mutation);
+        Assert.Equal("FORBIDDEN", rejection.Code);
+        Assert.Equal("Setting denied.", rejection.Message);
+        Assert.Equal(0, helper.GetPendingRequestCount());
+    }
+
     private sealed class LegacyPreWriteRefusalClient(string endpoint, string identityPath)
         : OpenClawGatewayClient(endpoint, "test-token", identityPath: identityPath)
     {

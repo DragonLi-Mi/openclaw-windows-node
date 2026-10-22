@@ -277,7 +277,8 @@ internal sealed class ChatPlacementController(
 
     internal async Task<bool> PrepareAsync(
         string threadId, CancellationToken cancellationToken, Func<bool>? isOriginCurrent = null,
-        Func<ChatPlacementMaterializationReceipt, bool>? materialized = null)
+        Func<ChatPlacementMaterializationReceipt, CancellationToken, Task<bool>>? materialized = null,
+        Func<bool>? beforeWrite = null)
     {
         int generation;
         string agent;
@@ -337,7 +338,7 @@ internal sealed class ChatPlacementController(
                     if (isOriginCurrent?.Invoke() == false)
                         throw new OperationCanceledException(token);
                 },
-                (receipt, token) =>
+                async (receipt, token) =>
                 {
                     token.ThrowIfCancellationRequested();
                     lock (_gate)
@@ -345,10 +346,9 @@ internal sealed class ChatPlacementController(
                         if (_disposed || generation != _generation || gateway.ConnectionEpoch != epoch)
                             throw new OperationCanceledException(token);
                     }
-                    if (materialized?.Invoke(receipt) == false)
+                    if (materialized is not null && !await materialized(receipt, token).ConfigureAwait(false))
                         throw new OperationCanceledException(token);
-                    return Task.CompletedTask;
-                }).ConfigureAwait(false);
+                }, beforeWrite).ConfigureAwait(false);
             await WaitForCurrentHistoryAsync(generation, epoch, operation.Token).ConfigureAwait(false);
             operation.Token.ThrowIfCancellationRequested();
             lock (_gate)

@@ -1,5 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <root>
+  <data name="Chat_Input_SettingUnconfirmed" xml:space="preserve"><value>Configuração da sessão não confirmada</value></data>
+  <data name="Chat_Input_SettingUnconfirmedFormat" xml:space="preserve"><value>Falha ao atualizar a configuração: {0} Escolha novamente ou reconecte antes de enviar.</value></data>
   <data name="Chat_Input_Cancelled" xml:space="preserve"><value>O Gateway cancelou a entrada pendente. Ela não foi reenviada.</value></data>
   <data name="Chat_Input_Interrupted" xml:space="preserve"><value>O Gateway informa que a entrada pendente foi interrompida. Nenhuma entrada foi reenviada.</value></data>
   <data name="Chat_Input_ScopeChanged" xml:space="preserve"><value>A conversa de origem mudou. Nenhuma entrada foi enviada.</value></data>

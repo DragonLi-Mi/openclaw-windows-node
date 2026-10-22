@@ -20,6 +20,7 @@ internal sealed record ChatQueuedSendRequest(
     internal bool UseInputCustody { get; init; }
     internal ChatInputLease? Origin { get; init; }
     internal DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
+    internal bool RequiresInputConsumption => !Text.TrimStart().StartsWith('/');
     // The final timeline entry text never carries the cosmetic attachment
     // chip lines that DisplayText uses for the queued-message preview list
     // — structured Attachments render those instead. Falls back to
