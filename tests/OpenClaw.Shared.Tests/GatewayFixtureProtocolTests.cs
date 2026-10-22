@@ -307,6 +307,35 @@ public sealed partial class GatewayFixtureProtocolTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task RealClient_PlacementDiscoveryReturnsSyntheticReadOnlyCatalog(bool allowSessionMutations)
+    {
+        var token = CreateToken();
+        await using var server = await FixtureGatewayServer.StartAsync(
+            GatewayScenario.CreateBrowse(allowSessionMutations: allowSessionMutations), token);
+        await using var connected = await ConnectedClient.OpenAsync(server, token);
+        var client = connected.Client;
+        Assert.Contains("projects.list", client.AdvertisedServerMethods);
+        Assert.Contains("environments.list", client.AdvertisedServerMethods);
+        var requestCount = server.Requests.Count;
+
+        var catalog = await client.CreateChatPlacementGateway().LoadAsync("main", default).WaitAsync(Deadline);
+
+        Assert.Equal("main", catalog.AgentId);
+        Assert.Equal("Fixture Main", catalog.AgentName);
+        Assert.Empty(catalog.Workspaces);
+        Assert.Equal(new ChatWorkspace("default", ""), catalog.DefaultWorkspace);
+        Assert.Equal(
+            new ChatEnvironment("gateway:fixture", "Fixture Gateway", true, ChatEnvironmentUnavailable.None),
+            Assert.Single(catalog.Environments));
+        Assert.Equal(
+            new[] { "agents.list", "environments.list", "projects.list" },
+            server.Requests.Skip(requestCount).Select(request => request.Method).Order(StringComparer.Ordinal));
+        Assert.Empty(server.UnexpectedRequests);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task RealClient_AdvertisesExecApprovalsOnlyWhenExplicitlyEnabled(bool supportsExecApprovals)
     {
         var token = CreateToken();
@@ -546,6 +575,10 @@ public sealed partial class GatewayFixtureProtocolTests
     [InlineData("sessions.preview", """{"keys":[7]}""", "session key strings")]
     [InlineData("models.list", """{"view":"invented"}""", "configured or all")]
     [InlineData("usage.cost", """{"days":-1}""", "positive integer")]
+    [InlineData("projects.list", """{"typo":true}""", "Unsupported fixture request parameter")]
+    [InlineData("projects.list", "[]", "params must be an object")]
+    [InlineData("environments.list", """{"typo":true}""", "Unsupported fixture request parameter")]
+    [InlineData("environments.list", "[]", "params must be an object")]
     public async Task RealClient_InvalidOrUnknownParametersFailExplicitly(string method, string json, string message)
     {
         var token = CreateToken();
