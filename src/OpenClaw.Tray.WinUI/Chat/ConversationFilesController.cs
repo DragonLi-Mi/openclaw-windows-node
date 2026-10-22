@@ -195,24 +195,45 @@ internal sealed class ConversationFilesController : IDisposable
             if (draft is not null && (draft.Text != draft.SavedText || draft.PendingSaveText is not null))
             {
                 var sourceChanged = draft.Key.Origin != origin;
-                var conflict = sourceChanged || draft.Hash != snapshot.Hash && draft.Text != text;
+                var reconciled = !sourceChanged && draft.PendingSaveText is not null &&
+                    draft.PendingSaveText == text && SessionFileLimits.IsContentHash(snapshot.Hash);
+                var savedText = reconciled ? draft.PendingSaveText! : draft.SavedText;
+                var conflict = !reconciled && (sourceChanged || draft.Hash != snapshot.Hash && draft.Text != text);
                 document = document with
                 {
-                    Origin = draft.Key.Origin, Text = draft.Text, SavedText = draft.SavedText, Format = draft.Format,
-                    ExpectedHash = draft.Hash,
-                    Editing = true, Dirty = true, Restored = true, SourceChanged = sourceChanged,
+                    Origin = draft.Key.Origin, Text = draft.Text, SavedText = savedText, Format = draft.Format,
+                    ExpectedHash = reconciled ? snapshot.Hash : draft.Hash,
+                    Editing = true, Dirty = draft.Text != savedText, Restored = true, SourceChanged = sourceChanged,
                     Snapshot = snapshot, LatestText = conflict && !sourceChanged ? text : null,
                     LatestHash = conflict && !sourceChanged ? snapshot.Hash : null,
                     SelectionStart = draft.SelectionStart, SelectionLength = draft.SelectionLength,
                     ScrollOffset = draft.ScrollOffset, NativeLength = draft.Format.ToNative(draft.Text).Length,
-                    PendingSaveText = draft.PendingSaveText
+                    PendingSaveText = reconciled ? null : draft.PendingSaveText
                 };
                 notice = sourceChanged ? ConversationFilesNotice.SourceChanged :
-                    conflict ? ConversationFilesNotice.Conflict : draft.PendingSaveText is not null
-                        ? ConversationFilesNotice.Uncertain : ConversationFilesNotice.Restored;
+                    conflict ? ConversationFilesNotice.Conflict : reconciled
+                        ? document.Dirty ? ConversationFilesNotice.PendingEdits : ConversationFilesNotice.Saved
+                        : draft.PendingSaveText is not null ? ConversationFilesNotice.Uncertain : ConversationFilesNotice.Restored;
             }
-            if (Apply(lease, revision, v => v with { Status = ConversationFilesStatus.Ready, Document = document, Notice = notice }))
+            if (Apply(lease, revision, v =>
+            {
+                var retained = !document.Editing || _drafts.Retain(Draft(document, lease.Context.Identity));
+                return v with { Status = ConversationFilesStatus.Ready, Document = document,
+                    Notice = retained ? notice : ConversationFilesNotice.DraftLimit };
+            }))
                 _drafts.Select(lease.Context.Identity, request);
+        }
+        catch (GatewayRequestException error) when (error.DetailType == "session_file_too_large")
+        {
+            var metadata = new SessionFileContent
+            {
+                Key = request.Scope.SessionKey, Path = request.Path, Name = request.Path, PreviewKind = "unsupported",
+                Size = error.Details is { ValueKind: JsonValueKind.Object } details &&
+                    details.TryGetProperty("size", out var size) && size.TryGetInt64(out var bytes) && bytes >= 0 ? bytes : null
+            };
+            Apply(lease, revision, view => view with { Status = ConversationFilesStatus.Ready,
+                Notice = ConversationFilesNotice.InvalidContent,
+                Document = new(request, metadata, new(null, null), null, null, null) });
         }
         catch (Exception error) when (IsFileError(error)) { Fail(lease, revision, error); }
     }
@@ -296,6 +317,11 @@ internal sealed class ConversationFilesController : IDisposable
         var capturedText = document.Text!;
         try
         {
+            if (Encoding.UTF8.GetByteCount(capturedText) > SessionFileLimits.PreviewBytes)
+            {
+                Apply(lease, revision, view => view with { Notice = ConversationFilesNotice.InvalidContent });
+                return;
+            }
             // Every save revalidates the original authority, including after remount and permission changes.
             var latest = await lease.Context.Client.GetSessionFileAsync(document.Request,
                 lease.Context.ConnectionEpoch, lease.CancellationToken).ConfigureAwait(false);
@@ -337,15 +363,32 @@ internal sealed class ConversationFilesController : IDisposable
             }
             if (!IsCurrent(lease, revision)) return;
             lease.Connection.RequireCurrent();
+            var retained = false;
             if (!Apply(lease, revision, view =>
             {
                 var pending = view.Document! with { PendingSaveText = capturedText };
-                _drafts.Retain(Draft(pending, lease.Context.Identity));
-                return view with { Document = pending };
-            })) return;
-            var saved = await lease.Context.Client.SetSessionFileAsync(
-                new(document.Request.Scope, document.Request.Path, capturedText, latest.Hash!, document.Origin.Source!),
-                lease.Context.ConnectionEpoch, lease.CancellationToken).ConfigureAwait(false);
+                retained = _drafts.Retain(Draft(pending, lease.Context.Identity));
+                return retained ? view with { Document = pending } : view with { Notice = ConversationFilesNotice.DraftLimit };
+            }) || !retained) return;
+            SessionFileContent saved;
+            try
+            {
+                saved = await lease.Context.Client.SetSessionFileAsync(
+                    new(document.Request.Scope, document.Request.Path, capturedText, latest.Hash!, document.Origin.Source!),
+                    lease.Context.ConnectionEpoch, lease.CancellationToken).ConfigureAwait(false);
+            }
+            catch (GatewayRequestException error) when (error.DetailType is
+                "session_file_conflict" or "session_file_too_large" or "session_file_not_found")
+            {
+                Apply(lease, revision, view =>
+                {
+                    var rejected = view.Document! with { PendingSaveText = null };
+                    var kept = _drafts.Retain(Draft(rejected, lease.Context.Identity));
+                    return view with { Document = rejected,
+                        Notice = kept ? ConversationFilesNotice.Rejected : ConversationFilesNotice.DraftLimit };
+                });
+                throw;
+            }
             if (!IsCurrent(lease, revision)) return;
             ApplySaved(lease, revision, saved, capturedText);
         }
@@ -362,12 +405,23 @@ internal sealed class ConversationFilesController : IDisposable
         Apply(lease, revision, view =>
         {
             var document = view.Document!;
-            var next = document with { Snapshot = snapshot, ExpectedHash = snapshot.Hash, SavedText = text,
+            // The real set response is metadata-only. Its receipt confirms the UTF-8 text we sent,
+            // not a new preview representation that should make the editor read-only.
+            var readable = new SessionFileContent
+            {
+                Key = snapshot.Key, Root = document.Origin.Root, Source = snapshot.Source, Path = snapshot.Path,
+                WorkspacePath = snapshot.WorkspacePath ?? document.Snapshot.WorkspacePath,
+                Name = snapshot.Name ?? document.Snapshot.Name, Kind = snapshot.Kind, Hash = snapshot.Hash,
+                Content = text, ContentEncoding = "utf8", PreviewKind = "text",
+                MimeType = snapshot.MimeType ?? document.Snapshot.MimeType, Size = snapshot.Size, UpdatedAt = snapshot.UpdatedAt
+            };
+            var next = document with { Snapshot = readable, ExpectedHash = snapshot.Hash, SavedText = text,
                 Dirty = document.Text != text, Restored = false, LatestText = null, LatestHash = null,
                 PendingSaveText = null };
-            _drafts.Retain(Draft(next, lease.Context.Identity));
+            var retained = _drafts.Retain(Draft(next, lease.Context.Identity));
             return view with { Busy = false, Document = next,
-                Notice = next.Dirty ? ConversationFilesNotice.PendingEdits : ConversationFilesNotice.Saved };
+                Notice = !retained ? ConversationFilesNotice.DraftLimit :
+                    next.Dirty ? ConversationFilesNotice.PendingEdits : ConversationFilesNotice.Saved };
         });
 
     private async Task FetchLatestAsync(ChatConversationPanelOperation lease, long revision, ConversationFileDocument document)
@@ -379,7 +433,8 @@ internal sealed class ConversationFilesController : IDisposable
             var changed = new ConversationFileOrigin(latest.Root, latest.Source) != document.Origin;
             Apply(lease, revision, v => v with
             {
-                Notice = changed ? ConversationFilesNotice.SourceChanged : ConversationFilesNotice.Conflict,
+                Notice = changed ? ConversationFilesNotice.SourceChanged : latest.Hash == document.ExpectedHash
+                    ? ConversationFilesNotice.Rejected : ConversationFilesNotice.Conflict,
                 Document = v.Document! with { SourceChanged = changed, LatestText = changed ? null : ReadText(latest),
                     LatestHash = changed ? null : latest.Hash }
             });

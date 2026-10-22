@@ -43,7 +43,12 @@ public sealed partial class GatewayProtocolLiveRoundTripTests
                 entries = new[] { new { path = "notes.txt", name = "notes.txt", kind = "file" } } }
         });
         server.OnMethod("sessions.files.get", _ => FileSnapshot());
-        server.OnMethod("sessions.files.set", parameters => FileSnapshot(parameters.GetProperty("content").GetString()!));
+        server.OnMethod("sessions.files.set", _ => new
+        {
+            sessionKey = FilesKey, root = "/work/selected",
+            source = new { workspaceId = "workspace-selected", root = "/work/selected", fileRoot = "/work/selected" },
+            file = new { path = "notes.txt", name = "notes.txt", kind = "modified", missing = false, hash = FilesHash }
+        });
         server.OnMethod("sessions.diff", _ => new
         {
             sessionKey = FilesKey, root = "/work/selected", branch = "task", baseRef = "main",
@@ -64,7 +69,9 @@ public sealed partial class GatewayProtocolLiveRoundTripTests
         Assert.Equal("utf8", snapshot.ContentEncoding);
         Assert.Equal("text", snapshot.PreviewKind);
         var saved = await client.SetSessionFileAsync(new(FilesScope, "notes.txt", "\uFEFFedited\r\n", FilesHash, FilesSource), epoch);
-        Assert.Equal("\uFEFFedited\r\n", saved.Content);
+        Assert.Null(saved.Content);
+        Assert.Equal(FilesHash, saved.Hash);
+        Assert.Equal(FilesSource, saved.Source);
         var diff = await client.GetSessionDiffAsync(new(FilesScope, SessionDiffScope.Commit, "abc123"), epoch);
         Assert.True(diff.Truncated);
         Assert.Equal(2, Assert.Single(diff.Files).Additions);
@@ -122,13 +129,13 @@ public sealed partial class GatewayProtocolLiveRoundTripTests
         using var server = new LoopbackGatewayServer();
         ConfigureFilesHello(server);
         server.OnMethod("sessions.files.set", _ => new LoopbackResponse(false, null,
-            new { code = "CONFLICT", message = "File changed", details = new { type, currentHash = FilesHash } }));
+            new { code = "INVALID_REQUEST", message = "File changed", details = new { type, currentHash = FilesHash } }));
         using var client = new OpenClawGatewayClient(server.WebSocketUrl, "test-token", identityPath: _identityDir);
         await ConnectAndWaitAsync(client, server, configureHandshake: false);
         var error = await Assert.ThrowsAsync<GatewayRequestException>(() => client.SetSessionFileAsync(
             new(FilesScope, "notes.txt", "draft", FilesHash, FilesSource), client.SessionMutationConnectionEpoch!.Value));
         Assert.Equal(type, error.DetailType);
-        Assert.Equal("CONFLICT", error.Code);
+        Assert.Equal("INVALID_REQUEST", error.Code);
         await client.DisconnectAsync();
     }
 

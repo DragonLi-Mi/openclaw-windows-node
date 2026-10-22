@@ -254,6 +254,133 @@ public sealed class ConversationFilesTests
         Assert.Equal("first\r\nchanged", write.Content);
         Assert.False(fixture.Controller.View.Document!.Dirty);
         Assert.Equal(ConversationFilesNotice.Saved, fixture.Controller.View.Notice);
+        Assert.True(fixture.Controller.CanEdit);
+        Assert.Equal("utf8", fixture.Controller.View.Document.Snapshot.ContentEncoding);
+        Assert.Equal("text", fixture.Controller.View.Document.Snapshot.PreviewKind);
+    }
+
+    [Theory]
+    [InlineData("session_file_conflict")]
+    [InlineData("session_file_too_large")]
+    [InlineData("session_file_not_found")]
+    public async Task KnownPreEffectSetRejectionClearsPendingAndAllowsExplicitRetry(string type)
+    {
+        using var fixture = new Fixture();
+        await fixture.Controller.OpenAsync(Request);
+        fixture.Controller.BeginEdit();
+        fixture.Controller.UpdateNativeText(fixture.Controller.EditorTarget!, "draft", 0, 0);
+        fixture.Proxy.WriteError = new GatewayRequestException("Unrelated message", "INVALID_REQUEST",
+            System.Text.Json.JsonSerializer.SerializeToElement(new { type }));
+        await fixture.Controller.SaveAsync();
+        Assert.Null(fixture.Controller.View.Document!.PendingSaveText);
+        Assert.NotEqual(ConversationFilesNotice.Conflict, fixture.Controller.View.Notice);
+        fixture.Proxy.WriteError = null;
+        await fixture.Controller.SaveAsync();
+        Assert.Equal(2, fixture.Proxy.Writes.Count);
+        Assert.False(fixture.Controller.View.Document.Dirty);
+        Assert.Equal(ConversationFilesNotice.Saved, fixture.Controller.View.Notice);
+    }
+
+    [Fact]
+    public async Task PostCommitForbiddenRemainsUncertainUntilMatchingCurrentRead()
+    {
+        using var fixture = new Fixture();
+        await fixture.Controller.OpenAsync(Request);
+        fixture.Controller.BeginEdit();
+        fixture.Controller.UpdateNativeText(fixture.Controller.EditorTarget!, "written before error", 0, 0);
+        fixture.Proxy.CommitBeforeWriteError = true;
+        fixture.Proxy.WriteError = new GatewayRequestException("Authorization changed", "FORBIDDEN");
+        await fixture.Controller.SaveAsync();
+        Assert.Equal("written before error", fixture.Controller.View.Document!.PendingSaveText);
+        Assert.Equal(ConversationFilesNotice.Permission, fixture.Controller.View.Notice);
+        await fixture.Controller.OpenAsync(Request);
+        Assert.Null(fixture.Controller.View.Document!.PendingSaveText);
+        Assert.Equal(HashB, fixture.Controller.View.Document.ExpectedHash);
+        Assert.False(fixture.Controller.View.Document.Dirty);
+        Assert.Single(fixture.Proxy.Writes);
+    }
+
+    [Fact]
+    public async Task RemountReconcilesCapturedSaveBeforeRestoringNewerUnsavedDraft()
+    {
+        using var fixture = new Fixture();
+        await fixture.Controller.OpenAsync(Request);
+        fixture.Controller.BeginEdit();
+        fixture.Controller.UpdateNativeText(fixture.Controller.EditorTarget!, "sent", 0, 0);
+        fixture.Proxy.PendingWrite = Task.FromException<SessionFileContent>(new TimeoutException("Synthetic lost reply"));
+        await fixture.Controller.SaveAsync();
+        fixture.Controller.UpdateNativeText(fixture.Controller.EditorTarget!, "newer local edits", 3, 2);
+        fixture.Controller.Dispose();
+        fixture.Proxy.Snapshot = Snapshot("sent", HashB);
+        fixture.Proxy.Epoch++;
+        fixture.Context = fixture.Context with { ConnectionEpoch = fixture.Proxy.Epoch };
+        fixture.Panels.Refresh();
+        using var reconnected = new ConversationFilesController(fixture.Panels, fixture.Drafts);
+        Assert.Equal("newer local edits", reconnected.View.Document!.Text);
+        Assert.Equal("sent", reconnected.View.Document.SavedText);
+        Assert.Equal(HashB, reconnected.View.Document.ExpectedHash);
+        Assert.Null(reconnected.View.Document.PendingSaveText);
+        Assert.True(reconnected.View.Document.Dirty);
+        Assert.Equal(ConversationFilesNotice.PendingEdits, reconnected.View.Notice);
+        Assert.Single(fixture.Proxy.Writes);
+    }
+
+    [Fact]
+    public async Task SaveNeverDispatchesIfAttemptedTextCannotBeRetained()
+    {
+        using var fixture = new Fixture();
+        await fixture.Controller.OpenAsync(Request);
+        fixture.Controller.BeginEdit();
+        fixture.Controller.UpdateNativeText(fixture.Controller.EditorTarget!, "keep before dispatch", 0, 0);
+        var pending = new TaskCompletionSource<SessionFileContent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Proxy.PendingRead = pending.Task;
+        var save = fixture.Controller.SaveAsync();
+        fixture.Drafts.Clear();
+        for (var index = 0; index < 32; index++)
+        {
+            var key = new ConversationFileDraftKey(fixture.Context.Identity, Request with { Path = $"other-{index}.txt" },
+                new("/conversation", Source));
+            Assert.True(fixture.Drafts.Retain(new(key, "old", "dirty", HashA, ConversationFileText.Inspect("old"))));
+        }
+        pending.SetResult(Snapshot());
+        await save;
+        Assert.Empty(fixture.Proxy.Writes);
+        Assert.Equal(ConversationFilesNotice.DraftLimit, fixture.Controller.View.Notice);
+        Assert.False(fixture.Controller.View.Busy);
+        Assert.Null(fixture.Controller.View.Document!.PendingSaveText);
+    }
+
+    [Fact]
+    public async Task TooLargePreviewStillOffersOriginalDownloadWithoutInventingWriteAuthority()
+    {
+        using var fixture = new Fixture();
+        fixture.Proxy.PendingRead = Task.FromException<SessionFileContent>(new GatewayRequestException("Too large",
+            "INVALID_REQUEST", System.Text.Json.JsonSerializer.SerializeToElement(new
+                { type = "session_file_too_large", size = 2097152 })));
+        await fixture.Controller.OpenAsync(Request);
+        Assert.Equal(ConversationFilesStatus.Ready, fixture.Controller.View.Status);
+        Assert.Equal(2097152, fixture.Controller.View.Document!.Snapshot.Size);
+        Assert.Equal("unsupported", fixture.Controller.View.Document.Snapshot.PreviewKind);
+        Assert.False(fixture.Controller.CanEdit);
+        var committed = false;
+        using var output = new MemoryStream();
+        await fixture.Controller.DownloadAsync((_, _) => Task.FromResult<ConversationFileDestination?>(
+            new(output, () => { committed = true; return Task.CompletedTask; }, () => ValueTask.CompletedTask)));
+        Assert.True(committed);
+        Assert.Equal(ConversationFilesNotice.Downloaded, fixture.Controller.View.Notice);
+    }
+
+    [Fact]
+    public async Task EditLimitChecksUtf8BytesRatherThanOnlyNativeCharacterCount()
+    {
+        using var fixture = new Fixture();
+        await fixture.Controller.OpenAsync(Request);
+        fixture.Controller.BeginEdit();
+        fixture.Controller.UpdateNativeText(fixture.Controller.EditorTarget!, new string('\u4e2d', 350000), 0, 0);
+        await fixture.Controller.SaveAsync();
+        Assert.Empty(fixture.Proxy.Writes);
+        Assert.Equal(ConversationFilesNotice.InvalidContent, fixture.Controller.View.Notice);
+        Assert.Null(fixture.Controller.View.Document!.PendingSaveText);
     }
 
     [Fact]
@@ -432,6 +559,8 @@ public sealed class ConversationFilesTests
         public Task<SessionFileContent>? PendingRead;
         public Task<SessionFileContent>? PendingWrite;
         public Task? PendingDownload;
+        public GatewayRequestException? WriteError;
+        public bool CommitBeforeWriteError;
         public List<SessionFileWrite> Writes = [];
 
         protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
@@ -450,8 +579,12 @@ public sealed class ConversationFilesTests
                     Assert.Equal(Epoch, args[1]);
                     Writes.Add(write);
                     if (PendingWrite is not null) return PendingWrite;
+                    if (WriteError is not null && !CommitBeforeWriteError)
+                        return Task.FromException<SessionFileContent>(WriteError);
                     Snapshot = ConversationFilesTests.Snapshot(write.Content, HashB, write.ExpectedSource);
-                    return Task.FromResult(Snapshot);
+                    if (WriteError is not null) return Task.FromException<SessionFileContent>(WriteError);
+                    return Task.FromResult(new SessionFileContent { Key = Scope.SessionKey, Root = "/conversation",
+                        Source = write.ExpectedSource, Path = write.Path, Name = "notes.txt", Kind = "modified", Hash = HashB });
                 case "GetSessionFileDownloadAsync":
                     return Task.FromResult(new SessionFileDownload("file.bin", "application/octet-stream",
                         "/api/artifacts/download/test/grant", DateTimeOffset.MaxValue));

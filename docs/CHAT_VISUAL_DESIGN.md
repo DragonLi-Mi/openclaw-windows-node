@@ -161,6 +161,13 @@ when content matches that attempted text exactly. Differing content becomes a
 conflict without automatic resend; a failed or superseded read leaves the
 outcome uncertain. Busy ownership is revision-scoped and released even when a
 run, selected file or transport changes.
+Reopening also performs this reconciliation before restoring newer local edits.
+Otherwise it is retried only by an explicit Save, not a background write loop.
+Only the pinned pre-effect detail types `session_file_conflict`,
+`session_file_too_large` and `session_file_not_found` clear a rejected attempt.
+Generic `FORBIDDEN`, `UNAVAILABLE`, `session_file_unsafe` and source-change errors
+can follow a write, so they remain uncertain. A metadata-only save receipt
+preserves the known text preview contract rather than disabling later edits.
 The native textbox is retained across updates; model echoes do not rewrite
 its text, caret or composition. Ctrl+S applies only to the focused editor.
 

@@ -157,13 +157,13 @@ internal sealed class ReactorConversationFilesPanel : Component<ReactorConversat
                         .IsVisible(document?.PendingSaveText is not null && view.Notice != ConversationFilesNotice.Uncertain))
                     .Grid(row: 2),
                 nativeEditor.IsVisible(document?.Text is not null).Grid(row: 3),
-                image.Current.Content.IsVisible(document?.Snapshot.PreviewKind == "image").Grid(row: 3),
+                image.Current.Content.IsVisible(document?.Text is null && document?.Snapshot.PreviewKind == "image").Grid(row: 3),
                 TextBlock(Text("UnsupportedPreview")).TextWrapping(TextWrapping.Wrap)
                     .IsVisible(document is not null && document.Text is null && document.Snapshot.PreviewKind != "image")
                     .Grid(row: 3),
                 VStack(8,
                     TextBlock(Text("Conflict")).TextWrapping(TextWrapping.Wrap),
-                    ScrollViewer(TextBlock(document?.LatestText ?? "").IsTextSelectionEnabled(true)
+                    ScrollViewer(TextBlock(document?.LatestText ?? Text("UnsupportedPreview")).IsTextSelectionEnabled(true)
                         .TextWrapping(TextWrapping.Wrap)).MaxHeight(160),
                     Grid([GridSize.Star(), GridSize.Star()], [GridSize.Auto],
                         ActionButton("Reload", () => _ = controller.ReloadAsync(), !view.Busy).Grid(column: 0),
