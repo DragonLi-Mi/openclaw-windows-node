@@ -36,6 +36,7 @@ public sealed class AccessibilityAppFixture : IDisposable
     private readonly string? _nativeChatProofVisualDirectory;
     private readonly string _navigationSignalPath;
     private readonly Process _process;
+    private readonly int _mcpPort;
 
     public IntPtr HubWindowHandle { get; private set; }
 
@@ -67,6 +68,10 @@ public sealed class AccessibilityAppFixture : IDisposable
             Path.GetTempPath(),
             $"OpenClaw.Tray.Axe.{Guid.NewGuid():N}");
         Directory.CreateDirectory(_dataDirectory);
+        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        listener.Start();
+        _mcpPort = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
         _navigationSignalPath = Path.Combine(
             _dataDirectory,
             "accessibility-navigation.ready");
@@ -409,6 +414,9 @@ public sealed class AccessibilityAppFixture : IDisposable
         if (deepLink is not null)
             startInfo.ArgumentList.Add(deepLink);
         startInfo.Environment["OPENCLAW_TRAY_DATA_DIR"] = _dataDirectory;
+        startInfo.Environment["OPENCLAW_TRAY_APPDATA_DIR"] = Path.Combine(_dataDirectory, "roaming-root");
+        startInfo.Environment["OPENCLAW_TRAY_LOCALAPPDATA_DIR"] = Path.Combine(_dataDirectory, "local-root");
+        startInfo.Environment["OPENCLAW_MCP_PORT"] = _mcpPort.ToString(System.Globalization.CultureInfo.InvariantCulture);
         startInfo.Environment["OPENCLAW_SKIP_UPDATE_CHECK"] = "1";
         startInfo.Environment["OPENCLAW_FORCE_ONBOARDING"] = "0";
         startInfo.Environment["OPENCLAW_LANGUAGE"] = "en-US";

@@ -2,6 +2,7 @@ using System.ComponentModel;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using OpenClaw.Connection;
@@ -28,6 +29,13 @@ public sealed partial class WorkspaceWindow : WindowEx
     private readonly WorkspaceNavigationHistory _navigation = new();
     private readonly WorkspaceSessionOrder _sessionOrder = new();
     private readonly ChatPage _chat = new();
+    private readonly Dictionary<WorkspacePageId, Page> _pages = new();
+    private readonly Dictionary<WorkspaceDestination, WeakReference<Control>> _focusTargets = new();
+    private FrameworkElement? _visibleContent;
+    private bool _restoreFocus;
+    private bool _closingForShutdown;
+    private string? _statusGatewayId;
+    private bool _gatewayWasConnected;
     private readonly GatewayStatusContent _gatewayStatusContent = new();
     private readonly Flyout _gatewayStatusFlyout = new() { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.TopEdgeAlignedLeft };
     private readonly MenuFlyoutItem _connectionStatusItem = new();
@@ -101,6 +109,17 @@ public sealed partial class WorkspaceWindow : WindowEx
         UpdatePanePresentation();
         HomeLabel.Text = Text("Home");
         AutomationProperties.SetName(HomeItem, Text("Home"));
+        PagesHeader.Content = Text("Pages.Text");
+        AutomationsItem.Content = Text("Automations");
+        AutomationsItem.Icon = FluentIconCatalog.Build(FluentIconCatalog.Cron);
+        UsageItem.Content = Text("Usage");
+        UsageItem.Icon = FluentIconCatalog.Build(FluentIconCatalog.Money);
+        NodesItem.Content = Text("Nodes");
+        NodesItem.Icon = FluentIconCatalog.Build(FluentIconCatalog.System);
+        DashboardLabel.Text = Text("OpenDashboard");
+        DashboardIcon.Glyph = FluentIconCatalog.OpenInBrowser;
+        SetupButton.Content = LocalizationHelper.GetString("Onboarding_AiSetup_LocalSetUp");
+        ContentHost.Children.Add(_chat);
         UpdateOwnerIdentity();
         BuildOwnerMenu();
         _state.PropertyChanged += OnStateChanged;
@@ -109,6 +128,12 @@ public sealed partial class WorkspaceWindow : WindowEx
         _chat.Loaded += (_, _) => _chat.Initialize(this);
         _chat.SessionSelected += OnChatSessionSelected;
         Closed += OnClosed;
+        Activated += (_, args) =>
+        {
+            if (args.WindowActivationState != WindowActivationState.Deactivated)
+                ResumeVisibleContent();
+        };
+        AppWindow.Closing += OnClosing;
         Root.Loaded += OnLoaded;
         RefreshSidebar();
     }
@@ -121,12 +146,18 @@ public sealed partial class WorkspaceWindow : WindowEx
         _ = RefreshAsync();
     }
 
+    internal void ResumeVisibleContent()
+    {
+        if (IsChatVisible && !_chat.IsSurfaceActive)
+            _chat.Initialize(this);
+    }
+
     internal void Navigate(WorkspaceDestination destination, bool preserveConversation = true)
     {
         if (preserveConversation && destination is { Page: WorkspacePageId.Home, SessionKey: null })
             destination = _navigation.ChatDestination;
         _chat.RetainNativeSetupForDestination(destination);
-        if (!_navigation.Navigate(destination) && ContentHost.Children.FirstOrDefault() is FrameworkElement current)
+        if (!_navigation.Navigate(destination) && _visibleContent is { } current)
         {
             SignalContentReady(current);
             return;
@@ -153,8 +184,7 @@ public sealed partial class WorkspaceWindow : WindowEx
         _agentId = SessionDisplayResolver.Resolve(session).AgentId;
         RefreshSidebar();
         UpdateNavigationSelection();
-        BackButton.IsEnabled = _navigation.CanGoBack;
-        ForwardButton.IsEnabled = _navigation.CanGoForward;
+        UpdateHistoryButtons();
     }
 
     internal void NavigateNativeSetup(SetupNativeNavigationRequest request)
@@ -203,34 +233,91 @@ public sealed partial class WorkspaceWindow : WindowEx
                 _ = _sessionMenu.AcknowledgeReadAsync(session);
             RefreshSidebar();
             // Queue before initialization so history restores the existing chat host's session.
-            _chat.QueueSession(sessionKey);
+            if (!_chat.HasMountedSession(sessionKey))
+                _chat.QueueSession(sessionKey);
         }
-        if (Destination.Page == WorkspacePageId.Home && ContentHost.Children.Contains(_chat))
-        {
-            QueueChatApply();
-            UpdateNavigationSelection();
-            BackButton.IsEnabled = _navigation.CanGoBack;
-            ForwardButton.IsEnabled = _navigation.CanGoForward;
-            return;
-        }
-        ContentHost.Children.Clear();
         var destination = Destination;
+        _restoreFocus = true;
+        if (destination.Page != WorkspacePageId.Home)
+            _chat.SuspendForHiddenSurface();
+        _chat.Visibility = destination.Page == WorkspacePageId.Home ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var page in _pages.Values)
+            ContentHost.Children.Remove(page);
         if (destination.Page == WorkspacePageId.Home)
         {
-            ContentHost.Children.Add(_chat);
+            _visibleContent = _chat;
+            QueueChatApply();
         }
         else
         {
-            var notifications = new NotificationsPage();
-            notifications.Initialize(_notifications);
-            ContentHost.Children.Add(notifications);
+            var page = GetPage(destination.Page);
+            _visibleContent = page;
+            ContentHost.Children.Add(page);
+            SignalContentReady(page);
         }
 
         UpdateNavigationSelection();
+        UpdateHistoryButtons();
+    }
+
+    private Page GetPage(WorkspacePageId destination)
+    {
+        if (_pages.TryGetValue(destination, out var existing))
+            return existing;
+        Page page = destination switch
+        {
+            WorkspacePageId.Automations => new CronPage(),
+            WorkspacePageId.Usage => new UsagePage(),
+            WorkspacePageId.Nodes => new InstancesPage(),
+            WorkspacePageId.Notifications => new NotificationsPage(),
+            _ => throw new ArgumentOutOfRangeException(nameof(destination))
+        };
+        // These owners detach on Unloaded. Every mount must resubscribe and refresh.
+        page.Loaded += (_, _) =>
+        {
+            switch (page)
+            {
+                case CronPage cron: cron.Initialize(workspaceShell: true); break;
+                case UsagePage usage: usage.Initialize(); break;
+                case InstancesPage nodes: nodes.Initialize(connectedNodesOnly: true); break;
+                case NotificationsPage notifications: notifications.Initialize(_notifications); break;
+            }
+        };
+        _pages.Add(destination, page);
+        return page;
+    }
+
+    private void OnContentGotFocus(object sender, RoutedEventArgs e)
+    {
+        if (Root.XamlRoot is not null && FocusManager.GetFocusedElement(Root.XamlRoot) is Control control &&
+            IsInContent(control, _visibleContent))
+            _focusTargets[Destination] = new(control);
+    }
+
+    private void UpdateHistoryButtons()
+    {
         BackButton.IsEnabled = _navigation.CanGoBack;
         ForwardButton.IsEnabled = _navigation.CanGoForward;
-        if (ContentHost.Children.FirstOrDefault() is FrameworkElement content)
-            SignalContentReady(content);
+        AutomationProperties.SetHelpText(BackButton, _navigation.CanGoBack ? "" : Text("NoBack"));
+        AutomationProperties.SetHelpText(ForwardButton, _navigation.CanGoForward ? "" : Text("NoForward"));
+    }
+
+    private static bool IsInContent(DependencyObject control, FrameworkElement? content)
+    {
+        for (DependencyObject? current = control; current is not null; current = VisualTreeHelper.GetParent(current))
+            if (ReferenceEquals(current, content)) return true;
+        return false;
+    }
+
+    private void RestoreContentFocus(FrameworkElement content)
+    {
+        if (!_restoreFocus) return;
+        _restoreFocus = false;
+        if (_focusTargets.TryGetValue(Destination, out var reference) &&
+            reference.TryGetTarget(out var previous) && previous.IsLoaded && IsInContent(previous, content) &&
+            previous.Focus(FocusState.Programmatic))
+            return;
+        (FocusManager.FindFirstFocusableElement(content) as Control)?.Focus(FocusState.Programmatic);
     }
 
     private void QueueChatApply()
@@ -257,7 +344,8 @@ public sealed partial class WorkspaceWindow : WindowEx
         NavView.SelectedItem = Destination.Page == WorkspacePageId.Home
             ? items.FirstOrDefault(item => item.Tag is WorkspaceSession session && session.Key == Destination.SessionKey)
                 ?? HomeItem
-            : null;
+            : items.FirstOrDefault(item => item.Tag is string route &&
+                WorkspaceNavigation.Routes.TryGetValue(route, out var page) && page == Destination.Page);
         _updating = false;
     }
 
@@ -268,8 +356,9 @@ public sealed partial class WorkspaceWindow : WindowEx
         {
             if (Environment.GetEnvironmentVariable("OPENCLAW_VISUAL_TEST") == "1")
                 await Task.Delay(400); // Let native entry transitions settle for capture.
-            if (!IsClosed && Destination == destination && ContentHost.Children.Contains(content))
+            if (!IsClosed && Destination == destination && ReferenceEquals(_visibleContent, content) && content.IsLoaded)
             {
+                RestoreContentFocus(content);
                 var paneSuffix = NavView.IsPaneOpen ? "" : "-Hidden";
                 await VisualTestCapture.CaptureAsync(Root, $"Workspace-{destination.Page}-{Root.ActualTheme}{paneSuffix}");
                 AccessibilityNavigationSignal.WritePageReady(content.GetType().Name);
@@ -575,8 +664,7 @@ public sealed partial class WorkspaceWindow : WindowEx
         if (wasCurrent)
             RenderDestination();
         UpdateNavigationSelection();
-        BackButton.IsEnabled = _navigation.CanGoBack;
-        ForwardButton.IsEnabled = _navigation.CanGoForward;
+        UpdateHistoryButtons();
     }
 
     private void OnStateChanged(object? sender, PropertyChangedEventArgs e)
@@ -604,7 +692,41 @@ public sealed partial class WorkspaceWindow : WindowEx
         _connectionStatusIcon.Style = (Style)Root.Resources[$"ConnectionBadge{accent}"];
         AutomationProperties.SetName(_connectionStatusItem,
             $"{LocalizationHelper.GetString("ConnectionStatusWindow.Title")}: {label}");
+        var active = CurrentApp.Registry?.GetActive();
+        var gatewayId = active?.Id ?? snapshot?.GatewayId;
+        if (_statusGatewayId != gatewayId)
+        {
+            _statusGatewayId = gatewayId;
+            _gatewayWasConnected = false;
+        }
+        var reconnectAllowed = gatewayId is null ||
+            CurrentApp.ConnectionManager?.IsAutomaticReconnectAllowed(gatewayId) != false;
+        _gatewayWasConnected = ConnectionStatusPresenter.ObserveShellConnection(
+            snapshot, status, _gatewayWasConnected, active?.Id, reconnectAllowed);
+        var (shellKey, shellAccent) = ConnectionStatusPresenter.ShellPill(snapshot, status, _gatewayWasConnected, active?.Id);
+        GatewayName.Text = active?.FriendlyName ?? snapshot?.GatewayName ?? Text("NoGateway");
+        GatewayStatusLabel.Text = LocalizationHelper.GetString(shellKey);
+        GatewayStatusDot.Style = (Style)Root.Resources[$"ConnectionBadge{shellAccent}"];
+        AutomationProperties.SetName(GatewayStatusButton, $"{GatewayName.Text}: {GatewayStatusLabel.Text}");
+        AutomationProperties.SetHelpText(GatewayStatusButton, Text("GatewayStatusHelp"));
+        var configured = active is not null || !string.IsNullOrWhiteSpace(snapshot?.GatewayUrl);
+        DashboardButton.IsEnabled = configured;
+        SetupButton.Visibility = configured ? Visibility.Collapsed : Visibility.Visible;
+        var dashboardHelp = Text(configured ? "DashboardHelp" : "DashboardUnavailable");
+        AutomationProperties.SetName(DashboardButton, Text("OpenDashboard"));
+        AutomationProperties.SetHelpText(DashboardButton, dashboardHelp);
+        ToolTipService.SetToolTip(DashboardButton, dashboardHelp);
+        AutomationProperties.SetHelpText(SetupButton, dashboardHelp);
     }
+
+    private void OnGatewayStatusClick(object sender, RoutedEventArgs e) =>
+        _gatewayStatusFlyout.ShowAt(GatewayStatusButton);
+
+    private void OnDashboardClick(object sender, RoutedEventArgs e) =>
+        ((IAppCommands)CurrentApp).OpenDashboard();
+
+    private void OnSetupClick(object sender, RoutedEventArgs e) =>
+        ((IAppCommands)CurrentApp).ShowOnboarding();
 
     private void RefreshOwnerIdentity(bool invalidate = false)
     {
@@ -663,7 +785,7 @@ public sealed partial class WorkspaceWindow : WindowEx
         if (_updating) return;
         if (e.SelectedItemContainer?.Tag is string route)
         {
-            Navigate(new(WorkspaceNavigation.Routes[route]), preserveConversation: false);
+            Navigate(new(WorkspaceNavigation.Routes[route]));
             UpdateNavigationSelection();
         }
         else if (e.SelectedItemContainer?.Tag is WorkspaceSession session)
@@ -724,10 +846,12 @@ public sealed partial class WorkspaceWindow : WindowEx
     internal void NavigateBack()
     {
         if (_navigation.GoBack()) RenderDestination();
+        else ShowInfo(Text("NoBack"), InfoBarSeverity.Informational);
     }
     private void NavigateForward()
     {
         if (_navigation.GoForward()) RenderDestination();
+        else ShowInfo(Text("NoForward"), InfoBarSeverity.Informational);
     }
     private void OnKeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
     {
@@ -762,7 +886,7 @@ public sealed partial class WorkspaceWindow : WindowEx
             menu.Items.Add(item);
         }
         Add("Settings", () => OpenCompanion(CompanionPageId.Settings), FluentIconCatalog.Settings);
-        Add("Usage", () => OpenCompanion(CompanionPageId.Usage), FluentIconCatalog.Money);
+        Add("Usage", () => Navigate(new(WorkspacePageId.Usage)), FluentIconCatalog.Money);
         Add("PairDevice", () => OpenCompanion(CompanionPageId.Channels), FluentIconCatalog.Devices);
         var showConnectionStatus = false;
         _connectionStatusItem.Icon = _connectionStatusIcon;
@@ -826,5 +950,19 @@ public sealed partial class WorkspaceWindow : WindowEx
         ContentHost.Children.Clear();
         _chat.CloseSurface();
         _chat.SessionSelected -= OnChatSessionSelected;
+    }
+
+    private void OnClosing(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowClosingEventArgs args)
+    {
+        if (_closingForShutdown) return;
+        args.Cancel = true;
+        _chat.SuspendForHiddenSurface();
+        sender.Hide();
+    }
+
+    internal void CloseForShutdown()
+    {
+        _closingForShutdown = true;
+        Close();
     }
 }

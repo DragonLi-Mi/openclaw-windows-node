@@ -14,6 +14,36 @@ public sealed partial class GatewayFixtureProtocolTests
 {
     private static readonly TimeSpan Deadline = TimeSpan.FromSeconds(20);
 
+    [Fact]
+    public async Task ShellBrowse_KeepsNodesDistinctFromOperatorPairingsAndRejectsWrites()
+    {
+        var token = CreateToken();
+        await using var server = await FixtureGatewayServer.StartAsync(GatewayScenario.CreateShellBrowse(), token);
+        await using var connected = await ConnectedClient.OpenAsync(server, token);
+        var nodes = await connected.Client.SendWizardRequestAsync("node.list");
+        Assert.Equal(2, nodes.GetProperty("nodes").GetArrayLength());
+        Assert.Equal("fixture-connected-node", nodes.GetProperty("nodes")[0].GetProperty("nodeId").GetString());
+        Assert.True(nodes.GetProperty("nodes")[0].GetProperty("connected").GetBoolean());
+        Assert.False(nodes.GetProperty("nodes")[1].GetProperty("connected").GetBoolean());
+        var pairings = await connected.Client.SendWizardRequestAsync("device.pair.list");
+        Assert.Equal("operator", pairings.GetProperty("paired")[0].GetProperty("roles")[0].GetString());
+        var parsedDevices = new TaskCompletionSource<DevicePairingListInfo>(TaskCreationOptions.RunContinuationsAsynchronously);
+        connected.Client.DevicePairListUpdated += (_, value) => parsedDevices.TrySetResult(value);
+        await connected.Client.RequestDevicePairListAsync();
+        Assert.Equal("fixture-operator", Assert.Single((await parsedDevices.Task.WaitAsync(Deadline)).Pending).DeviceId);
+        var parsedNodes = new TaskCompletionSource<PairingListInfo>(TaskCreationOptions.RunContinuationsAsynchronously);
+        connected.Client.NodePairListUpdated += (_, value) => parsedNodes.TrySetResult(value);
+        await connected.Client.RequestNodePairListAsync();
+        Assert.Equal("fixture-connected-node", Assert.Single((await parsedNodes.Task.WaitAsync(Deadline)).Pending).NodeId);
+        var jobs = await connected.Client.SendWizardRequestAsync("cron.list", new { includeDisabled = true });
+        Assert.Single(jobs.GetProperty("jobs").EnumerateArray());
+        Assert.Equal("fixture-shell-v1", jobs.GetProperty("snapshotRevision").GetString());
+        Assert.Equal(JsonValueKind.Null, jobs.GetProperty("nextOffset").ValueKind);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => connected.Client.SendWizardRequestAsync("cron.add",
+            new { name = "not authorized" }));
+        Assert.Empty(server.UnexpectedRequests);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

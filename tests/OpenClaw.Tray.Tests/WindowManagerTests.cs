@@ -11,7 +11,7 @@ public sealed class WindowManagerTests
         AssertInOrder(
             manager,
             "WorkspaceNavigation.Dispatch(navigateTo, destination =>",
-            "if (_callbacks.RequiresSetup())",
+            "if (destination.Page == WorkspacePageId.Home && _callbacks.RequiresSetup())",
             "AsyncEventHandlerGuard.Run(",
             "ShowOnboardingAsync,",
             "return;",

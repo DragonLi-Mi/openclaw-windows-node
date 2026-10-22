@@ -119,6 +119,62 @@ public sealed partial class GatewayScenario
         return new(browse._sessions, browse._reads, interactive: true);
     }
 
+    public static GatewayScenario CreateShellBrowse(bool pendingNode = true)
+    {
+        var browse = CreateBrowse();
+        var job = CreateCronJob("shell-browse", new { kind = "every", everyMs = 3_600_000 });
+        job["createdAtMs"] = Epoch.ToUnixTimeMilliseconds();
+        job["updatedAtMs"] = Epoch.ToUnixTimeMilliseconds();
+        var reads = new Dictionary<string, JsonElement>(browse._reads)
+        {
+            ["node.list"] = JsonSerializer.SerializeToElement(new
+            {
+                ts = Epoch.ToUnixTimeMilliseconds(),
+                nodes = new[]
+                {
+                    new { nodeId = "fixture-connected-node", displayName = "Fixture connected node", connected = true,
+                        paired = true, platform = "windows", caps = new[] { "screen" }, commands = new[] { "screen.capture" } },
+                    new { nodeId = "fixture-offline-node", displayName = "Fixture offline paired node", connected = false,
+                        paired = true, platform = "windows", caps = Array.Empty<string>(), commands = Array.Empty<string>() }
+                }
+            }),
+            ["system-presence"] = JsonSerializer.SerializeToElement(new[]
+            {
+                new { host = "Fixture operator browser", deviceId = "fixture-operator", mode = "webchat",
+                    roles = new[] { "operator" }, ts = Epoch.ToUnixTimeMilliseconds() }
+            }),
+            ["node.pair.list"] = JsonSerializer.SerializeToElement(new
+            {
+                pending = pendingNode
+                    ? new[] { new { requestId = "fixture-node-pending", nodeId = "fixture-connected-node", displayName = "Fixture connected node",
+                        ts = Epoch.ToUnixTimeMilliseconds(), isRepair = true } }
+                    : [],
+                paired = Array.Empty<object>()
+            }),
+            ["device.pair.list"] = JsonSerializer.SerializeToElement(new
+            {
+                pending = new[] { new { requestId = "fixture-operator-pending", deviceId = "fixture-operator", displayName = "Fixture paired operator", roles = new[] { "operator" } } },
+                paired = new[] { new { deviceId = "fixture-operator", displayName = "Fixture paired operator", roles = new[] { "operator" }, connected = true } }
+            }),
+            ["cron.list"] = JsonSerializer.SerializeToElement(new
+            {
+                jobs = new[] { job }, snapshotRevision = "fixture-shell-v1",
+                total = 1, offset = 0, limit = 1, hasMore = false, nextOffset = (int?)null
+            }),
+            ["cron.status"] = JsonSerializer.SerializeToElement(new { enabled = false, jobs = 1, storePath = "synthetic-read-only" })
+        };
+        reads["usage.status"] = JsonSerializer.SerializeToElement(new
+        {
+            updatedAt = Epoch.ToUnixTimeMilliseconds(),
+            providers = new[]
+            {
+                new { provider = "fixture", displayName = "Synthetic fixture provider", plan = "Synthetic allowance",
+                    windows = new[] { new { label = "Fixture window", usedPercent = 25 } } }
+            }
+        });
+        return new(browse._sessions, reads);
+    }
+
     public static GatewayScenario CreateContextUsage(ContextUsageFixture contextUsage)
     {
         ArgumentNullException.ThrowIfNull(contextUsage);
@@ -321,7 +377,8 @@ public sealed partial class GatewayScenario
             },
             snapshot = new
             {
-                presence = Array.Empty<object>(), health = _reads["health"],
+                presence = _reads.TryGetValue("system-presence", out var presence)
+                    ? presence : JsonSerializer.SerializeToElement(Array.Empty<object>()), health = _reads["health"],
                 sessionDefaults = new { defaultAgentId = "main", mainKey = "main", mainSessionKey = MainSessionKey, scope = "per-sender" }
             },
             auth = new
@@ -617,12 +674,19 @@ public sealed partial class GatewayScenario
 
     private JsonElement Read(string method, JsonElement p)
     {
-        ValidateProperties(p, method == "health" ? ["deep", "probe"] : []);
+        ValidateProperties(p, method switch
+        {
+            "health" => ["deep", "probe"],
+            "cron.list" => ["includeDisabled"],
+            _ => []
+        });
         if (method == "health")
         {
             OptionalBoolean(p, "deep");
             OptionalBoolean(p, "probe");
         }
+        if (method == "cron.list")
+            OptionalBoolean(p, "includeDisabled");
         return _reads[method];
     }
 

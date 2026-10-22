@@ -8077,4 +8077,18 @@ Après votre inscription, revenez dans Paramètres &gt; Windows Update et recher
     <value>Cette session n'est plus vide, donc le choix d'emplacement en attente a été annulé. Vérifiez la session et envoyez à nouveau pour continuer à son emplacement actuel.</value>
   </data>
   <data name="SettingsPage_AppInfoSupport.Content" xml:space="preserve"><value>Obtenir de l’assistance</value></data>
+  <data name="WorkspaceShell_Nodes" xml:space="preserve"><value>Nodes</value></data>
+  <data name="WorkspaceShell_NodesDescription" xml:space="preserve"><value>Currently connected nodes from this Gateway. Paired operator devices are separate. Connection does not grant capabilities or permissions.</value></data>
+  <data name="WorkspaceShell_NoNodes" xml:space="preserve"><value>No connected nodes reported.</value></data>
+  <data name="WorkspaceShell_NoGateway" xml:space="preserve"><value>No Gateway selected</value></data>
+  <data name="WorkspaceShell_GatewayStatusHelp" xml:space="preserve"><value>View Gateway, operator and node status, reconnect, or open Connection. Gateway connection does not imply node readiness or granted permissions.</value></data>
+  <data name="WorkspaceShell_DashboardHelp" xml:space="preserve"><value>Opens the selected Gateway's Dashboard in your browser. You may need to sign in there. Opening the browser does not confirm authentication.</value></data>
+  <data name="WorkspaceShell_DashboardUnavailable" xml:space="preserve"><value>Select or configure a Gateway in Connection before opening its Dashboard.</value></data>
+  <data name="WorkspaceShell_NeedsAttention" xml:space="preserve"><value>Needs attention</value></data>
+  <data name="WorkspaceShell_Reconnecting" xml:space="preserve"><value>Reconnecting</value></data>
+  <data name="WorkspaceShell_NoBack" xml:space="preserve"><value>No previous destination in this window.</value></data>
+  <data name="WorkspaceShell_NoForward" xml:space="preserve"><value>No forward destination in this window.</value></data>
+  <data name="WorkspaceShell_DashboardTunnelFailed" xml:space="preserve"><value>The selected Gateway's tunnel is unavailable. Check its SSH connection in Connection, then retry.</value></data>
+  <data name="WorkspaceShell_DashboardCredentialRequired" xml:space="preserve"><value>Dashboard credentials are unavailable. Review the selected Gateway in Connection. Your browser may require its own sign-in.</value></data>
+  <data name="WorkspaceShell_DashboardBrowserFailed" xml:space="preserve"><value>Windows could not open the Dashboard in your browser. Check your default browser, then retry. No browser sign-in was confirmed.</value></data>
 </root>

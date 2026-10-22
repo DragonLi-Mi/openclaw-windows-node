@@ -100,8 +100,11 @@ public sealed class MountedReactorChatDisposalProofTests
         });
     }
 
-    [Fact]
-    public async Task SetupVoiceWaitsForVisibleReadySurfaceInsteadOfHiddenRetainedHost()
+    [Theory]
+    [InlineData("unload")]
+    [InlineData("shell-page")]
+    [InlineData("hidden-window")]
+    public async Task SurfaceExit_CancelsPendingAndActiveVoiceWithoutDisposingChat(string exit)
     {
         await _ui.RunOnUIAsync(() =>
         {
@@ -122,6 +125,12 @@ public sealed class MountedReactorChatDisposalProofTests
             const BindingFlags fields = BindingFlags.Instance | BindingFlags.NonPublic;
             typeof(ChatPage).GetField("_reactorHost", fields)!.SetValue(page, mounted);
             typeof(ChatPage).GetField("_pageActive", fields)!.SetValue(page, true);
+            typeof(ChatPage).GetField("_mountedThreadId", fields)!.SetValue(page, "agent:main:main");
+            Assert.True(page.HasMountedSession("agent:main:main"));
+            Assert.False(page.HasMountedSession("agent:main:other"));
+            page.QueueSession("agent:main:other");
+            Assert.False(page.HasMountedSession("agent:main:main"));
+            page.QueueSession(null);
             var binding = (SetupNativeChatBinding)typeof(ChatPage).GetField("_nativeSetupBinding", fields)!.GetValue(page)!;
             var presentation = (SetupNativeChatPresentation)typeof(ChatPage).GetField("_nativeSetupPresentation", fields)!.GetValue(page)!;
             var request = new SetupNativeNavigationRequest(new(
@@ -147,12 +156,23 @@ public sealed class MountedReactorChatDisposalProofTests
             Assert.Equal(1, recordings);
             session.ViewModel.SetDraft("Keep draft when leaving chat");
             session.Controller.StartVoiceRecording();
-            typeof(ChatPage).GetMethod("OnUnloaded", fields)!.Invoke(page,
-                [page, new Microsoft.UI.Xaml.RoutedEventArgs()]);
+            target.Visibility = Microsoft.UI.Xaml.Visibility.Collapsed;
+            page.TriggerAutoStartVoice();
+            if (exit == "unload")
+                typeof(ChatPage).GetMethod("OnUnloaded", fields)!.Invoke(page,
+                    [page, new Microsoft.UI.Xaml.RoutedEventArgs()]);
+            else
+                page.SuspendForHiddenSurface();
             Assert.True(captureToken.IsCancellationRequested);
             Assert.False(session.Controller.IsDisposed);
             Assert.False(session.ViewModel.IsRecording);
             Assert.Equal("Keep draft when leaving chat", session.ViewModel.Draft);
+            Assert.Same(mounted, typeof(ChatPage).GetField("_reactorHost", fields)!.GetValue(page));
+            Assert.True(page.HasMountedSession("agent:main:main"));
+            target.Visibility = Microsoft.UI.Xaml.Visibility.Visible;
+            typeof(ChatPage).GetField("_pageActive", fields)!.SetValue(page, true);
+            consume.Invoke(page, null);
+            Assert.Equal(1, recordings);
             capture.SetResult("Discard late transcript");
             typeof(ChatPage).GetField("_reactorHost", fields)!.SetValue(page, null);
             _ui.Container.Children.Remove(page);

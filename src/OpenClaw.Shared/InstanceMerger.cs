@@ -14,6 +14,17 @@ namespace OpenClaw.Shared;
 /// </remarks>
 public static class InstanceMerger
 {
+    /// <summary>Connected node.list identities only, without presence/operator clients.</summary>
+    public static IReadOnlyList<MergedInstance> MergeConnectedNodes(
+        IReadOnlyList<GatewayNodeInfo>? nodes, InstanceMergeOptions? options = null)
+    {
+        options ??= new InstanceMergeOptions();
+        var nowUtc = options.NowUtc?.Invoke() ?? DateTime.UtcNow;
+        var rows = DedupeNodes(nodes).Where(node => node.IsOnline)
+            .Select(node => BuildFromOrphanNode(node, nowUtc, options, PresenceStatus.Active)).ToList();
+        return SortStable(rows, nowUtc);
+    }
+
     public static IReadOnlyList<MergedInstance> Merge(
         IReadOnlyList<GatewayNodeInfo>? nodes,
         IReadOnlyList<PresenceEntry>? presence,
@@ -265,7 +276,8 @@ public static class InstanceMerger
     private static MergedInstance BuildFromOrphanNode(
         GatewayNodeInfo node,
         DateTime nowUtc,
-        InstanceMergeOptions options)
+        InstanceMergeOptions options,
+        PresenceStatus status = PresenceStatus.Offline)
     {
         var key = StableKey(node.NodeId, node.ClientId, displayName: node.DisplayName);
         return new MergedInstance
@@ -274,7 +286,7 @@ public static class InstanceMerger
             Presence = null,
             Node = node,
             CanManageNode = true,
-            Status = PresenceStatus.Offline,
+            Status = status,
             IsGateway = false,
             IsThisInstance = IsLocalIdentity(node, presence: null, options),
             DisplayName = string.IsNullOrWhiteSpace(node.DisplayName) ? node.ShortId : node.DisplayName,

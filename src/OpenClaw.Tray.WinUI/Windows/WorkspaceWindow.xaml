@@ -7,7 +7,7 @@
     xmlns:winex="using:WinUIEx"
     MinWidth="800" MinHeight="560">
     <Window.SystemBackdrop><MicaBackdrop/></Window.SystemBackdrop>
-    <Grid x:Name="Root" PreviewKeyDown="OnKeyDown">
+    <Grid x:Name="Root" PreviewKeyDown="OnKeyDown" GotFocus="OnContentGotFocus">
         <Grid.Resources>
             <DataTemplate x:Key="AgentIdentityTemplate">
                 <controls:AgentIdentityBadge/>
@@ -31,10 +31,37 @@
         </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
         <TitleBar x:Name="WorkspaceTitleBar" Title="OpenClaw" AutomationProperties.AutomationId="WorkspaceTitleBar"/>
-        <Grid x:Name="NavigationSection" Grid.Row="1">
+        <Grid Grid.Row="1" Margin="16,4,16,8" ColumnSpacing="8" AutomationProperties.AutomationId="WorkspaceHeader">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Button x:Name="GatewayStatusButton" Click="OnGatewayStatusClick" HorizontalAlignment="Left"
+                    MaxWidth="440" Padding="12,8" AutomationProperties.AutomationId="WorkspaceGatewayStatus">
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <FontIcon x:Name="GatewayStatusDot" Style="{StaticResource ConnectionBadgeNeutral}"
+                              IsTextScaleFactorEnabled="False" AutomationProperties.AccessibilityView="Raw"/>
+                    <TextBlock x:Name="GatewayName" Grid.Column="1" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock x:Name="GatewayStatusLabel" Grid.Column="2"/>
+                </Grid>
+            </Button>
+            <HyperlinkButton x:Name="SetupButton" Grid.Column="2" Click="OnSetupClick" HorizontalAlignment="Left"
+                             Visibility="Collapsed" AutomationProperties.AutomationId="WorkspaceSetup"/>
+            <Button x:Name="DashboardButton" Grid.Column="1" Click="OnDashboardClick"
+                    AutomationProperties.AutomationId="WorkspaceDashboard">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock x:Name="DashboardLabel"/>
+                    <FontIcon x:Name="DashboardIcon" IsTextScaleFactorEnabled="False" AutomationProperties.AccessibilityView="Raw"/>
+                </StackPanel>
+            </Button>
+        </Grid>
+        <Grid x:Name="NavigationSection" Grid.Row="2">
         <NavigationView x:Name="NavView"
                         AutomationProperties.AutomationId="WorkspaceNavigation"
                         PaneDisplayMode="Left" OpenPaneLength="256" CompactPaneLength="0"
@@ -107,6 +134,10 @@
                         <TextBlock x:Name="HomeLabel" VerticalAlignment="Center"/>
                     </StackPanel>
                 </NavigationViewItem>
+                <NavigationViewItemHeader x:Name="PagesHeader"/>
+                <NavigationViewItem x:Name="AutomationsItem" Tag="automations" AutomationProperties.AutomationId="WorkspaceNavAutomations"/>
+                <NavigationViewItem x:Name="UsageItem" Tag="usage" AutomationProperties.AutomationId="WorkspaceNavUsage"/>
+                <NavigationViewItem x:Name="NodesItem" Tag="nodes" AutomationProperties.AutomationId="WorkspaceNavNodes"/>
                 <NavigationViewItemHeader x:Name="SessionsHeader" IsEnabled="True">
                     <NavigationViewItemHeader.Resources>
                         <Thickness x:Key="NavigationViewItemInnerHeaderMargin">16,0,4,0</Thickness>

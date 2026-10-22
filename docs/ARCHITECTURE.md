@@ -56,10 +56,61 @@ not bypass chat authorization or pairing requirements.
 
 `StartupSetupState` owns first-run eligibility from saved gateway configuration
 or local MCP mode, independently of current connectivity and node pairing.
-`WindowManager` applies the same eligibility to Workspace activation, including
-forwarded launches and tray clicks: an unconfigured profile opens or refocuses
-setup instead of creating Workspace behind it. Explicit companion routes remain
-available for advanced connection setup.
+`WindowManager` applies the same eligibility to Workspace Home activation,
+including forwarded launches and tray clicks: an unconfigured profile opens or
+refocuses setup. Explicit non-chat Workspace Pages remain accessible with
+disconnected content, a disabled Dashboard action with its reason, and Set up.
+Explicit companion routes remain available for advanced connection setup.
+
+Workspace exposes a native Pages group beside the unchanged conversation list:
+Automations uses `CronPage`, Usage uses `UsagePage`, and Nodes uses
+`InstancesPage` in connected-node mode. Only `workspace:automations`,
+`workspace:usage`, and `workspace:nodes` select these shell destinations.
+Unprefixed `cron`, `usage`, and `instances` retain their companion routes.
+The page owners reinitialize on every Loaded after Unloaded detaches their
+subscriptions. Usage and connected Nodes use the authoritative operator status
+as well as the borrowed transport: a closing client's transient connected flag
+or late cached usage response must not hide the disconnected recovery state.
+Chat remains mounted but collapsed while another page is shown.
+Back/Forward restores exact destination/session identity and the last surviving
+content focus target. Home returns to the retained conversation, including its
+exact session key, rather than selecting a different default conversation.
+Returning to an already mounted exact session does not replay a session-selection
+handoff; `ChatPage.HasMountedSession` supplies this read-only context to the shell.
+Closing Workspace hides it and retains its draft for this process; explicit
+application shutdown bypasses hiding and disposes it. Hidden/collapsed chat
+explicitly suspends through `ChatPage.SuspendForHiddenSurface`, reusing its
+unload cancellation and observer cleanup without disposing the mounted host.
+Returning to Home or visibly reopening resumes its existing initialization seam,
+even if Windows declines foreground activation. Hidden/collapsed surfaces are
+not resumed, and suspension cancels queued recording before any reentry.
+
+The app header remains outside the collapsible pane. Its selected-Gateway pill
+uses the active registry name and `ConnectionStatusPresenter.ShellPill`, with
+same-Gateway observed connection history distinguishing reconnecting from an
+initial connection. Needs attention covers degraded, pairing, credential and
+error states, retaining the critical accent for errors. Normal node startup
+does not claim a Gateway failure. A mismatched previous Gateway snapshot is
+not presented as the selected Gateway's connection. The connection manager's
+authoritative automatic-reconnect intent resets observed history on explicit
+disconnect before its Idle snapshot. This never grants capabilities or claims
+node readiness.
+`GatewayStatusContent` retains operator/node detail and recovery callbacks.
+Open Dashboard uses `GatewayDashboardLauncher`, not shell URL construction.
+Its typed outcomes distinguish configuration, tunnel, credential and browser
+failures. Device/bootstrap credentials never enter browser URLs; opening a
+browser does not establish a signed-in Dashboard session.
+
+This Pages grouping and persistent header are requested native adaptations,
+not pixel parity with the web. At upstream OpenClaw
+[`d731b3f`](https://github.com/openclaw/openclaw/tree/d731b3fef0739305e97c477ccf7bb16b121541cc),
+Agents is a Settings overview, not a default Pages destination. The existing
+native agent selector and agent-scoped companion pages remain authoritative;
+an additional shell overview is deferred rather than duplicating the editor.
+User-facing Activity is historical, human-readable session activity. Native
+`AgentEventsPage` is diagnostic Event Stream and is not relabeled Activity.
+Activity remains deferred; the existing external Dashboard is available for
+broader administration. No web page is embedded in the native shell.
 
 Workspace footer text follows the macOS-hosted Control UI at
 [`bda22f8`](https://github.com/openclaw/openclaw/blob/bda22f818d967ffa3551b3a729d5bc43863844c7/ui/src/components/app-sidebar-render.ts):
@@ -220,7 +271,9 @@ new attempt. This boundary does not change release signing or Windows policy.
 | Permissions page state, settings commands, and exec-approvals presentation | `PermissionsPageViewModel` | authoritative |
 | Permissions runtime status projection | `PermissionsPageRuntimeSource` | authoritative |
 | Hub navigation tags, page mapping, command catalog/search, and gateway-page classification | `HubPageRegistry` | authoritative |
-| Workspace Home/Notifications and exact session-key identity, deprecated-link fallback, back/forward history, and companion boundaries | `WorkspaceNavigation` + `WorkspaceNavigationHistory`; `WorkspaceWindow` restores the selected agent/session on the retained chat host; `WindowManager` routes pending session links directly without an intermediate Home entry | authoritative |
+| Workspace Home/Notifications/Automations/Usage/Nodes, exact session-key identity, deprecated-link fallback, back/forward history, and companion boundaries | `WorkspaceNavigation` + `WorkspaceNavigationHistory`; `WorkspaceWindow` hosts the existing native page owners, restores content focus and selected agent/session on the mounted chat host; `WindowManager` routes pending session links directly without an intermediate Home entry | authoritative |
+| Connected shell Nodes inventory | `InstanceMerger.MergeConnectedNodes` selects live `node.list` identities and their live status, without the legacy orphan/offline classification; `InstancesPage.Initialize(connectedNodesOnly: true)` hides cached rows on authoritative operator disconnect, reuses native cards and node-pending approval guidance, excludes operator-pair banners, and preserves the mixed legacy Instances route | authoritative |
+| Workspace process-lifetime draft retention on close | `WorkspaceWindow` cancels system close and hides; `WindowManager.CloseForShutdownAsync` invokes `CloseForShutdown` for genuine teardown | authoritative |
 | Workspace-versus-companion dispatch and rejection of unknown prefixed routes before window side effects | `WorkspaceNavigation.Dispatch`; `WindowManager` and `HubWindow` supply native window actions; `AppCapability` propagates navigation error payloads as tool errors | authoritative |
 | Unvalidated Workspace-prefix forwarding and companion fallback | Closed in `HubWindow.NavigateTo` and `WindowManager.ShowHub`; delegate boundary dispatch to `WorkspaceNavigation` | closed |
 | Workspace agent/session identity, background-session filtering, and explicit assistant-selection readiness for conversation creation | `WorkspaceProjection`; `WorkspaceWindow` applies readiness to Sessions + and guards the mutation | authoritative |
@@ -813,9 +866,11 @@ leading and trailing pipe. Columns, in order:
 | workspace-composer-selection | authoritative | src/OpenClaw.Tray.WinUI/Pages/ChatPage.xaml.cs | composer-created thread selection without matching Workspace destination/sidebar/history state | WorkspaceNavigationHistory.SelectChatSession + WorkspaceWindow.OnChatSessionSelected | ChatPage retains mounted-thread/setup-binding ownership and forwards the previous effective thread captured before the composer handoff; Workspace applies agent/sidebar and history-control updates | Initial Home is bound to the previous cached/default conversation before /new adds one history entry; same-key echoes add no entries; late completion on Notifications changes only retained ChatDestination; no queue, navigation replay, or remount of the already selected chat | WorkspaceChatSelectionTests.InitialComposerConversation_IsThePreviousHistoryEntryAfterNew | behavioral | - |
 | hub-chat-hosting | closed | HubWindow.xaml.cs | hosting Chat as a Settings navigation page | WorkspaceWindow with existing ChatPage | legacy chat route redirects to Workspace | Settings remains a separate window and cannot destroy the composer draft | WorkspaceWindowProofTests.DefaultLaunchAndCompanionRefocus_PreserveNativeComposerDraft | behavioral | - |
 | workspace-window-lifetime | authoritative | HubWindow.xaml.cs | one shared foreground surface for chat and settings | WindowManager | App composes callbacks only; companion navigation scope stays independent | companion deep links reuse a separate window while Workspace survives | WorkspaceWindowProofTests.NativePagesAndOwnerLinks_KeepCompanionIndependent | behavioral | - |
-| workspace-card-renderer | closed | WorkspaceContentPage.xaml.cs | speculative management-page cards and rows | removed per Home/Sessions-only Workspace correction | real management pages remain in the Settings companion | removed pages cannot return through navigation history or deprecated links | WorkspaceNavigationTests.DeprecatedWorkspaceLinks_ReturnHomeAndCannotResurrectRemovedPages | behavioral | - |
+| workspace-card-renderer | closed | WorkspaceContentPage.xaml.cs | speculative management-page cards and rows | removed per Home/Sessions-only Workspace correction | existing native Cron/Usage/Instances owners may be hosted directly, never replaced with speculative cards | removed prototype pages cannot return through navigation history or deprecated links | WorkspaceNavigationTests.DeprecatedWorkspaceLinks_ReturnHomeAndCannotResurrectRemovedPages | behavioral | - |
+| workspace-native-pages | authoritative | src/OpenClaw.Tray.WinUI/Windows/WorkspaceWindow.xaml.cs | Pages destination application, mounted chat visibility, page Loaded initialization and per-destination focus | WorkspaceNavigation + WorkspaceNavigationHistory + existing CronPage/UsagePage/InstancesPage | HubPageRegistry retains unprefixed companion routes; no second domain implementation or chat owner | Pages preserve the mounted composer draft and exact session on Back/Forward; connected Nodes excludes operator clients | GatewayFixtureUiTests.ShellPages_RetainMountedDraftFocusAndPersistentHeader | behavioral | - |
+| workspace-companion-only-management | closed | src/OpenClaw.Tray.WinUI/Windows/WorkspaceWindow.xaml.cs | treating shell Usage, Automations and Nodes as companion-only destinations | typed Workspace destinations hosting existing page owners | legacy unprefixed companion routes remain supported | shell navigation does not create a companion window or rebuild chat | WorkspaceNavigationTests.NativePages_HistoryKeepsExactRetainedConversation | behavioral | - |
 | workspace-agent-projection | authoritative | WorkspaceWindow.xaml.cs | ad hoc agent and session identity projection | WorkspaceProjection | view applies projected values | no fixture agents and no background-session selection | WorkspaceNavigationTests.Projection_DoesNotSelectBackgroundSessionsForAssistantChat | behavioral | - |
-| chat-voice-readiness | authoritative | ChatPage.xaml.cs | timed retries for cold voice launch | PendingVoiceActivation | ChatPage forwards native readiness and cancels on unload or legacy surface | one explicit request is consumed once when ready, never after page exit | PendingVoiceActivationTests.DelayedComposer_ConsumesExactlyOnceWhenReady | behavioral | - |
+| chat-voice-readiness | authoritative | ChatPage.xaml.cs | timed retries for cold voice launch | PendingVoiceActivation | ChatPage forwards native readiness; unload, collapsed shell page and hidden window cancel pending/active recording through the same lifecycle seam without disposing chat; legacy surface also cancels | one explicit request is consumed once when ready, never after page exit or window hide | MountedReactorChatDisposalProofTests.SurfaceExit_CancelsPendingAndActiveVoiceWithoutDisposingChat | behavioral | - |
 | test-temp-dir | authoritative | scattered test files | hand-rolled Path.GetTempPath temp dirs in migrated tests | OpenClaw.TestSupport.TempDirectory | pre-existing un-migrated tests until adopted | temp dirs are created unique and best-effort deleted | TestSupportFixtureTests.TempDirectory_CreatesAndDeletes | behavioral | when all temp-dir tests are migrated |
 | test-env-scope | authoritative | scattered test files | hand-rolled env var save/restore in migrated tests | OpenClaw.TestSupport.EnvironmentScope | pre-existing un-migrated tests until adopted | env vars set in a test are restored on dispose | TestSupportFixtureTests.EnvironmentScope_RestoresOriginal | behavioral | when all env-mutating tests are migrated |
 | test-cli-harness | authoritative | CLI test projects | duplicated stdout/stderr/env capture tuples | OpenClaw.TestSupport.CliHarness | - | stdout/stderr/env lookup are captured consistently | TestSupportFixtureTests.CliHarness_CapturesAndLooksUp | behavioral | when CLI tests adopt the harness |
@@ -959,7 +1014,7 @@ leading and trailing pipe. Columns, in order:
 | setup-native-ai-finalization | authoritative | src/OpenClaw.SetupEngine/NativeGatewaySetupSession.cs | classic-wizard-only admission to registry publication | CompleteVerifiedAsync + SetupNativeCompletionCoordinator | classic completion stays separate; focused completion requires real verification without marking the wizard complete | exact model/agent/session/identity is checked after the owned runtime restart and before registry publication; unrelated records survive, occupied draft IDs fail | NativeGatewaySetupConnectionTests.FocusedAi_AllDestinationsReverifyAfterNativeRestartBeforePublication | behavioral | - |
 | setup-native-restart-verification | authoritative | src/OpenClaw.SetupEngine/SetupNativeCompletionVerifier.cs | generic native loopback verification after restart | GatewayAiSetupTransport.BorrowNativeAsync + GatewayConnectionManager.RequireNativeSetupClientAsync | App only supplies the manager; verifier never disposes the borrowed client or owns a runtime | native provenance is inspected for every request and receipt drift is rejected before navigation | NativeGatewaySetupConnectionTests.PostRestartVerification_BorrowsNormalOwnerAndRejectsUnownedOrReplacedAuthority | behavioral | - |
 | setup-native-pending-launch | authoritative | src/OpenClaw.Tray.WinUI/App.xaml.cs | implicit browser destination for new verified onboarding | SetupNativeHandoffLauncher + SetupNativeNavigationRequest + SetupDashboardHandoffStore | App supplies composition callbacks; WindowManager mounts typed native pages; page-level metadata loading remains in ChannelsPage | native versioned records retain exact Gateway/agent/model/session and exclusive lease; failed opens require explicit retry; successful opens consume | SetupNativeHandoffTests.NativeOpenVerifiesBeforeNavigationAndKeepsFailedLaunchForExplicitRetryOnly | behavioral | - |
-| dashboard-launch-owner | authoritative | src/OpenClaw.Tray.WinUI/App.xaml.cs | ordinary Dashboard endpoint construction, credential export policy and browser result handling | GatewayDashboardLauncher + GatewayDashboardUrlBuilder | App supplies credential, tunnel, browser and failure delegates; WindowManager owns visible error/retry lifetime | only shared credentials enter fragment auth; browser failure is visible and never automatically replayed; setup completion cannot enter this path | SetupDashboardHandoffTests.DeviceAndBootstrapTokens_NeverEnterBrowserUrl | behavioral | - |
+| dashboard-launch-owner | authoritative | src/OpenClaw.Tray.WinUI/App.xaml.cs | ordinary Dashboard endpoint construction, credential export policy and typed browser result handling | GatewayDashboardLauncher + GatewayDashboardUrlBuilder | App supplies credential, tunnel, browser and failure delegates; WindowManager owns localized outcome-specific error/retry lifetime; Workspace header forwards only | only shared credentials enter fragment auth; browser open is not authentication; failure is visible and never automatically replayed; setup completion cannot enter this path | SetupDashboardHandoffTests.DeviceAndBootstrapTokens_NeverEnterBrowserUrl | behavioral | - |
 | app-dashboard-launch-closed | closed | src/OpenClaw.Tray.WinUI/App.xaml.cs | inline Dashboard URL construction and silent Process.Start failure handling | GatewayDashboardLauncher | composition delegates and normal Dashboard entry forwarding only | App does not regain a parallel Dashboard URL or credential policy; explicit retries keep the requested path | AppRefactorContractTests.Dashboard_SurfacesSshTunnelConfigurationFailure | source-shape | when the WinUI Dashboard adapter has injected mounted lifecycle coverage |
 | setup-session-captured-authority | authoritative | src/OpenClaw.SetupEngine/SetupGatewaySession.cs | deriving client authority from a later active registry record | SetupGatewaySessionBinding | session reloads registry only to validate captured identity at admission, handshake, reconnect and request boundaries | a socket opened for Gateway A cannot be reported as Gateway B; same-ID endpoint and SSH changes fail while connection timestamps remain valid | SetupGatewaySessionBindingTests.ChangedRegistryDuringConnect_CannotRelabelAlreadyCreatedClient | behavioral | - |
 | setup-dashboard-pending-proof | authoritative | src/OpenClaw.Tray.WinUI/Services/SetupDashboardHandoff.cs | accepting external serialized completion JSON as verified proof | SetupDashboardHandoffStore + SetupNativeHandoffLauncher | activation parser admits only an opaque native handle; WindowManager rechecks current observations with SetupDashboardLiveFacts | a short-lived local pending record is exclusively leased, consumed on successful native presentation and retained only for explicit failed-launch retry; unknown, expired, forged, consumed and in-flight replay fail visibly; old generation numbers are not live authority | SetupDashboardHandoffStoreTests.ForgedShapeAndUnknownHandle_AreNotVerificationAuthority | behavioral | - |

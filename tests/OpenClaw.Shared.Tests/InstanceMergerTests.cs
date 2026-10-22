@@ -4,6 +4,24 @@ namespace OpenClaw.Shared.Tests;
 
 public class InstanceMergerTests
 {
+    [Fact]
+    public void ConnectedNodes_UsesOnlyLiveNodeListIdentitiesAndPreservesEffectivePermissions()
+    {
+        var live = new GatewayNodeInfo
+        {
+            NodeId = "connected-node", IsOnline = true, IsPaired = true,
+            Permissions = new() { ["screen"] = false }, Capabilities = ["screen"]
+        };
+        var pairedOffline = new GatewayNodeInfo { NodeId = "paired-offline", IsPaired = true };
+        var result = Assert.Single(InstanceMerger.MergeConnectedNodes([live, pairedOffline, live]));
+        Assert.Same(live, result.Node);
+        Assert.False(result.IsGateway);
+        Assert.Equal(PresenceStatus.Active, result.Status);
+        Assert.Equal(PresenceStatus.Offline, Assert.Single(InstanceMerger.Merge([live], null)).Status);
+        Assert.False(result.Node!.Permissions["screen"]);
+        Assert.Empty(InstanceMerger.MergeConnectedNodes(null));
+    }
+
     private const long FixedNowMs = 1_700_000_000_000;
     private static readonly DateTime FixedNowUtc =
         DateTimeOffset.FromUnixTimeMilliseconds(FixedNowMs).UtcDateTime;

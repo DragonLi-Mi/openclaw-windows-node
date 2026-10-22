@@ -2,7 +2,7 @@ namespace OpenClawTray.Presentation;
 
 internal enum WorkspacePageId
 {
-    Home, Notifications
+    Home, Notifications, Automations, Usage, Nodes
 }
 
 internal enum CompanionPageId
@@ -24,13 +24,16 @@ internal static class WorkspaceNavigation
         {
             ["home"] = WorkspacePageId.Home,
             ["notifications"] = WorkspacePageId.Notifications,
+            ["automations"] = WorkspacePageId.Automations,
+            ["usage"] = WorkspacePageId.Usage,
+            ["nodes"] = WorkspacePageId.Nodes,
         };
 
     private static readonly HashSet<string> DeprecatedRoutes = new(StringComparer.Ordinal)
     {
         "agents", "agent-detail", "writer-detail", "dashboards", "dashboard-detail", "canvas",
-        "systems", "system-detail", "automations", "automation-detail", "plugins", "skills",
-        "sessions", "usage", "activity", "tasks", "meetings", "apps", "portals", "more"
+        "systems", "system-detail", "automation-detail", "plugins", "skills",
+        "sessions", "activity", "tasks", "meetings", "apps", "portals", "more"
     };
 
     public static void Dispatch(
@@ -45,7 +48,7 @@ internal static class WorkspaceNavigation
         }
 
         if (tag!.StartsWith("workspace:", StringComparison.Ordinal))
-            throw new ArgumentException("Unknown Workspace route. Use workspace:home or workspace:notifications.", nameof(tag));
+            throw new ArgumentException("Unknown Workspace route. Use workspace:home, workspace:notifications, workspace:automations, workspace:usage or workspace:nodes.", nameof(tag));
 
         openCompanion(tag);
     }

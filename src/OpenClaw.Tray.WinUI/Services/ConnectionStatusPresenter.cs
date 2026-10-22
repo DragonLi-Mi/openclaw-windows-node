@@ -13,6 +13,44 @@ internal enum ConnectionStatusAccent
 
 internal static class ConnectionStatusPresenter
 {
+    public static (string LabelKey, ConnectionStatusAccent Accent) ShellPill(
+        GatewayConnectionSnapshot? snapshot, ConnectionStatus fallback, bool previouslyConnected,
+        string? selectedGatewayId = null)
+    {
+        if (selectedGatewayId is not null && snapshot?.GatewayId != selectedGatewayId)
+            return ("StatusDisplay_Disconnected", ConnectionStatusAccent.Neutral);
+
+        if (snapshot?.OverallState == OverallConnectionState.Error ||
+            snapshot?.OperatorState is RoleConnectionState.PairingRejected or RoleConnectionState.RateLimited ||
+            snapshot is null && fallback == ConnectionStatus.Error)
+            return ("WorkspaceShell_NeedsAttention", ConnectionStatusAccent.Critical);
+
+        if (snapshot?.OverallState is OverallConnectionState.Degraded or OverallConnectionState.PairingRequired ||
+            snapshot?.OperatorCredentialStatus is GatewayCredentialResolutionStatus.Missing or
+                GatewayCredentialResolutionStatus.Unreadable or GatewayCredentialResolutionStatus.Corrupt or
+                GatewayCredentialResolutionStatus.BootstrapRequired)
+            return ("WorkspaceShell_NeedsAttention", ConnectionStatusAccent.Caution);
+
+        if (snapshot?.OverallState == OverallConnectionState.Connecting ||
+            snapshot is null && fallback == ConnectionStatus.Connecting)
+            return snapshot?.OperatorState == RoleConnectionState.Connected
+                ? ("StatusDisplay_Connected", ConnectionStatusAccent.Success)
+                : (previouslyConnected ? "WorkspaceShell_Reconnecting" : "StatusDisplay_Connecting",
+                    ConnectionStatusAccent.Caution);
+
+        return Pill(snapshot?.OverallState, fallback);
+    }
+
+    public static bool ObserveShellConnection(GatewayConnectionSnapshot? snapshot, ConnectionStatus fallback,
+        bool previouslyConnected, string? selectedGatewayId = null, bool automaticReconnectAllowed = true)
+    {
+        if (!automaticReconnectAllowed ||
+            selectedGatewayId is not null && snapshot?.GatewayId != selectedGatewayId)
+            return false;
+        return previouslyConnected || snapshot?.OperatorState == RoleConnectionState.Connected ||
+            snapshot is null && fallback == ConnectionStatus.Connected;
+    }
+
     public static ConnectionStatus ToLegacyStatus(OverallConnectionState overall) => overall switch
     {
         OverallConnectionState.Connected or OverallConnectionState.Ready or OverallConnectionState.Degraded => ConnectionStatus.Connected,

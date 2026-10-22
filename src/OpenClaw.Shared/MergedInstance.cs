@@ -6,7 +6,7 @@ namespace OpenClaw.Shared;
 /// </summary>
 public enum PresenceStatus
 {
-    /// <summary>Online and seen within the active window (default ≤120s).</summary>
+    /// <summary>Live node.list link, or presence seen within the active window (default ≤120s).</summary>
     Active,
 
     /// <summary>Online but past the active window (default ≤300s).</summary>
@@ -31,8 +31,8 @@ public enum PresenceStatus
 /// Either <see cref="Presence"/> or <see cref="Node"/> is always non-null. When both are
 /// set, the row represents a paired Windows node that is currently online — the page may
 /// expose Rename/Forget and capability/command/permission expanders. When only
-/// <see cref="Node"/> is set, the node is paired-but-offline and we still render a row
-/// so the user can manage (rename/forget) it.
+/// <see cref="Node"/> is set, the legacy merge treats it as paired-but-offline.
+/// The explicit connected-node projection instead uses the node.list live link.
 /// </remarks>
 public sealed class MergedInstance
 {

@@ -123,8 +123,8 @@ public sealed class SetupDashboardHandoffTests
         var launcher = new GatewayDashboardLauncher(() => true,
             () => new(Gateway.Url, "synthetic shared", false, CredentialResolver.SourceSharedGatewayToken),
             url => { launched = url; return Task.FromResult(true); },
-            () => throw new InvalidOperationException("Unexpected failure"));
-        Assert.True(await launcher.OpenAsync(path));
+            _ => throw new InvalidOperationException("Unexpected failure"));
+        Assert.Equal(GatewayDashboardLaunchOutcome.Opened, await launcher.OpenAsync(path));
         Assert.Equal("https://gateway.example/control" + suffix + "#token=synthetic%20shared", launched);
         Assert.DoesNotContain("custodian", launched);
     }
@@ -138,18 +138,20 @@ public sealed class SetupDashboardHandoffTests
         var launcher = new GatewayDashboardLauncher(() => true,
             () => new(Gateway.Url, "do-not-export", bootstrap, source),
             url => { launched = url; return Task.FromResult(true); },
-            () => throw new InvalidOperationException("Unexpected failure"));
-        Assert.True(await launcher.OpenAsync());
+            _ => throw new InvalidOperationException("Unexpected failure"));
+        Assert.Equal(GatewayDashboardLaunchOutcome.OpenedSignInMayBeRequired, await launcher.OpenAsync());
         Assert.Equal("https://gateway.example/control", launched);
     }
 
     [Theory]
-    [InlineData("tunnel")]
-    [InlineData("credential")]
-    [InlineData("browser")]
-    [InlineData("exception")]
-    public async Task Failure_IsReportedOnceWithoutAutomaticRetry(string failure)
+    [InlineData("gateway", (int)GatewayDashboardLaunchOutcome.NoGateway)]
+    [InlineData("tunnel", (int)GatewayDashboardLaunchOutcome.TunnelUnavailable)]
+    [InlineData("credential", (int)GatewayDashboardLaunchOutcome.CredentialUnavailable)]
+    [InlineData("browser", (int)GatewayDashboardLaunchOutcome.BrowserUnavailable)]
+    [InlineData("exception", (int)GatewayDashboardLaunchOutcome.BrowserUnavailable)]
+    public async Task Failure_IsReportedOnceWithoutAutomaticRetry(string failure, int expectedValue)
     {
+        var expected = (GatewayDashboardLaunchOutcome)expectedValue;
         var launches = 0;
         var failures = 0;
         var launcher = new GatewayDashboardLauncher(() => failure != "tunnel",
@@ -159,8 +161,8 @@ public sealed class SetupDashboardHandoffTests
                 launches++;
                 if (failure == "exception") throw new InvalidOperationException("synthetic-secret-url");
                 return Task.FromResult(false);
-            }, () => failures++);
-        Assert.False(await launcher.OpenAsync());
+            }, result => { Assert.Equal(expected, result); failures++; }, hasGateway: () => failure != "gateway");
+        Assert.Equal(expected, await launcher.OpenAsync());
         Assert.Equal(failure is "browser" or "exception" ? 1 : 0, launches);
         Assert.Equal(1, failures);
     }
@@ -184,11 +186,11 @@ public sealed class SetupDashboardHandoffTests
         var launcher = new GatewayDashboardLauncher(() => true,
             () => new(Gateway.Url, "synthetic", false, CredentialResolver.SourceSharedGatewayToken),
             url => { urls.Add(url); return Task.FromResult(urls.Count == 2); },
-            () => failures++, () => opened++);
-        Assert.False(await launcher.OpenAsync("channels"));
+            _ => failures++, () => opened++);
+        Assert.Equal(GatewayDashboardLaunchOutcome.BrowserUnavailable, await launcher.OpenAsync("channels"));
         Assert.Equal(0, opened);
         Assert.Single(urls);
-        Assert.True(await launcher.OpenAsync("channels"));
+        Assert.Equal(GatewayDashboardLaunchOutcome.Opened, await launcher.OpenAsync("channels"));
         Assert.Equal(urls[0], urls[1]);
         Assert.Equal(1, failures);
         Assert.Equal(1, opened);

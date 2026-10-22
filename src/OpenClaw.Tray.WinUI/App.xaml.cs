@@ -3999,11 +3999,12 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
                 () => TryResolveChatCredentials(out var url, out var token, out var source, out var bootstrap)
                     ? new InteractiveGatewayCredential(url, token, bootstrap, source) : null,
                 async url => await global::Windows.System.Launcher.LaunchUriAsync(new Uri(url)),
-                () => AsyncEventHandlerGuard.Run(
+                outcome => AsyncEventHandlerGuard.Run(
                     () => _windowManager?.ShowDashboardLaunchFailureAsync(
-                        () => OpenDashboard(path))
+                        () => OpenDashboard(path), outcome)
                         ?? Task.CompletedTask, new AppLogger(), "Dashboard launch error"),
-                () => _appNotificationService?.Dismiss(GatewayDashboardLauncher.FailureNotificationId));
+                () => _appNotificationService?.Dismiss(GatewayDashboardLauncher.FailureNotificationId),
+                () => _gatewayRegistry?.GetActive() is not null || !string.IsNullOrWhiteSpace(_settings?.GetEffectiveGatewayUrl()));
             await launcher.OpenAsync(path);
         }, new AppLogger(), nameof(OpenDashboard));
     }

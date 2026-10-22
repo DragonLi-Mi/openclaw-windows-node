@@ -35,6 +35,7 @@ public sealed partial class CronPage : Page
     private CancellationTokenSource? _infoDismissCts = null; // auto-dismiss timer for InfoBar
     private readonly AsyncListLoadingState _cronLoading = new();
     private bool _submittingJob;
+    private bool _workspaceShell;
 
     public CronPage()
     {
@@ -46,8 +47,10 @@ public sealed partial class CronPage : Page
         };
     }
 
-    public void Initialize()
+    public void Initialize(bool workspaceShell = false)
     {
+        _workspaceShell = workspaceShell;
+        PageTitle.Text = LocalizationHelper.GetString(workspaceShell ? "WorkspaceShell_Automations" : "CronPage_CronJobs.Text");
         if (_appState != null) _appState.PropertyChanged -= OnAppStateChanged;
         _appState = CurrentApp.AppState!;
         _appState.PropertyChanged += OnAppStateChanged;
@@ -115,6 +118,9 @@ public sealed partial class CronPage : Page
     {
         switch (e.PropertyName)
         {
+            case nameof(AppState.Status):
+                Initialize(_workspaceShell);
+                break;
             case nameof(AppState.CronList):
                 if (_appState!.CronList.HasValue) UpdateFromGateway(_appState.CronList.Value);
                 break;

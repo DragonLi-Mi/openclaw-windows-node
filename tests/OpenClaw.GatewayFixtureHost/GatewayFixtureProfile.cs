@@ -104,6 +104,8 @@ public sealed class GatewayFixtureProfile : IDisposable
         foreach (var key in start.Environment.Keys.Where(key => key.StartsWith("OPENCLAW_", StringComparison.OrdinalIgnoreCase)).ToArray())
             start.Environment.Remove(key);
         start.Environment["OPENCLAW_GATEWAY_FIXTURE"] = "1";
+        start.Environment["OPENCLAW_REPO_ROOT"] = Path.GetFullPath(
+            Environment.GetEnvironmentVariable("OPENCLAW_REPO_ROOT") ?? Environment.CurrentDirectory);
         start.Environment["OPENCLAW_TRAY_DATA_DIR"] = DataDirectory;
         start.Environment["OPENCLAW_TRAY_LOCAL_DATA_DIR"] = SetupDirectory;
         start.Environment["OPENCLAW_TRAY_APPDATA_DIR"] = RoamingRoot;

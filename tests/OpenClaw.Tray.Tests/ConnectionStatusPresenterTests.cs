@@ -9,6 +9,91 @@ namespace OpenClaw.Tray.Tests;
 public sealed class ConnectionStatusPresenterTests
 {
     [Theory]
+    [InlineData(OverallConnectionState.Idle, false, "StatusDisplay_Disconnected")]
+    [InlineData(OverallConnectionState.Idle, true, "StatusDisplay_Disconnected")]
+    [InlineData(OverallConnectionState.Disconnecting, false, "StatusDisplay_Disconnected")]
+    [InlineData(OverallConnectionState.Disconnecting, true, "StatusDisplay_Disconnected")]
+    [InlineData(OverallConnectionState.Connecting, false, "StatusDisplay_Connecting")]
+    [InlineData(OverallConnectionState.Connecting, true, "WorkspaceShell_Reconnecting")]
+    [InlineData(OverallConnectionState.Connected, false, "StatusDisplay_Connected")]
+    [InlineData(OverallConnectionState.Connected, true, "StatusDisplay_Connected")]
+    [InlineData(OverallConnectionState.Ready, false, "StatusDisplay_Connected")]
+    [InlineData(OverallConnectionState.Ready, true, "StatusDisplay_Connected")]
+    [InlineData(OverallConnectionState.Degraded, false, "WorkspaceShell_NeedsAttention")]
+    [InlineData(OverallConnectionState.Degraded, true, "WorkspaceShell_NeedsAttention")]
+    [InlineData(OverallConnectionState.PairingRequired, false, "WorkspaceShell_NeedsAttention")]
+    [InlineData(OverallConnectionState.PairingRequired, true, "WorkspaceShell_NeedsAttention")]
+    [InlineData(OverallConnectionState.Error, false, "WorkspaceShell_NeedsAttention")]
+    [InlineData(OverallConnectionState.Error, true, "WorkspaceShell_NeedsAttention")]
+    public void ShellPill_UsesFiveStatesAndObservedConnectionHistory(
+        OverallConnectionState overall, bool connectedBefore, string expectedKey)
+    {
+        var snapshot = new GatewayConnectionSnapshot { OverallState = overall };
+        Assert.Equal(expectedKey, ConnectionStatusPresenter.ShellPill(snapshot, ConnectionStatus.Error, connectedBefore).LabelKey);
+    }
+
+    [Fact]
+    public void ShellPill_NodeConnectingDoesNotClaimGatewayReconnect()
+    {
+        var snapshot = new GatewayConnectionSnapshot
+        {
+            OverallState = OverallConnectionState.Connecting,
+            OperatorState = RoleConnectionState.Connected, NodeState = RoleConnectionState.Connecting
+        };
+        Assert.Equal("StatusDisplay_Connected",
+            ConnectionStatusPresenter.ShellPill(snapshot, ConnectionStatus.Connected, true).LabelKey);
+    }
+
+    [Fact]
+    public void ShellPill_RejectsPreviousGatewaySnapshotAndResetsExplicitDisconnectHistory()
+    {
+        var snapshot = new GatewayConnectionSnapshot
+        {
+            GatewayId = "old", OverallState = OverallConnectionState.Ready, OperatorState = RoleConnectionState.Connected
+        };
+        Assert.Equal(("StatusDisplay_Disconnected", ConnectionStatusAccent.Neutral),
+            ConnectionStatusPresenter.ShellPill(snapshot, ConnectionStatus.Connected, true, "new"));
+        Assert.False(ConnectionStatusPresenter.ObserveShellConnection(snapshot, ConnectionStatus.Connected, true, "new"));
+        var userDisconnected = snapshot with { OverallState = OverallConnectionState.Idle, OperatorState = RoleConnectionState.Idle };
+        Assert.False(ConnectionStatusPresenter.ObserveShellConnection(userDisconnected, ConnectionStatus.Disconnected,
+            true, "old", automaticReconnectAllowed: false));
+        Assert.True(ConnectionStatusPresenter.ObserveShellConnection(userDisconnected, ConnectionStatus.Disconnected,
+            true, "old", automaticReconnectAllowed: true));
+        var connecting = snapshot with { OverallState = OverallConnectionState.Connecting, OperatorState = RoleConnectionState.Connecting };
+        Assert.Equal("StatusDisplay_Connecting",
+            ConnectionStatusPresenter.ShellPill(connecting, ConnectionStatus.Connecting, false, "old").LabelKey);
+    }
+
+    [Fact]
+    public void ShellHistory_ResetUsesManagerIntentSetBeforeDisconnectSnapshot()
+    {
+        var root = TestRepositoryPaths.GetRepositoryRoot();
+        var workspace = File.ReadAllText(Path.Combine(root, @"src\OpenClaw.Tray.WinUI\Windows\WorkspaceWindow.xaml.cs"));
+        Assert.Contains("CurrentApp.ConnectionManager?.IsAutomaticReconnectAllowed(gatewayId)", workspace);
+        Assert.Contains("snapshot, status, _gatewayWasConnected, active?.Id, reconnectAllowed", workspace);
+        var manager = File.ReadAllText(Path.Combine(root, @"src\OpenClaw.Connection\GatewayConnectionManager.cs"));
+        var disconnect = manager[manager.IndexOf("public async Task DisconnectByUserAsync()", StringComparison.Ordinal)..
+            manager.IndexOf("private async Task DisconnectCoreAsync", StringComparison.Ordinal)];
+        Assert.True(disconnect.IndexOf("SetGatewayConnectionIntent", StringComparison.Ordinal) <
+            disconnect.IndexOf("await DisconnectCoreAsync", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData((int)RoleConnectionState.Error)]
+    [InlineData((int)RoleConnectionState.PairingRejected)]
+    [InlineData((int)RoleConnectionState.RateLimited)]
+    public void ShellPill_AttentionErrorsKeepCriticalAccent(int state)
+    {
+        var snapshot = new GatewayConnectionSnapshot
+        {
+            OperatorState = (RoleConnectionState)state,
+            OverallState = state == (int)RoleConnectionState.Error ? OverallConnectionState.Error : OverallConnectionState.Idle
+        };
+        Assert.Equal(("WorkspaceShell_NeedsAttention", ConnectionStatusAccent.Critical),
+            ConnectionStatusPresenter.ShellPill(snapshot, ConnectionStatus.Error, false));
+    }
+
+    [Theory]
     [InlineData(OverallConnectionState.Connected, "StatusDisplay_Connected", (int)ConnectionStatusAccent.Success)]
     [InlineData(OverallConnectionState.Ready, "StatusDisplay_Connected", (int)ConnectionStatusAccent.Success)]
     [InlineData(OverallConnectionState.Connecting, "StatusDisplay_Connecting", (int)ConnectionStatusAccent.Caution)]

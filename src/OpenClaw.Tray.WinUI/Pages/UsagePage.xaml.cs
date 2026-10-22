@@ -26,6 +26,8 @@ public sealed partial class UsagePage : Page
     private const string DailyEmptyMessage = "No daily usage for this period";
     private const string ProviderEmptyMessage = "No providers configured";
     private const string DisconnectedListMessage = "Couldn't load. Check your gateway connection.";
+    private bool IsGatewayConnected => _appState?.Status == ConnectionStatus.Connected &&
+        CurrentApp.GatewayClient is { IsConnectedToGateway: true };
 
     public UsagePage()
     {
@@ -58,7 +60,7 @@ public sealed partial class UsagePage : Page
         // silently no-op when !IsConnectedToGateway, so without this check the
         // page would spin its progress rings forever — see user reports of
         // "page not loading, no values".
-        if (client == null || !client.IsConnectedToGateway)
+        if (client == null || !IsGatewayConnected)
         {
             _providerLoading.Fail();
             _dailyCostLoading.Fail();
@@ -116,14 +118,21 @@ public sealed partial class UsagePage : Page
         // is open (otherwise the user is stuck on the disconnected info bar
         // with stale cards until they navigate away and back).
         if (sender is not IOperatorGatewayClient client) return;
-        if (!client.IsConnectedToGateway) return;
-
         var dispatcher = DispatcherQueue;
         if (dispatcher == null) return;
         dispatcher.TryEnqueue(() =>
         {
             if (_trackedClient != client) return;
-            RecoverConnectedClient(client);
+            if (status == ConnectionStatus.Connected && IsGatewayConnected)
+                RecoverConnectedClient(client);
+            else
+            {
+                _providerLoading.Fail();
+                _dailyCostLoading.Fail();
+                ShowDisconnected();
+                UpdateProviderLoadingVisuals();
+                UpdateDailyCostLoadingVisuals();
+            }
         });
     }
 
@@ -151,7 +160,7 @@ public sealed partial class UsagePage : Page
 
     private void RecoverConnectedClient(IOperatorGatewayClient client)
     {
-        ConnectionInfoBar.IsOpen = false;
+        ConnectionInfoBar.IsOpen = !IsGatewayConnected;
         if (!_dailyCostLoading.HasLoaded) _dailyCostLoading.BeginInitialRefresh();
         else _dailyCostLoading.BeginRefresh();
         if (!_providerLoading.HasLoaded) _providerLoading.BeginInitialRefresh();
@@ -175,6 +184,18 @@ public sealed partial class UsagePage : Page
     {
         switch (e.PropertyName)
         {
+            case nameof(AppState.Status):
+                if (IsGatewayConnected && _trackedClient is { } client)
+                    RecoverConnectedClient(client);
+                else
+                {
+                    _providerLoading.Fail();
+                    _dailyCostLoading.Fail();
+                    ShowDisconnected();
+                    UpdateProviderLoadingVisuals();
+                    UpdateDailyCostLoadingVisuals();
+                }
+                break;
             case nameof(AppState.Usage):
                 if (_appState?.Usage != null) UpdateUsage(_appState.Usage);
                 break;
@@ -218,7 +239,7 @@ public sealed partial class UsagePage : Page
         }
 
         _lastAppliedUsageCostUpdatedAtUtc = cost.UpdatedAt;
-        ConnectionInfoBar.IsOpen = false;
+        ConnectionInfoBar.IsOpen = !IsGatewayConnected;
         TotalCostText.Text = $"${cost.Totals.TotalCost:F2}";
         TokenCountText.Text = FormatLargeNumber(cost.Totals.TotalTokens);
 
@@ -256,7 +277,7 @@ public sealed partial class UsagePage : Page
 
     public void UpdateUsageStatus(GatewayUsageStatusInfo status)
     {
-        ConnectionInfoBar.IsOpen = false;
+        ConnectionInfoBar.IsOpen = !IsGatewayConnected;
         ProviderCountText.Text = status.Providers.Count.ToString();
         ProviderListView.ItemsSource = status.Providers.Select(p => new ProviderRow
         {

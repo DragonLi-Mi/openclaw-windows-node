@@ -28,6 +28,7 @@ public sealed partial class InstancesPage : Page
 {
     private static App CurrentApp => (App)Microsoft.UI.Xaml.Application.Current!;
     private AppState? _appState;
+    private bool _connectedNodesOnly;
 
     public InstancesPage()
     {
@@ -39,8 +40,12 @@ public sealed partial class InstancesPage : Page
     }
 
     /// <summary>Called by HubWindow when this page becomes the navigation target.</summary>
-    public void Initialize()
+    public void Initialize(bool connectedNodesOnly = false)
     {
+        _connectedNodesOnly = connectedNodesOnly;
+        PageTitle.Text = LocalizationHelper.GetString(connectedNodesOnly ? "WorkspaceShell_Nodes" : "InstancesPage_Title.Text");
+        PageSubtitle.Text = LocalizationHelper.GetString(connectedNodesOnly ? "WorkspaceShell_NodesDescription" : "InstancesPage_Subtitle.Text");
+        EmptyTitle.Text = LocalizationHelper.GetString(connectedNodesOnly ? "WorkspaceShell_NoNodes" : "InstancesPage_EmptyTitle.Text");
         if (_appState != null) _appState.PropertyChanged -= OnAppStateChanged;
         _appState = CurrentApp.AppState!;
         _appState.PropertyChanged += OnAppStateChanged;
@@ -73,6 +78,12 @@ public sealed partial class InstancesPage : Page
             case nameof(AppState.Presence):
                 UpdatePresence(_appState!.Presence ?? Array.Empty<PresenceEntry>());
                 break;
+            case nameof(AppState.Status):
+                Rerender();
+                UpdatePendingPairBanner();
+                if (_appState!.Status == ConnectionStatus.Connected)
+                    _ = RequestNodesWithSpinnerAsync();
+                break;
             case nameof(AppState.NodePairList):
             case nameof(AppState.DevicePairList):
                 UpdatePendingPairBanner();
@@ -91,8 +102,13 @@ public sealed partial class InstancesPage : Page
     private void UpdatePendingPairBanner()
     {
         if (PendingPairBanner is null) return;
+        if (_connectedNodesOnly && _appState?.Status != ConnectionStatus.Connected)
+        {
+            PendingPairBanner.Visibility = Visibility.Collapsed;
+            return;
+        }
         var nodePending = _appState?.NodePairList?.Pending?.Count ?? 0;
-        var devicePending = _appState?.DevicePairList?.Pending?.Count ?? 0;
+        var devicePending = _connectedNodesOnly ? 0 : _appState?.DevicePairList?.Pending?.Count ?? 0;
         var total = nodePending + devicePending;
         if (total == 0)
         {
@@ -101,7 +117,9 @@ public sealed partial class InstancesPage : Page
         }
 
         PendingPairBanner.Visibility = Visibility.Visible;
-        PendingPairBannerText.Text = total == 1
+        PendingPairBannerText.Text = _connectedNodesOnly
+            ? LocalizationHelper.GetString("InstancesPage_PairingApprovalRequired.Text")
+            : total == 1
             ? "1 pairing approval waiting"
             : $"{total} pairing approvals waiting";
 
@@ -109,7 +127,9 @@ public sealed partial class InstancesPage : Page
         var ownIsPending = !string.IsNullOrWhiteSpace(nodeOwnId)
             && (_appState?.NodePairList?.Pending?.Any(p =>
                 string.Equals(p.NodeId, nodeOwnId, StringComparison.OrdinalIgnoreCase)) ?? false);
-        PendingPairBannerSubtext.Text = ownIsPending
+        PendingPairBannerSubtext.Text = _connectedNodesOnly
+            ? LocalizationHelper.GetString("InstancesPage_ANodeHasConnected.Text")
+            : ownIsPending
             ? "This node is connected but its capabilities and commands won't activate until the pairing is approved."
             : "A node or device is waiting for approval before it can join.";
     }
@@ -172,22 +192,27 @@ public sealed partial class InstancesPage : Page
     private void Rerender()
     {
         InstancesList.Children.Clear();
+        var disconnected = _connectedNodesOnly &&
+            (_appState?.Status != ConnectionStatus.Connected ||
+             CurrentApp.GatewayClient is not { IsConnectedToGateway: true });
+        ConnectionInfo.IsOpen = disconnected;
+        ConnectionInfo.Message = LocalizationHelper.GetString("InstancesPage_ConnectionWarning.Message");
 
         // Single timestamp shared by merge classification AND age formatting so
         // a row's status word (e.g. "Active") never disagrees with the relative
         // time shown next to it.
         var nowUtc = DateTime.UtcNow;
 
-        var merged = InstanceMerger.Merge(
-            _appState?.Nodes,
-            _appState?.Presence,
-            new InstanceMergeOptions
+        var options = new InstanceMergeOptions
             {
                 LocalNodeId = CurrentApp.NodeFullDeviceId,
                 LocalHost = Environment.MachineName,
                 OnUnmatchedNode = msg => Debug.WriteLine($"[InstancesPage] {msg}"),
                 NowUtc = () => nowUtc,
-            });
+            };
+        var merged = _connectedNodesOnly
+            ? InstanceMerger.MergeConnectedNodes(disconnected ? null : _appState?.Nodes, options)
+            : InstanceMerger.Merge(_appState?.Nodes, _appState?.Presence, options);
 
         InstancesList.Children.Clear();
 

@@ -128,6 +128,15 @@ pointer input. They assert visible text and the native Stop/Send action as well
 as supporting MCP state. Notifications and audio remain disabled in the fixture;
 these cases do not prove toast presentation or TTS playback.
 
+`GatewayScenario.CreateShellBrowse()` adds read-only synthetic Automations,
+Usage and connected/offline nodes alongside an operator presence and pairing.
+`GatewayFixtureUiTests.ShellPages_*` exercise the native Pages group, persistent
+header, exact Back/Forward destination, mounted composer identity, retained draft
+and focus, close-to-tray/reopen, remount subscriptions and explicit disconnect.
+The Nodes assertion excludes the offline paired node and operator clients.
+These are real app/fixture/UI assertions, not production pairing, node execution,
+browser authentication or provider proof.
+
 `app.chat.snapshot` is supporting evidence, not a rendering assertion. It
 returns only the last 30 entries and does not prove the mounted UI selection.
 The UI smoke checks the actual selected control and final text bounds within

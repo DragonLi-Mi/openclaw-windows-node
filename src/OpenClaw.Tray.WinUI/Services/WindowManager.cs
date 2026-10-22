@@ -133,11 +133,18 @@ internal sealed class WindowManager : IWindowManager
 
     private bool _dashboardFailureVisible;
 
-    public async Task ShowDashboardLaunchFailureAsync(Action? retry)
+    public async Task ShowDashboardLaunchFailureAsync(Action? retry,
+        GatewayDashboardLaunchOutcome outcome = GatewayDashboardLaunchOutcome.BrowserUnavailable)
     {
         if (_isShuttingDown || _dashboardFailureVisible)
             return;
-        var message = LocalizationHelper.GetString("Onboarding_DashboardLaunchFailed");
+        var message = WorkspaceWindow.Text(outcome switch
+        {
+            GatewayDashboardLaunchOutcome.NoGateway => "DashboardUnavailable",
+            GatewayDashboardLaunchOutcome.TunnelUnavailable => "DashboardTunnelFailed",
+            GatewayDashboardLaunchOutcome.CredentialUnavailable => "DashboardCredentialRequired",
+            _ => "DashboardBrowserFailed"
+        });
         _callbacks.GetAppNotificationService()?.Show(new AppNotification
         {
             Id = GatewayDashboardLauncher.FailureNotificationId,
@@ -291,7 +298,7 @@ internal sealed class WindowManager : IWindowManager
 
         WorkspaceNavigation.Dispatch(navigateTo, destination =>
         {
-            if (_callbacks.RequiresSetup())
+            if (destination.Page == WorkspacePageId.Home && _callbacks.RequiresSetup())
             {
                 AsyncEventHandlerGuard.Run(
                     ShowOnboardingAsync,
@@ -431,6 +438,7 @@ internal sealed class WindowManager : IWindowManager
         }
         else
             _workspaceWindow.AppWindow.Show(activateWindow: false);
+        _workspaceWindow.ResumeVisibleContent();
     }
 
     private void OnWorkspaceClosed(object sender, WindowEventArgs args)
@@ -976,7 +984,7 @@ internal sealed class WindowManager : IWindowManager
         {
             _workspaceWindow.Closed -= OnWorkspaceClosed;
             _workspaceWindow.Activated -= OnMainWindowActivated;
-            TryClose("Workspace window", _workspaceWindow.Close, ref failures);
+            TryClose("Workspace window", _workspaceWindow.CloseForShutdown, ref failures);
             _workspaceWindow = null;
         }
 

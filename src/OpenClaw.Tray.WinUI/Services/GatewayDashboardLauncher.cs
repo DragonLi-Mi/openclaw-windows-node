@@ -5,36 +5,52 @@ using System.Runtime.InteropServices;
 
 namespace OpenClawTray.Services;
 
+internal enum GatewayDashboardLaunchOutcome
+{
+    Opened, OpenedSignInMayBeRequired, NoGateway, TunnelUnavailable, CredentialUnavailable, BrowserUnavailable
+}
+
 /// <summary>Uses the normal Dashboard credential path without setup completion authority.</summary>
 internal sealed class GatewayDashboardLauncher(
     Func<bool> ensureTunnel,
     Func<InteractiveGatewayCredential?> resolveCredential,
     Func<string, Task<bool>> launchBrowser,
-    Action reportFailure,
-    Action? reportOpened = null)
+    Action<GatewayDashboardLaunchOutcome> reportFailure,
+    Action? reportOpened = null,
+    Func<bool>? hasGateway = null)
 {
     internal const string FailureNotificationId = "setup-dashboard-launch";
-    public async Task<bool> OpenAsync(string? path = null)
+    public async Task<GatewayDashboardLaunchOutcome> OpenAsync(string? path = null)
     {
+        var failure = GatewayDashboardLaunchOutcome.NoGateway;
+        var opened = GatewayDashboardLaunchOutcome.Opened;
         try
         {
+            if (hasGateway?.Invoke() == false)
+                throw new InvalidOperationException("No Gateway selected.");
+            failure = GatewayDashboardLaunchOutcome.TunnelUnavailable;
             if (!ensureTunnel())
                 throw new InvalidOperationException("The Gateway tunnel is unavailable.");
+            failure = GatewayDashboardLaunchOutcome.CredentialUnavailable;
             var credential = resolveCredential()
                 ?? throw new InvalidOperationException("The Gateway credential is unavailable.");
+            var canExport = !credential.IsBootstrapToken && credential.Source == CredentialResolver.SourceSharedGatewayToken;
             var url = GatewayDashboardUrlBuilder.Build(credential.GatewayUrl, path, credential.Token,
-                !credential.IsBootstrapToken && credential.Source == CredentialResolver.SourceSharedGatewayToken);
+                canExport);
+            failure = GatewayDashboardLaunchOutcome.BrowserUnavailable;
             if (!await launchBrowser(url))
                 throw new InvalidOperationException("Windows did not open the Dashboard.");
+            if (!canExport)
+                opened = GatewayDashboardLaunchOutcome.OpenedSignInMayBeRequired;
         }
         catch (Exception ex) when (IsExpectedLaunchFailure(ex))
         {
             // Browser failures can include the full credential-bearing URL. Do not log them.
-            reportFailure();
-            return false;
+            reportFailure(failure);
+            return failure;
         }
         reportOpened?.Invoke();
-        return true;
+        return opened;
     }
 
     private static bool IsExpectedLaunchFailure(Exception error) =>

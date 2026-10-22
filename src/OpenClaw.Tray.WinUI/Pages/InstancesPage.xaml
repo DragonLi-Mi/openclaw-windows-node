@@ -12,11 +12,11 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <StackPanel Grid.Column="0" Spacing="4">
-                    <TextBlock x:Uid="InstancesPage_Title"
+                    <TextBlock x:Name="PageTitle" x:Uid="InstancesPage_Title"
                                Text="Instances"
                                AutomationProperties.AutomationId="InstancesPageMarker"
                                Style="{StaticResource TitleTextBlockStyle}"/>
-                    <TextBlock x:Uid="InstancesPage_Subtitle"
+                    <TextBlock x:Name="PageSubtitle" x:Uid="InstancesPage_Subtitle"
                                Text="Latest presence beacons from OpenClaw nodes."
                                Style="{StaticResource CaptionTextBlockStyle}"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
@@ -43,6 +43,12 @@
                 </Button>
             </Grid>
 
+            <InfoBar x:Name="ConnectionInfo" IsOpen="False" IsClosable="False" Severity="Warning">
+                <InfoBar.ActionButton>
+                    <HyperlinkButton x:Uid="HubWindow_StatusFlyout_OpenConnection" Content="Open Connection"
+                                     Click="OnPendingPairBannerClicked"/>
+                </InfoBar.ActionButton>
+            </InfoBar>
             <StackPanel x:Name="EmptyState"
                         Spacing="8"
                         HorizontalAlignment="Center"
@@ -52,7 +58,7 @@
                           FontSize="40"
                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
                           HorizontalAlignment="Center"/>
-                <TextBlock x:Uid="InstancesPage_EmptyTitle"
+                <TextBlock x:Name="EmptyTitle" x:Uid="InstancesPage_EmptyTitle"
                            Text="No instances reported yet."
                            Style="{StaticResource SubtitleTextBlockStyle}"
                            HorizontalAlignment="Center"

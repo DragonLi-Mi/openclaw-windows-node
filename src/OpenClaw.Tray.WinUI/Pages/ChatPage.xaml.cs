@@ -42,6 +42,15 @@ public sealed partial class ChatPage : Page
     private bool _webViewInitialized;
     private bool _webViewMode;
     private bool _pageActive;
+    internal bool IsSurfaceActive => _pageActive;
+    internal bool HasMountedSession(string sessionKey)
+    {
+        var app = App.Current as App;
+        return _reactorHost is not null && _mountedThreadId == sessionKey && _pendingSessionKey is null &&
+            string.IsNullOrEmpty(app?.PendingChatSessionKey) &&
+            (app is null || ReferenceEquals(_mountedProvider, app.ChatProvider) ||
+             ReferenceEquals(_mountedProvider, _accessibilityTestProvider));
+    }
     private readonly SetupNativeChatBinding _nativeSetupBinding = new();
     private readonly SetupNativeChatPresentation _nativeSetupPresentation = new();
     private readonly SetupNativeChatRefresh _nativeSetupRefresh;
@@ -178,6 +187,8 @@ public sealed partial class ChatPage : Page
         // (the page keeps the static handler alive otherwise).
         OpenClawTray.Chat.DebugChatSurfaceOverrides.Changed -= OnDebugOverrideChanged;
     }
+
+    internal void SuspendForHiddenSurface() => OnUnloaded(this, new RoutedEventArgs());
 
     /// <summary>Trigger voice recording programmatically (e.g. from V hotkey).</summary>
     public void TriggerAutoStartVoice()

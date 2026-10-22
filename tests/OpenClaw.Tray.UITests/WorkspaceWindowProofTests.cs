@@ -10,6 +10,30 @@ public sealed class WorkspaceProofCollection;
 [Collection("Workspace native proof")]
 public sealed class WorkspaceWindowProofTests
 {
+    [Fact]
+    public async Task ShellPages_UnconfiguredHeaderExplainsDashboardAndOffersSetup()
+    {
+        using var app = new AccessibilityAppFixture(initializeAxe: false, syntheticData: false,
+            initialRoute: "workspace:usage");
+        var root = AutomationElement.FromHandle(app.HubWindowHandle);
+        await WaitUntilAsync(() => IsVisible(root, "UsagePageMarker"));
+        Assert.Contains("No Gateway selected", Find(root, "WorkspaceGatewayStatus").Current.Name);
+        Assert.False(Find(root, "WorkspaceDashboard").Current.IsEnabled);
+        Assert.Contains("configure a Gateway", Find(root, "WorkspaceDashboard").Current.HelpText);
+        Assert.True(IsVisible(root, "WorkspaceSetup"));
+        ((SelectionItemPattern)Find(root, "WorkspaceNavHome").GetCurrentPattern(SelectionItemPattern.Pattern)).Select();
+        await WaitUntilAsync(() => IsVisible(root, "WorkspaceSetup"));
+        Assert.False(Find(root, "WorkspaceDashboard").Current.IsEnabled);
+        Invoke(Find(root, "WorkspaceTogglePane"));
+        await WaitUntilAsync(() => IsVisible(root, "WorkspaceReopenPane"));
+        Assert.True(IsVisible(root, "WorkspaceGatewayStatus"));
+        Assert.True(IsVisible(root, "WorkspaceDashboard"));
+        Assert.True(IsVisible(root, "WorkspaceSetup"));
+        Find(root, "WorkspaceSetup").SetFocus();
+        Assert.Contains("configure a Gateway", Find(root, "WorkspaceSetup").Current.HelpText);
+        Capture(app, "System", "shell-unconfigured-collapsed");
+    }
+
     [Theory]
     [InlineData("Light")]
     [InlineData("Dark")]
@@ -532,9 +556,10 @@ public sealed class WorkspaceWindowProofTests
         var sessionsHeader = FindHeading(workspaceElement, "Sessions").Current.BoundingRectangle;
         var initialHomeBounds = Find(workspaceElement, "WorkspaceNavHome").Current.BoundingRectangle;
         Assert.True(sessionsHeader.Top >= initialHomeBounds.Bottom - 1);
-        Assert.InRange(sessionsHeader.Top - initialHomeBounds.Bottom, -1, 36);
+        var lastPageBounds = Find(workspaceElement, "WorkspaceNavNodes").Current.BoundingRectangle;
+        Assert.InRange(sessionsHeader.Top - lastPageBounds.Bottom, -1, 36);
         foreach (var id in new[] { "WorkspaceNavAgents", "WorkspaceNavDashboards", "WorkspaceNavSystems",
-            "WorkspaceNavAutomations", "WorkspaceNavPlugins", "WorkspaceMore", "WorkspacePageHeading" })
+            "WorkspaceNavPlugins", "WorkspaceMore", "WorkspacePageHeading" })
             Assert.Null(workspaceElement.FindFirst(TreeScope.Descendants,
                 new PropertyCondition(AutomationElement.AutomationIdProperty, id)));
         var backBounds = Find(workspaceElement, "WorkspaceBack").Current.BoundingRectangle;
@@ -562,8 +587,8 @@ public sealed class WorkspaceWindowProofTests
         Capture(app, theme, "workspace");
 
         foreach (var route in new[] { "agents", "agent-detail", "writer-detail", "dashboards", "dashboard-detail", "canvas",
-            "systems", "system-detail", "automations", "automation-detail", "plugins", "sessions", "skills",
-            "usage", "activity", "tasks", "meetings", "apps", "portals", "more" })
+            "systems", "system-detail", "automation-detail", "plugins", "sessions", "skills",
+            "activity", "tasks", "meetings", "apps", "portals", "more" })
         {
             await app.NavigateAsync($"workspace:{route}", "ChatPage", "WorkspaceNavHome");
             Assert.Equal(workspace, app.HubWindowHandle);
@@ -578,7 +603,6 @@ public sealed class WorkspaceWindowProofTests
         foreach (var (label, route, page, marker) in new[]
         {
             ("Settings", "settings", "SettingsPage", "SettingsPageMarker"),
-            ("Usage", "usage", "UsagePage", "UsagePageMarker"),
             ("Pair device", "channels", "ChannelsPage", "ChannelsPageMarker"),
             ("About OpenClaw", "about", "SettingsPage", "SettingsPageMarker")
         })
@@ -595,6 +619,11 @@ public sealed class WorkspaceWindowProofTests
             Assert.Equal(companion, app.HubWindowHandle);
             Capture(app, theme, route);
         }
+        await app.RefocusWorkspaceAsync();
+        Invoke(Find(AutomationElement.FromHandle(workspace), "WorkspaceOwner"));
+        Invoke(WaitForMenuItem(pid, "Usage"));
+        await WaitUntilAsync(() => IsVisible(AutomationElement.FromHandle(workspace), "UsagePageMarker"));
+        await app.NavigateAsync("workspace:home", "ChatPage", "WorkspaceNavHome");
         foreach (var (route, page, marker) in new[]
         {
             ("cron", "CronPage", "CronPageMarker"),
