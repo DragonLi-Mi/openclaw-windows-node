@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace OpenClaw.Shared;
 
@@ -20,10 +21,10 @@ public sealed class GatewayDataReadSource
         ProfileDataRevision = profileDataRevision;
     }
 
-    public IOperatorGatewayClient Client { get; }
-    public long ConnectionEpoch { get; }
-    public long ProfileDataRevision { get; }
-    public bool IsCurrent => _issuer.IsCurrent(this);
+    [JsonIgnore] public IOperatorGatewayClient Client { get; }
+    [JsonIgnore] public long ConnectionEpoch { get; }
+    [JsonIgnore] public long ProfileDataRevision { get; }
+    [JsonIgnore] public bool IsCurrent => _issuer.IsCurrent(this);
 
     internal bool WasIssuedBy(GatewayDataReadScope issuer) => ReferenceEquals(_issuer, issuer);
 }

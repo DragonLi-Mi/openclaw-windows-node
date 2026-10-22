@@ -63,6 +63,13 @@ public sealed class GatewayDataReadSourceTests
     }
 
     [Fact]
+    public void DiagnosticSerializationCannotWalkTheLiveClientOrItsConnectionProperties()
+    {
+        var scope = new GatewayDataReadScope(Client(), () => 12);
+        Assert.Equal("{}", JsonSerializer.Serialize(scope.Capture()!));
+    }
+
+    [Fact]
     public void EventFromRetiredConnectionCannotBeCapturedAsTheNewEpoch()
     {
         long? epoch = 12;
