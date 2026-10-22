@@ -3,10 +3,11 @@ using System.Text.Json;
 using OpenClaw.Shared;
 using OpenClawTray.Chat;
 using OpenClawTray.Presentation;
+using Xunit.Abstractions;
 
 namespace OpenClaw.Tray.Tests;
 
-public sealed class ChatConversationMcpAppSessionTests
+public sealed class ChatConversationMcpAppSessionTests(ITestOutputHelper output)
 {
     private static readonly TimeSpan DeadlockDeadline = TimeSpan.FromSeconds(10);
     private static JsonElement Json(string json) => JsonSerializer.Deserialize<JsonElement>(json);
@@ -27,6 +28,7 @@ public sealed class ChatConversationMcpAppSessionTests
         internal string[] Scopes = ["operator.write"];
         internal int ViewReads;
         internal readonly List<(ConversationMcpAppScope Scope, ConversationMcpAppOperation Operation, JsonElement Parameters, long Epoch)> Calls = [];
+        internal Action<ConversationMcpAppScope, ConversationMcpAppOperation, long>? ObserveCall;
         internal Func<ConversationMcpAppOperation, JsonElement, Task<JsonElement>> InvokeOperation = (operation, _) =>
             Task.FromResult(Json(operation switch
             {
@@ -62,6 +64,7 @@ public sealed class ChatConversationMcpAppSessionTests
             var operation = (ConversationMcpAppOperation)args[1]!;
             var parameters = (JsonElement)args[2]!;
             Calls.Add((scope, operation, parameters, (long)args[3]!));
+            ObserveCall?.Invoke(scope, operation, (long)args[3]!);
             return InvokeOperation(operation, parameters);
         }
     }
@@ -182,6 +185,26 @@ public sealed class ChatConversationMcpAppSessionTests
         }
         internal JsonElement Reply => Sent.Last(p => p.TryGetProperty("id", out _));
         public void Dispose() { Session.Dispose(); Panels.Dispose(); }
+    }
+
+    private sealed record CallTrace(long Sequence, ConversationMcpAppOperation Operation,
+        string ViewId, long Epoch, long Generation);
+
+    private static System.Collections.Concurrent.ConcurrentQueue<CallTrace> TraceCalls(Fixture fixture)
+    {
+        var trace = new System.Collections.Concurrent.ConcurrentQueue<CallTrace>();
+        long sequence = 0;
+        fixture.Gateway.ObserveCall = (scope, operation, epoch) =>
+            trace.Enqueue(new(Interlocked.Increment(ref sequence), operation,
+                scope.ViewId, epoch, fixture.Operation.Generation));
+        return trace;
+    }
+
+    private void WriteCallTrace(string stage, IEnumerable<CallTrace> trace)
+    {
+        output.WriteLine(stage);
+        foreach (var call in trace.OrderBy(call => call.Sequence))
+            output.WriteLine($"seq={call.Sequence}; leaseGeneration={call.Generation}; view={call.ViewId}; epoch={call.Epoch}; operation={call.Operation}");
     }
 
     [Fact]
@@ -436,6 +459,7 @@ public sealed class ChatConversationMcpAppSessionTests
     {
         using var f = new Fixture();
         await f.Ready();
+        var trace = TraceCalls(f);
         await f.Request("resources/subscribe", """{"uri":"gateway:report"}""");
         f.Sent.Clear();
         var delivery = new ChatConversationMcpAppEvent(f.Selection.Owner, 7, "run-one", "view-one",
@@ -448,11 +472,103 @@ public sealed class ChatConversationMcpAppSessionTests
         Assert.Empty(f.Sent);
         f.Events.Listener!(delivery);
         Assert.Equal("notifications/resources/updated", Assert.Single(f.Sent).GetProperty("method").GetString());
+        var retiredListener = f.Events.Listener!;
+        var unsubscribeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var unsubscribeResult = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Gateway.InvokeOperation = (operation, _) =>
+        {
+            if (operation != ConversationMcpAppOperation.UnsubscribeResource) return Task.FromResult(Json("{}"));
+            unsubscribeStarted.TrySetResult();
+            return unsubscribeResult.Task;
+        };
         f.Session.Dispose();
+        WriteCallTrace("Immediately after Dispose, before awaiting cleanup", trace);
         Assert.True(f.Events.Disposed);
+        try
+        {
+            await unsubscribeStarted.Task.WaitAsync(DeadlockDeadline);
+            Assert.False(f.Mount.RetireAsync().IsCompleted);
+            retiredListener(delivery);
+            Assert.Single(f.Sent, packet => packet.TryGetProperty("method", out var method) &&
+                method.GetString() == "notifications/resources/updated");
+            await f.Request("resources/subscribe", """{"uri":"gateway:late"}""", "2");
+            Assert.Single(trace, call => call.Operation == ConversationMcpAppOperation.SubscribeResource);
+        }
+        finally
+        {
+            WriteCallTrace("Ordered calls while cleanup was pending", trace);
+            unsubscribeResult.TrySetResult(Json("{}"));
+        }
+        await f.Mount.RetireAsync().WaitAsync(DeadlockDeadline);
+        WriteCallTrace("After actual cleanup", trace);
         Assert.Equal(ConversationMcpAppOperation.UnsubscribeResource, f.Gateway.Calls.Last().Operation);
         await f.Request("tools/call", """{"name":"no-new-effects"}""");
+        WriteCallTrace("After the retired-session request", trace);
         Assert.Equal(2, f.Gateway.Calls.Count);
+        var ordered = trace.OrderBy(call => call.Sequence).ToArray();
+        var firstUnsubscribe = Array.FindIndex(ordered,
+            call => call.Operation == ConversationMcpAppOperation.UnsubscribeResource);
+        Assert.True(firstUnsubscribe >= 0);
+        Assert.DoesNotContain(ordered.Skip(firstUnsubscribe + 1),
+            call => call.Operation == ConversationMcpAppOperation.SubscribeResource);
+    }
+
+    [Fact]
+    public async Task LateSubscribeCompletionCannotReattachOrDeliverToRetiredLease()
+    {
+        using var f = new Fixture();
+        await f.Ready();
+        var trace = TraceCalls(f);
+        var subscribeResult = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var unsubscribeStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var unsubscribeResult = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Gateway.InvokeOperation = (operation, _) =>
+        {
+            if (operation == ConversationMcpAppOperation.SubscribeResource) return subscribeResult.Task;
+            Assert.Equal(ConversationMcpAppOperation.UnsubscribeResource, operation);
+            unsubscribeStarted.TrySetResult();
+            return unsubscribeResult.Task;
+        };
+        var delivery = new ChatConversationMcpAppEvent(f.Selection.Owner, 7, "run-one", "view-one",
+            ChatConversationMcpAppEventKind.ResourceUpdated, Json("""{"uri":"gateway:report"}"""), 1, f.Source);
+        var retiredListener = f.Events.Listener!;
+        var subscribing = f.Request("resources/subscribe", """{"uri":"gateway:report"}""");
+        var retirement = f.Lifetime.RetireAsync();
+        try
+        {
+            f.Panels.Close("canvas");
+            Assert.False(f.Session.IsCurrent);
+            Assert.True(f.Events.Disposed);
+            Assert.Null(f.Events.Listener);
+            Assert.DoesNotContain(trace, call => call.Operation == ConversationMcpAppOperation.UnsubscribeResource);
+            await f.Request("resources/subscribe", """{"uri":"gateway:late"}""", "2");
+            Assert.Single(trace, call => call.Operation == ConversationMcpAppOperation.SubscribeResource);
+            retiredListener(delivery);
+            Assert.DoesNotContain(f.Sent, packet => packet.TryGetProperty("method", out var method) &&
+                method.GetString() == "notifications/resources/updated");
+
+            subscribeResult.SetResult(Json("{}"));
+            await subscribing.WaitAsync(DeadlockDeadline);
+            await unsubscribeStarted.Task.WaitAsync(DeadlockDeadline);
+            Assert.False(retirement.IsCompleted);
+            Assert.False(f.Mount.Contains("gateway:report"));
+            Assert.Null(f.Events.Listener);
+            retiredListener(delivery);
+            Assert.DoesNotContain(f.Sent, packet => packet.TryGetProperty("method", out var method) &&
+                method.GetString() == "notifications/resources/updated");
+        }
+        finally
+        {
+            WriteCallTrace("Ordered calls before releasing cleanup responses", trace);
+            subscribeResult.TrySetResult(Json("{}"));
+            unsubscribeResult.TrySetResult(Json("{}"));
+        }
+        var result = await retirement.WaitAsync(DeadlockDeadline);
+        WriteCallTrace("Late subscribe drained before its sole compensating unsubscribe", trace);
+        Assert.Equal(ChatConversationMcpAppRetirement.Drained, result);
+        Assert.Equal(new[] { ConversationMcpAppOperation.SubscribeResource, ConversationMcpAppOperation.UnsubscribeResource },
+            trace.OrderBy(call => call.Sequence).Select(call => call.Operation).ToArray());
+        Assert.All(trace, call => Assert.Equal(f.Operation.Generation, call.Generation));
     }
 
     [Fact]
@@ -616,6 +732,7 @@ public sealed class ChatConversationMcpAppSessionTests
     [InlineData("Accepted", true, false, "None")]
     [InlineData("Queued", true, false, "Queued")]
     [InlineData("Unconfirmed", false, true, "Unknown")]
+    [InlineData("Unconfirmed", true, true, "Unknown")]
     [InlineData("Rejected", false, true, "Rejected")]
     [InlineData("Stale", false, true, "Rejected")]
     [InlineData("Accepted", false, true, "Rejected")]
@@ -633,7 +750,28 @@ public sealed class ChatConversationMcpAppSessionTests
         var receipt = result.GetProperty("_meta").GetProperty("openclaw/acceptance");
         Assert.Equal(kind.ToString().ToLowerInvariant(), receipt.GetProperty("status").GetString());
         Assert.Equal(ownsPayload, receipt.GetProperty("ownsPayload").GetBoolean());
+        Assert.Equal("parent detail", receipt.GetProperty("error").GetString());
         Assert.Contains(notice, f.Notices);
+        Assert.Single(f.Actions.Messages);
+        Assert.Empty(f.Gateway.Calls);
+    }
+
+    [Fact]
+    public async Task UnconfirmedCustodyKeepsOriginalNullErrorWithoutRetry()
+    {
+        using var f = new Fixture();
+        await f.Ready();
+        f.Actions.Admission = new(ChatConversationContentAdmissionKind.Unconfirmed, OwnsPayload: true);
+
+        await f.Request("ui/message", """{"role":"user","content":[{"type":"text","text":"Explain"}]}""");
+
+        var result = f.Reply.GetProperty("result");
+        Assert.True(result.GetProperty("isError").GetBoolean());
+        var receipt = result.GetProperty("_meta").GetProperty("openclaw/acceptance");
+        Assert.Equal("unconfirmed", receipt.GetProperty("status").GetString());
+        Assert.True(receipt.GetProperty("ownsPayload").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, receipt.GetProperty("error").ValueKind);
+        Assert.Contains(ChatConversationMcpAppNotice.Unknown, f.Notices);
         Assert.Single(f.Actions.Messages);
         Assert.Empty(f.Gateway.Calls);
     }

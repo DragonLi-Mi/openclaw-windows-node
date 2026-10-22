@@ -417,8 +417,7 @@ internal sealed class ChatConversationMcpAppSession : IDisposable
                 {
                     ["status"] = admission.Kind.ToString().ToLowerInvariant(),
                     ["ownsPayload"] = admission.OwnsPayload,
-                    ["error"] = admission.Kind == ChatConversationContentAdmissionKind.Unconfirmed
-                        ? "The action outcome is unknown. It was not retried." : admission.Error
+                    ["error"] = admission.Error
                 }
             }
         };
