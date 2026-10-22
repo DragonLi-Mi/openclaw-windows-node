@@ -82,11 +82,16 @@ for the exact Gateway record, accepted signing identity and session key/id/agent
 Changing connection epoch revokes pending work without treating the retained
 layout as authorization. A session id changing from unknown to known is an
 identity change, not a wildcard match.
+The retained ChatPage owns the layout store across provider/client remounts;
+each new mount gets a fresh operation lifetime. Closing the Workspace clears
+that window's layout store. Content and edit buffers are not stored by this host.
 
 The conversation remains mounted while panels open, close or resize. At widths
 below 652 pixels, the panel fills the conversation area and the retained
 conversation is collapsed, not reparented. Close or Escape from inside the panel
-returns focus to its opener; wide layouts support F6 between panes. The resize
+returns focus to its opener; wide layouts support F6 between panes. Narrow F6
+switches presentation without closing the panel; **Show conversation panel**
+returns to it. Escape in the composer does not close a hidden panel. The resize
 grip supports pointer drag, Left/Right and Home/End. Panel transitions add no
 custom animation. Content owners supply their own scrolling and loading/error
 states; the host shows a connection-wait message instead of stale content.

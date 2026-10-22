@@ -209,8 +209,8 @@ internal sealed class ReactorConversationPanelHost : Component<ReactorConversati
         {
             if (_state.Layout.SelectedPanel is not { } selected) return;
             var focused = FocusManager.GetFocusedElement(_root.XamlRoot) as DependencyObject;
-            if (args.Key == VirtualKey.Escape &&
-                (_narrow || _panel is { } currentPanel && IsWithin(focused, currentPanel)))
+            if (args.Key == VirtualKey.Escape && ChatConversationPanelNavigation.ShouldCloseOnEscape(
+                _narrow, _presented, _panel is { } currentPanel && IsWithin(focused, currentPanel)))
             {
                 _state.Close(selected);
                 Restore();

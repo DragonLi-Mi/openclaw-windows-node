@@ -280,4 +280,46 @@ public sealed class ChatConversationPanelStateTests
         Assert.Null(panels.BeginOperation("details", "run-one"));
         Assert.Equal("run-two", panels.BeginOperation("details")!.RunId);
     }
+
+    [Theory]
+    [InlineData(false, false, false, false)]
+    [InlineData(false, true, false, false)]
+    [InlineData(false, true, true, true)]
+    [InlineData(true, false, false, false)]
+    [InlineData(true, true, false, true)]
+    [InlineData(true, true, true, true)]
+    public void EscapeLeavesComposerAloneWhenNarrowPanelIsHidden(
+        bool narrow, bool presented, bool withinPanel, bool expected) =>
+        Assert.Equal(expected, ChatConversationPanelNavigation.ShouldCloseOnEscape(narrow, presented, withinPanel));
+
+    [Fact]
+    public void NewClientRestoresOnlySameIdentityLayoutWithoutRevivingOperations()
+    {
+        var layouts = new ChatConversationPanelLayouts();
+        var (firstClient, _) = Gateway();
+        var first = new ChatConversationPanelState(
+            _ => ChatConversationContext.Capture("gateway-one", firstClient, Session()), layouts);
+        first.Bind("agent:writing:one");
+        first.Open("files");
+        first.Resize(560);
+        var oldOperation = first.BeginOperation("files")!;
+        first.Dispose();
+        var (secondClient, _) = Gateway();
+        using var second = new ChatConversationPanelState(
+            _ => ChatConversationContext.Capture("gateway-one", secondClient, Session()), layouts);
+        second.Bind("agent:writing:one");
+        Assert.Equal("files", second.Layout.SelectedPanel);
+        Assert.Equal(560, second.Layout.Width);
+        Assert.False(oldOperation.IsCurrent);
+        Assert.Same(secondClient, second.BeginOperation("files")!.Context.Client);
+        using var otherGateway = new ChatConversationPanelState(
+            _ => ChatConversationContext.Capture("gateway-two", secondClient, Session()), layouts);
+        otherGateway.Bind("agent:writing:one");
+        Assert.Null(otherGateway.Layout.SelectedPanel);
+        layouts.Clear();
+        using var reopenedWindow = new ChatConversationPanelState(
+            _ => ChatConversationContext.Capture("gateway-one", secondClient, Session()), layouts);
+        reopenedWindow.Bind("agent:writing:one");
+        Assert.Null(reopenedWindow.Layout.SelectedPanel);
+    }
 }

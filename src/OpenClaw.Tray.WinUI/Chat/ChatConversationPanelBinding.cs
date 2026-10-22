@@ -7,7 +7,8 @@ namespace OpenClawTray.Chat;
 internal static class ChatConversationPanelBinding
 {
     internal static ChatConversationPanelState Create(
-        IGatewayConnectionManager manager, IOperatorGatewayClient client, Func<SessionInfo[]> sessions)
+        IGatewayConnectionManager manager, IOperatorGatewayClient client, Func<SessionInfo[]> sessions,
+        ChatConversationPanelLayouts? layouts = null)
     {
         var initial = manager.CurrentSnapshot;
         var gatewayId = ReferenceEquals(manager.OperatorClient, client) &&
@@ -24,7 +25,7 @@ internal static class ChatConversationPanelBinding
             return ReferenceEquals(before, manager.CurrentSnapshot) &&
                 ReferenceEquals(manager.OperatorClient, client) &&
                 context?.IsTransportCurrent == true ? context : null;
-        });
+        }, layouts);
         void OnStateChanged(object? sender, GatewayConnectionSnapshot snapshot) => state.Refresh();
         void OnStatusChanged(object? sender, ConnectionStatus status) => state.Refresh();
         void OnHandshake(object? sender, EventArgs args) => state.Refresh();

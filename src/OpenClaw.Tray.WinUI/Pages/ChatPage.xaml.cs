@@ -34,6 +34,7 @@ public sealed partial class ChatPage : Page
     private string? _pendingSessionKey;
     private readonly PendingVoiceActivation _pendingVoice = new();
     private MountedReactorChat? _reactorHost;
+    private readonly ChatConversationPanelLayouts _conversationPanelLayouts = new();
     private IChatDataProvider? _mountedProvider;
     private IChatDataProvider? _accessibilityTestProvider;
     private string? _mountedThreadId;
@@ -227,6 +228,7 @@ public sealed partial class ChatPage : Page
     {
         OnUnloaded(this, new RoutedEventArgs());
         DisposeReactorHost();
+        _conversationPanelLayouts.Clear();
         _ownerWindow = null;
     }
 
@@ -504,7 +506,7 @@ public sealed partial class ChatPage : Page
         MountedReactorChat? mountedHost = null;
         var panelClient = app?.GatewayClient as OpenClawGatewayClient;
         var panels = panelClient is not null && app?.ConnectionManager is { } panelManager
-            ? ChatConversationPanelBinding.Create(panelManager, panelClient, panelClient.GetSessionList)
+            ? ChatConversationPanelBinding.Create(panelManager, panelClient, panelClient.GetSessionList, _conversationPanelLayouts)
             : new ChatConversationPanelState(_ => null);
         var composerSession = ReactorChatHostExtensions.CreateComposerSession(
             ChatHost,

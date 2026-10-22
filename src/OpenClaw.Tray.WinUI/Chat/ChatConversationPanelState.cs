@@ -48,6 +48,33 @@ internal sealed record ChatConversationPanelLayout(
     internal static ChatConversationPanelLayout Empty { get; } = new([], null);
 }
 
+internal sealed class ChatConversationPanelLayouts
+{
+    private readonly object _gate = new();
+    private readonly Dictionary<ChatConversationIdentity, ChatConversationPanelLayout> _layouts = [];
+
+    internal ChatConversationPanelLayout Get(ChatConversationIdentity identity)
+    {
+        lock (_gate) return _layouts.GetValueOrDefault(identity, ChatConversationPanelLayout.Empty);
+    }
+
+    internal void Set(ChatConversationIdentity identity, ChatConversationPanelLayout layout)
+    {
+        lock (_gate) _layouts[identity] = layout;
+    }
+
+    internal void Clear()
+    {
+        lock (_gate) _layouts.Clear();
+    }
+}
+
+internal static class ChatConversationPanelNavigation
+{
+    internal static bool ShouldCloseOnEscape(bool narrow, bool presented, bool focusWithinPanel) =>
+        focusWithinPanel || narrow && presented;
+}
+
 /// <summary>
 /// One mounted conversation host's retained layout and cancellable selection lifetime.
 /// A lease fences local work, not a Gateway mutation: writes still require an epoch-bound RPC.
@@ -60,7 +87,7 @@ public sealed class ChatConversationPanelState : IDisposable
     internal const double ResizeStep = 16;
     private readonly object _gate = new();
     private readonly Func<string, ChatConversationContext?> _resolveContext;
-    private readonly Dictionary<ChatConversationIdentity, ChatConversationPanelLayout> _layouts = [];
+    private readonly ChatConversationPanelLayouts _layouts;
     private CancellationTokenSource _cancellation = new();
     private ChatConversationContext? _context;
     private ChatConversationPanelLayout _layout = ChatConversationPanelLayout.Empty;
@@ -72,8 +99,12 @@ public sealed class ChatConversationPanelState : IDisposable
     private bool _active = true;
     private bool _disposed;
 
-    internal ChatConversationPanelState(Func<string, ChatConversationContext?> resolveContext) =>
+    internal ChatConversationPanelState(
+        Func<string, ChatConversationContext?> resolveContext, ChatConversationPanelLayouts? layouts = null)
+    {
         _resolveContext = resolveContext;
+        _layouts = layouts ?? new();
+    }
 
     internal event Action? Changed;
     internal event Action? Disposed;
@@ -140,7 +171,7 @@ public sealed class ChatConversationPanelState : IDisposable
             _selectedRun = null;
             _layout = context is null
                 ? retainingOfflineSelection ? _layout : ChatConversationPanelLayout.Empty
-                : _layouts.GetValueOrDefault(context.Identity, ChatConversationPanelLayout.Empty);
+                : _layouts.Get(context.Identity);
             previous = AdvanceGeneration();
         }
         Cancel(previous);
@@ -293,7 +324,7 @@ public sealed class ChatConversationPanelState : IDisposable
 
     private void SaveLayout()
     {
-        if (_context is { } context) _layouts[context.Identity] = _layout;
+        if (_context is { } context) _layouts.Set(context.Identity, _layout);
     }
 
     private CancellationTokenSource AdvanceGeneration()
@@ -320,7 +351,6 @@ public sealed class ChatConversationPanelState : IDisposable
             previous = _cancellation;
             _generation++;
             _context = null;
-            _layouts.Clear();
         }
         Cancel(previous);
         Changed = null;
