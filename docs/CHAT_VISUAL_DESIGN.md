@@ -134,6 +134,13 @@ Files requires the selected session's Gateway-provided source and conflict-safe
 save contract. Hosted Canvas content requires its separate isolated content
 boundary; a native panel alone does not establish Canvas parity.
 
+Initial timeline positioning waits for the native ItemsView and ScrollView to
+load, not for a later `LayoutUpdated` event. The queued callback captures the
+current tail after checking its request generation. Reloading an already
+positioned view does not issue another initial-tail request for the same key.
+Early reader input and reader anchoring across history replacement remain
+separate contracts, not guarantees of this initial-load correction.
+
 Tool input/output captions project the native `CaptionTextBlockFontSize`
 resource and `CaptionTextBlockStyle` setters, including its inherited family,
 wrapping, trimming and line layout, into Reactor element

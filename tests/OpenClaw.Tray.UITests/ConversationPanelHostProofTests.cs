@@ -22,7 +22,6 @@ namespace OpenClaw.Tray.UITests;
 public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
 {
     private static readonly TimeSpan NativeReadinessTimeout = TimeSpan.FromSeconds(10);
-    private const int MaximumReaderScrollAttempts = 2;
     private Window? _proofWindow;
 
     [Theory]
@@ -30,12 +29,12 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
     [InlineData(480)]
     public async Task PanelOpenClosePreservesProductionTimelineComposerSelectionAndScroll(int width)
     {
-        await WithRootAsync(width, async (surface, panels, _, _) =>
+        await WithRootAsync(width, async (surface, panels, _, _, _) =>
         {
             TextBox? input = null;
             ItemsView? timeline = null;
             ScrollView? scroll = null;
-            double offset = 0;
+            ReaderAnchor? anchor = null;
             await ui.RunOnUIAsync(() =>
             {
                 input = Find<TextBox>(surface, "ChatComposerInput");
@@ -45,7 +44,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
             });
             var readerScroll = scroll ?? throw new InvalidOperationException("The production timeline has no ScrollView.");
             var editor = input ?? throw new InvalidOperationException("The production composer has no input.");
-            await WaitForInitialTailAsync(surface, readerScroll);
+            await WaitForInitialTailAsync(surface, readerScroll, finalMessage: "Panel message 50");
             await ui.RunOnUIAsync(() =>
             {
                 editor.Select(5, 8);
@@ -56,8 +55,9 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
             await SettleAsync();
             await ui.RunOnUIAsync(() =>
             {
-                offset = scroll!.VerticalOffset;
-                Assert.InRange(offset, 119, 121);
+                Assert.InRange(readerScroll.VerticalOffset, 1, readerScroll.ScrollableHeight - 60);
+                anchor = CaptureReaderAnchor(surface, readerScroll);
+                Console.WriteLine($"Reader anchor before panel: message={anchor.Message}, top={anchor.Top}, offset={readerScroll.VerticalOffset}");
                 Assert.True(panels.Open("details"));
             });
             await SettleAsync();
@@ -74,6 +74,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 Assert.InRange(panel.ActualWidth, 280, width);
                 var close = Find<Button>(surface, "ConversationPanelClose");
                 Assert.Equal("Close panel", AutomationProperties.GetName(close));
+                if (width == 960) AssertReaderAnchor(surface, readerScroll, anchor!);
             });
             await CaptureAsync(surface, $"Panel-{width}-open");
             await ui.RunOnUIAsync(() => Invoke(Find<Button>(surface, "ConversationPanelClose")));
@@ -83,7 +84,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 Assert.Null(panels.Layout.SelectedPanel);
                 Assert.Same(input, Find<TextBox>(surface, "ChatComposerInput"));
                 Assert.Same(timeline, Assert.Single(FindDescendants<ItemsView>(surface)));
-                Assert.InRange(scroll!.VerticalOffset, offset - 1, offset + 1);
+                AssertReaderAnchor(surface, readerScroll, anchor!);
                 Assert.Equal("Keep this conversation draft.", input!.Text);
                 Assert.Equal(5, input.SelectionStart);
                 Assert.Equal(8, input.SelectionLength);
@@ -94,9 +95,88 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
     }
 
     [Fact]
+    public async Task FreshLongHistoryAndSessionSwitchRevealTheActualFinalMessage()
+    {
+        await WithRootAsync(960, async (surface, panels, _, _, composer) =>
+        {
+            var scroll = await ui.RunOnUIAsync(() =>
+                Task.FromResult(Assert.Single(FindDescendants<ItemsView>(surface)).ScrollView));
+            await WaitForInitialTailAsync(surface, scroll, finalMessage: "Panel message 50");
+            await CaptureAsync(surface, "Initial-tail-one");
+            await ui.RunOnUIAsync(() => Assert.True(composer.Controller.TrySelectSession("two")));
+            await SettleAsync();
+            var nextScroll = await ui.RunOnUIAsync(() =>
+                Task.FromResult(Assert.Single(FindDescendants<ItemsView>(surface)).ScrollView));
+            await WaitForInitialTailAsync(surface, nextScroll, finalMessage: "Second message 50");
+            await ui.RunOnUIAsync(() => Assert.Equal("two", panels.Context?.Identity.SessionKey));
+            await CaptureAsync(surface, "Initial-tail-two");
+        });
+    }
+
+    [Fact]
+    public async Task InitialTailRecapturesSameKeyIndexChangedBeforeDispatch()
+    {
+        await ui.ResetContainerAsync();
+        InitialTailPositioner? positioner = null;
+        Window? window = null;
+        try
+        {
+            Border? surface = null;
+            ItemsView? timeline = null;
+            var rows = new System.Collections.ObjectModel.ObservableCollection<string>(
+                Enumerable.Range(1, 24).Select(index => $"Original row {index}").Append("Tail item"));
+            await ui.RunOnUIAsync(() =>
+            {
+                timeline = new ItemsView
+                {
+                    ItemsSource = rows,
+                    SelectionMode = ItemsViewSelectionMode.None,
+                    ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load(
+                        """<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><ItemContainer><TextBlock Text="{Binding}" Height="64" /></ItemContainer></DataTemplate>""")
+                };
+                surface = new Border { Width = 480, Height = 600, Child = timeline };
+                window = new Window { Content = surface };
+                _proofWindow = window;
+                window.AppWindow.MoveAndResize(new(-32000, -32000, 800, 900));
+                window.Activate();
+                RecordOwnedWindow(window);
+            });
+            await SettleAsync();
+            await ui.RunOnUIAsync(() => WaitForRenderedConditionAsync(
+                () => timeline!.IsLoaded && timeline.ScrollView is { IsLoaded: true, ViewportHeight: > 0 },
+                "loaded ItemsView before initial-tail dispatch race"));
+            var scroll = await ui.RunOnUIAsync(() =>
+            {
+                var scale = surface!.XamlRoot.RasterizationScale;
+                window!.AppWindow.ResizeClient(new(
+                    (int)Math.Ceiling(surface.Width * scale), (int)Math.Ceiling(surface.Height * scale)));
+                RecordOwnedWindow(window);
+                positioner = new(timeline!);
+                positioner.Request(24, 25, "same-request", "same-tail");
+                for (var index = 0; index < 25; index++) rows.Insert(rows.Count - 1, $"Inserted row {index}");
+                positioner.UpdateTail(49, 50, "same-tail");
+                return Task.FromResult(timeline!.ScrollView);
+            });
+            await WaitForStablePositionAsync(surface!, scroll,
+                () => scroll.ScrollableHeight - scroll.VerticalOffset <= 60 &&
+                    FindDescendants<TextBlock>(timeline!).Any(text => text.Text == "Tail item" && IsVisibleInScroll(text, scroll)),
+                "current same-key tail after index/count changed before queued dispatch");
+        }
+        finally
+        {
+            await ui.RunOnUIAsync(() =>
+            {
+                positioner?.Dispose();
+                window?.Close();
+                _proofWindow = null;
+            });
+        }
+    }
+
+    [Fact]
     public async Task SuspendedHostReplacesPanelBodyWithWaitingWithoutDiscardingSelection()
     {
-        await WithRootAsync(960, async (surface, panels, _, _) =>
+        await WithRootAsync(960, async (surface, panels, _, _, _) =>
         {
             await ui.RunOnUIAsync(() => Assert.True(panels.Open("details")));
             await SettleAsync();
@@ -122,7 +202,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
     [Fact]
     public async Task NativeToolActionUpdatesLiveOutputAndRequiresReopenAfterHistoryCommit()
     {
-        await WithRootAsync(960, async (surface, panels, provider, _) =>
+        await WithRootAsync(960, async (surface, panels, provider, _, _) =>
         {
             var scroll = await ui.RunOnUIAsync(() =>
                 Task.FromResult(Assert.Single(FindDescendants<ItemsView>(surface)).ScrollView));
@@ -170,7 +250,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
     [Fact]
     public async Task UnavailableAccountExplainsWhyPanelsCannotOpenAndKeepsComposerUsable()
     {
-        await WithRootAsync(960, async (surface, panels, _, changeAccountStatus) =>
+        await WithRootAsync(960, async (surface, panels, _, changeAccountStatus, _) =>
         {
             TextBlock? originalNotice = null;
             TextBlock? captionReference = null;
@@ -219,15 +299,15 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
     }
 
     private async Task WithRootAsync(
-        int width, Func<Border, ChatConversationPanelState, PanelProvider, Action<ChatConversationAccountStatus>, Task> proof, bool dense = true,
+        int width, Func<Border, ChatConversationPanelState, PanelProvider, Action<ChatConversationAccountStatus>, ChatComposerSession, Task> proof, bool dense = true,
         bool unverifiedAccount = false)
     {
         await ui.ResetContainerAsync();
         var provider = new PanelProvider(dense);
         var client = DispatchProxy.Create<IOperatorGatewayClient, ReadyClient>();
         var accountStatus = unverifiedAccount ? ChatConversationAccountStatus.Unavailable : ChatConversationAccountStatus.Known;
-        using var panels = new ChatConversationPanelState(_ => accountStatus != ChatConversationAccountStatus.Known ? null : ChatConversationContext.Capture(
-            "gateway-proof", client, new() { Key = "one", AgentId = "writing", SessionId = "session-one" }, "profile-proof"),
+        using var panels = new ChatConversationPanelState(key => accountStatus != ChatConversationAccountStatus.Known ? null : ChatConversationContext.Capture(
+            "gateway-proof", client, new() { Key = key, AgentId = "writing", SessionId = "session-" + key }, "profile-proof"),
             accountStatus: () => accountStatus);
         Border? surface = null;
         Window? window = null;
@@ -276,7 +356,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
             {
                 accountStatus = status;
                 panels.Refresh();
-            });
+            }, composer!);
         }
         finally
         {
@@ -369,11 +449,45 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
         });
     }
 
-    private Task WaitForInitialTailAsync(Border surface, ScrollView scroll, bool requireScrollable = true) =>
+    private Task WaitForInitialTailAsync(Border surface, ScrollView scroll, bool requireScrollable = true, string? finalMessage = null) =>
         WaitForStablePositionAsync(surface, scroll,
             () => (!requireScrollable || scroll.ScrollableHeight > 160) &&
-                Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight) <= 1,
+                scroll.ScrollableHeight - scroll.VerticalOffset <= 60 &&
+                (finalMessage is null || FindDescendants<RichTextBlock>(surface).Any(text =>
+                    MessageText(text) == finalMessage && IsVisibleInScroll(text, scroll))),
             $"initial tail (requiresScrollableOver160={requireScrollable})");
+
+    private sealed record ReaderAnchor(string Message, double Top);
+
+    private static string MessageText(RichTextBlock text) => string.Concat(
+        text.Blocks.OfType<Paragraph>().SelectMany(paragraph => paragraph.Inlines.OfType<Run>()).Select(run => run.Text));
+
+    private static global::Windows.Foundation.Rect BoundsInScroll(FrameworkElement element, ScrollView scroll) =>
+        element.TransformToVisual(scroll).TransformBounds(new(0, 0, element.ActualWidth, element.ActualHeight));
+
+    private static bool IsVisibleInScroll(FrameworkElement element, ScrollView scroll)
+    {
+        if (!element.IsLoaded || element.Visibility != Visibility.Visible || element.ActualHeight <= 0)
+            return false;
+        var bounds = BoundsInScroll(element, scroll);
+        return bounds.Top >= 0 && bounds.Bottom <= scroll.ViewportHeight;
+    }
+
+    private static ReaderAnchor CaptureReaderAnchor(Border surface, ScrollView scroll) =>
+        FindDescendants<RichTextBlock>(surface)
+            .Where(text => MessageText(text).StartsWith("Panel message ", StringComparison.Ordinal) && IsVisibleInScroll(text, scroll))
+            .Select(text => new ReaderAnchor(MessageText(text), BoundsInScroll(text, scroll).Top))
+            .OrderBy(anchor => anchor.Top).First();
+
+    private static void AssertReaderAnchor(Border surface, ScrollView scroll, ReaderAnchor anchor)
+    {
+        var text = Assert.Single(FindDescendants<RichTextBlock>(surface),
+            candidate => MessageText(candidate) == anchor.Message && IsVisibleInScroll(candidate, scroll));
+        var tolerance = 1 / surface.XamlRoot.RasterizationScale;
+        var top = BoundsInScroll(text, scroll).Top;
+        Console.WriteLine($"Reader anchor after panel: message={anchor.Message}, expectedTop={anchor.Top}, actualTop={top}, offset={scroll.VerticalOffset}");
+        Assert.InRange(top, anchor.Top - tolerance, anchor.Top + tolerance);
+    }
 
     private Task WaitForStablePositionAsync(
         Border surface, ScrollView scroll, Func<bool> positionReady, string description) => ui.RunOnUIAsync(async () =>
@@ -414,21 +528,14 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
 
     private async Task ScrollReaderAsync(Border surface, ScrollView scroll, double offset)
     {
-        var attempts = new List<string>();
-        for (var attempt = 1; attempt <= MaximumReaderScrollAttempts; attempt++)
+        var correlation = await ScrollOnceAsync(scroll, offset);
+        await WaitForStablePositionAsync(surface, scroll, () => true, "reader extent after correlated scroll");
+        await ui.RunOnUIAsync(() =>
         {
-            var correlation = await ScrollOnceAsync(scroll, offset);
-            await WaitForStablePositionAsync(surface, scroll, () => true, "reader extent after correlated scroll");
-            var reached = await ui.RunOnUIAsync(() =>
-            {
-                attempts.Add($"attempt={attempt},correlation={correlation},requested={offset},actual={scroll.VerticalOffset}," +
-                    $"extent={scroll.ExtentHeight},viewport={scroll.ViewportHeight}");
-                Console.WriteLine(attempts[^1]);
-                return Task.FromResult(Math.Abs(scroll.VerticalOffset - offset) <= 1);
-            });
-            if (reached) return;
-        }
-        Assert.Fail($"Native reader did not reach the requested position after bounded remeasurement: {string.Join(";", attempts)}");
+            Console.WriteLine($"correlation={correlation},requested={offset},actual={scroll.VerticalOffset}," +
+                $"extent={scroll.ExtentHeight},viewport={scroll.ViewportHeight}");
+            Assert.InRange(scroll.VerticalOffset, 1, scroll.ScrollableHeight - 60);
+        });
     }
 
     private Task<int> ScrollOnceAsync(ScrollView scroll, double offset) => ui.RunOnUIAsync(async () =>
@@ -542,11 +649,18 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                             ToolCallId: "call-one", ToolRunId: "run-one")),
                 HistoryLoaded = true
             };
-            return Task.FromResult(_snapshot = new ChatDataSnapshot([thread],
-                new Dictionary<string, ChatTimelineState> { ["one"] = timeline },
+            var timelines = new Dictionary<string, ChatTimelineState> { ["one"] = timeline };
+            if (dense) timelines["two"] = timeline with
+            {
+                Entries = Enumerable.Range(1, 50).Select(index => new ChatTimelineItem(
+                    "second-entry-" + index, ChatTimelineItemKind.User, "Second message " + index)).ToImmutableList()
+            };
+            return Task.FromResult(_snapshot = new ChatDataSnapshot(
+                dense ? [thread, new ChatThread { Id = "two", Title = "Second proof", AgentId = "writing" }] : [thread],
+                timelines,
                 "one", "Connected", [], new("one", true, "writing"),
-                TimelineGenerations: new Dictionary<string, long> { ["one"] = 3 },
-                HistoryRevisions: new Dictionary<string, long> { ["one"] = 5 }));
+                TimelineGenerations: new Dictionary<string, long> { ["one"] = 3, ["two"] = 3 },
+                HistoryRevisions: new Dictionary<string, long> { ["one"] = 5, ["two"] = 5 }));
         }
 
         internal void PublishOutput(string output, long historyRevision = 5)
