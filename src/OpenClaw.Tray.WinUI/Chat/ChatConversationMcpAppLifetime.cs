@@ -185,6 +185,8 @@ internal sealed class ChatConversationMcpAppMountLease(
 
     private async Task<bool> ReleaseAsync()
     {
+        // RetireAsync publishes the single retirement task while holding the mount gate.
+        await Task.Yield();
         var safe = false;
         try
         {

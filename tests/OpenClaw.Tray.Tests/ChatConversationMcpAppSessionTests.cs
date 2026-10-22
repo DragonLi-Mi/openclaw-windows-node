@@ -74,16 +74,19 @@ public sealed class ChatConversationMcpAppSessionTests
         internal readonly List<ConversationMcpAppLink> Links = [];
         internal Func<Task<bool>> Confirm = () => Task.FromResult(true);
         internal ChatConversationContentAdmission Admission = ChatConversationContentAdmission.Accepted;
+        internal Exception? AdmissionFailure;
         internal bool Accept { get => Admission.HasCustody; set => Admission = value
             ? ChatConversationContentAdmission.Accepted : ChatConversationContentAdmission.Rejected; }
         public Task<bool> ConfirmAsync(ChatConversationMcpAppConfirmation request, CancellationToken cancellationToken)
         { Confirmations.Add(request); return Confirm(); }
         public Task<ChatConversationContentAdmission> AcceptMessageAsync(ChatConversationMcpAppAction owner, ConversationMcpAppMessage message, CancellationToken cancellationToken)
-        { Messages.Add(message); return Task.FromResult(Admission); }
+        { Messages.Add(message); return AdmissionResult(); }
         public Task<ChatConversationContentAdmission> AcceptFileAsync(ChatConversationMcpAppAction owner, ChatConversationMcpAppFile file, CancellationToken cancellationToken)
-        { Files.Add(file); return Task.FromResult(Admission); }
+        { Files.Add(file); return AdmissionResult(); }
         public Task<ChatConversationContentAdmission> OpenLinkAsync(ChatConversationMcpAppAction owner, ConversationMcpAppLink link, CancellationToken cancellationToken)
-        { Links.Add(link); return Task.FromResult(Admission); }
+        { Links.Add(link); return AdmissionResult(); }
+        private Task<ChatConversationContentAdmission> AdmissionResult() => AdmissionFailure is { } failure
+            ? Task.FromException<ChatConversationContentAdmission>(failure) : Task.FromResult(Admission);
         public bool SetDisplayMode(ChatConversationMcpAppAction owner, string mode) => Accept;
         public void ReturnToConversation(ChatConversationMcpAppAction owner) { }
     }
@@ -927,6 +930,61 @@ public sealed class ChatConversationMcpAppSessionTests
         Assert.Contains(ChatConversationMcpAppNotice.Unknown, f.Notices);
         Assert.Equal(-32000, f.Reply.GetProperty("error").GetProperty("code").GetInt32());
         Assert.Contains("unknown", f.Reply.GetProperty("error").GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task RetirementCleanupStartsOutsideMountGate()
+    {
+        using var f = new Fixture();
+        await f.Ready();
+        await f.Request("resources/subscribe", """{"uri":"gateway:report"}""");
+        var inspected = false;
+        f.Gateway.InvokeOperation = (operation, _) =>
+        {
+            Assert.Equal(ConversationMcpAppOperation.UnsubscribeResource, operation);
+            Assert.False(Task.Run(() => f.Mount.Contains("gateway:report"))
+                .WaitAsync(DeadlockDeadline).GetAwaiter().GetResult());
+            inspected = true;
+            return Task.FromResult(Json("{}"));
+        };
+        Assert.True(await f.Mount.RetireAsync().WaitAsync(DeadlockDeadline));
+        Assert.True(inspected);
+        Assert.Single(f.Gateway.Calls, call => call.Operation == ConversationMcpAppOperation.UnsubscribeResource);
+    }
+
+    [Theory]
+    [InlineData("tools/list", "{}", false)]
+    [InlineData("tools/call", """{"name":"mutate"}""", true)]
+    [InlineData("ui/message", """{"role":"user","content":[{"type":"text","text":"Explain"}]}""", true)]
+    [InlineData("openai/files/open", """{"path":"report.txt"}""", true)]
+    [InlineData("ui/open-link", """{"url":"https://example.com/"}""", true)]
+    public async Task UnexpectedOperationFailureAlwaysRepliesWithoutRetryOrLeakingDetails(
+        string method, string parameters, bool unknown)
+    {
+        using var f = new Fixture();
+        await f.Ready();
+        var failure = new KeyNotFoundException("private-delegate-detail");
+        if (method.StartsWith("tools/", StringComparison.Ordinal))
+            f.Gateway.InvokeOperation = (_, _) => Task.FromException<JsonElement>(failure);
+        else
+        {
+            f.Actions.AdmissionFailure = failure;
+            if (method == "openai/files/open")
+                f.Gateway.InvokeOperation = (_, _) => Task.FromResult(Json("""{"path":"report.txt"}"""));
+        }
+
+        await f.Request(method, parameters);
+
+        Assert.Single(f.Sent, packet => packet.TryGetProperty("id", out _));
+        Assert.Equal(-32000, f.Reply.GetProperty("error").GetProperty("code").GetInt32());
+        Assert.Equal(unknown ? "The action outcome is unknown. It was not retried." :
+            "The App operation could not complete.", f.Reply.GetProperty("error").GetProperty("message").GetString());
+        Assert.DoesNotContain("private-delegate-detail", f.Reply.GetRawText());
+        Assert.Contains(unknown ? ChatConversationMcpAppNotice.Unknown : ChatConversationMcpAppNotice.Error, f.Notices);
+        Assert.Equal(method is "ui/message" or "ui/open-link" ? 0 : 1, f.Gateway.Calls.Count);
+        Assert.Equal(method == "ui/message" ? 1 : 0, f.Actions.Messages.Count);
+        Assert.Equal(method == "openai/files/open" ? 1 : 0, f.Actions.Files.Count);
+        Assert.Equal(method == "ui/open-link" ? 1 : 0, f.Actions.Links.Count);
     }
 
     [Theory]

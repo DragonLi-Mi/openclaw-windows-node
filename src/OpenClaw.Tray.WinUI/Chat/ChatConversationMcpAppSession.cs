@@ -138,8 +138,7 @@ internal sealed class ChatConversationMcpAppSession : IDisposable
             }
         }
         catch (GatewayDataReadRetiredException) { SourceRetired?.Invoke(); Dispose(); }
-        catch (Exception ex) when (ex is InvalidOperationException or InvalidDataException or IOException or TimeoutException or
-            OperationCanceledException or System.Net.WebSockets.WebSocketException or JsonException or ArgumentException or NotSupportedException)
+        catch (Exception ex) when (ex is not (OutOfMemoryException or StackOverflowException or AccessViolationException))
         {
             var expired = ex is GatewayRequestException { Code: "UNAVAILABLE", Details: { ValueKind: JsonValueKind.Object } details } &&
                 details.TryGetProperty("code", out var code) && code.ValueKind == JsonValueKind.String &&
