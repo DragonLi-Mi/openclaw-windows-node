@@ -1171,7 +1171,12 @@ function Invoke-FakeCiProcess {
         New-Item -ItemType Directory -Path $directory -Force | Out-Null
         $logger = @($values | Where-Object { $_ -like 'trx;LogFileName=*' })[0]
         $report = Join-Path $directory $logger.Substring('trx;LogFileName='.Length)
-        Set-Content -LiteralPath $report -Value '<TestRun><ResultSummary><Counters executed="1" /></ResultSummary><Results><UnitTestResult testName="Sentinel" outcome="Passed" /></Results></TestRun>'
+        $stamp = [DateTime]::UtcNow.ToString('o')
+        $executionId = [guid]::NewGuid().ToString()
+        $trx = "<TestRun xmlns='http://microsoft.com/schemas/VisualStudio/TeamTest/2010'><Times start='$stamp' finish='$stamp' />" +
+            "<ResultSummary outcome='Completed'><Counters total='1' executed='1' passed='1' failed='0' notExecuted='0' /></ResultSummary>" +
+            "<Results><UnitTestResult executionId='$executionId' testName='Sentinel' outcome='Passed' /></Results></TestRun>"
+        Set-Content -LiteralPath $report -Value $trx -Encoding utf8
     }
     $global:LASTEXITCODE = $TestExit
 }
@@ -1208,7 +1213,12 @@ exit $LASTEXITCODE
         if ($case.Id -eq 'invalid' -and (Test-Path (Join-Path $caseRoot 'dotnet-called.txt'))) {
             throw 'An invalid hang timeout must be rejected before starting tests.'
         }
-        if ($case.Id -eq 'missing-proof' -and ($output -join "`n") -notmatch 'did not report the MXC proof') {
+        $text = $output -join "`n"
+        if ($case.ExpectedExit -eq 0 -and
+            $text -notmatch '"discovered":1,"executed":1,"passed":1,"failed":0,"skipped":0') {
+            throw "E2E hang protection did not admit the controlled report: $text"
+        }
+        if ($case.Id -eq 'missing-proof' -and $text -notmatch 'did not report the MXC proof') {
             throw "E2E hang protection must preserve required proof assertions: $output"
         }
     }
