@@ -11,6 +11,7 @@ using Microsoft.UI.Xaml.Input;
 using OpenClaw.Chat;
 using OpenClaw.Shared;
 using OpenClawTray.Chat;
+using OpenClawTray.Helpers;
 using OpenClawTray.Presentation.Adapters;
 using static Microsoft.UI.Reactor.Factories;
 using static OpenClaw.Tray.UITests.TestSupport;
@@ -25,7 +26,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
     [InlineData(480)]
     public async Task PanelOpenClosePreservesProductionTimelineComposerSelectionAndScroll(int width)
     {
-        await WithRootAsync(width, async (surface, panels, _) =>
+        await WithRootAsync(width, async (surface, panels, _, _) =>
         {
             TextBox? input = null;
             ItemsView? timeline = null;
@@ -63,8 +64,9 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 Assert.InRange(panel.ActualWidth, 280, width);
                 var close = Find<Button>(surface, "ConversationPanelClose");
                 Assert.Equal("Close panel", AutomationProperties.GetName(close));
-                Invoke(close);
             });
+            await CaptureAsync(surface, $"Panel-{width}-open");
+            await ui.RunOnUIAsync(() => Invoke(Find<Button>(surface, "ConversationPanelClose")));
             await SettleAsync();
             await ui.RunOnUIAsync(() =>
             {
@@ -77,13 +79,14 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 Assert.Equal(8, input.SelectionLength);
                 Assert.Same(input, FocusManager.GetFocusedElement(surface.XamlRoot));
             });
+            await CaptureAsync(surface, $"Panel-{width}-closed");
         });
     }
 
     [Fact]
     public async Task SuspendedHostReplacesPanelBodyWithWaitingWithoutDiscardingSelection()
     {
-        await WithRootAsync(960, async (surface, panels, _) =>
+        await WithRootAsync(960, async (surface, panels, _, _) =>
         {
             await ui.RunOnUIAsync(() => Assert.True(panels.Open("details")));
             await SettleAsync();
@@ -109,7 +112,7 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
     [Fact]
     public async Task NativeToolActionUpdatesLiveOutputAndRequiresReopenAfterHistoryCommit()
     {
-        await WithRootAsync(960, async (surface, panels, provider) =>
+        await WithRootAsync(960, async (surface, panels, provider, _) =>
         {
             await ui.RunOnUIAsync(() => Find<Expander>(surface, "ChatToolCall_tool_entry").IsExpanded = true);
             await SettleAsync();
@@ -125,8 +128,9 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
             await ui.RunOnUIAsync(() =>
             {
                 Assert.Equal("latest <script>literal text</script>", DetailText(surface));
-                provider.PublishOutput("committed history output", historyRevision: 6);
             });
+            await CaptureAsync(surface, "Tool-details-live");
+            await ui.RunOnUIAsync(() => provider.PublishOutput("committed history output", historyRevision: 6));
             await SettleAsync();
             await ui.RunOnUIAsync(() =>
             {
@@ -135,10 +139,12 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
                 Assert.Contains(FindDescendants<TextBlock>(panel), text => text.Text ==
                     "These details are no longer current. Reopen details from the current tool.");
                 Assert.Equal(string.Empty, DetailText(surface));
-                Invoke(Find<Button>(surface, "ChatToolOpenDetails_tool_entry"));
             });
+            await CaptureAsync(surface, "Tool-details-history-unavailable");
+            await ui.RunOnUIAsync(() => Invoke(Find<Button>(surface, "ChatToolOpenDetails_tool_entry")));
             await SettleAsync();
             await ui.RunOnUIAsync(() => Assert.Equal("committed history output", DetailText(surface)));
+            await CaptureAsync(surface, "Tool-details-reopened");
         }, dense: false);
     }
 
@@ -151,31 +157,57 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
     [Fact]
     public async Task UnavailableAccountExplainsWhyPanelsCannotOpenAndKeepsComposerUsable()
     {
-        await WithRootAsync(960, async (surface, panels, _) =>
+        await WithRootAsync(960, async (surface, panels, _, changeAccountStatus) =>
         {
+            TextBlock? originalNotice = null;
             await ui.RunOnUIAsync(() =>
             {
                 var notice = Find<TextBlock>(surface, "ConversationPanelAccountStatus");
+                originalNotice = notice;
                 Assert.Equal(Visibility.Visible, notice.Visibility);
                 Assert.Equal("This Gateway cannot verify the operator account. Conversation panels are unavailable.", notice.Text);
+                Assert.Equal(notice.Text, AutomationProperties.GetName(notice));
+                Assert.Equal(AutomationLiveSetting.Polite, AutomationProperties.GetLiveSetting(notice));
                 Assert.True(Find<TextBox>(surface, "ChatComposerInput").IsEnabled);
                 Assert.False(panels.Open("details"));
                 Assert.Null(panels.Context);
                 Assert.Empty(panels.Layout.OpenPanels);
             });
+            await CaptureAsync(surface, "Account-unavailable");
+            await ui.RunOnUIAsync(() => changeAccountStatus(ChatConversationAccountStatus.Loading));
+            await SettleAsync();
+            await ui.RunOnUIAsync(() =>
+            {
+                var notice = Find<TextBlock>(surface, "ConversationPanelAccountStatus");
+                Assert.Same(originalNotice, notice);
+                Assert.Equal("Verifying the operator account for this conversation.", notice.Text);
+                Assert.Equal(notice.Text, AutomationProperties.GetName(notice));
+            });
+            await CaptureAsync(surface, "Account-loading");
+            await ui.RunOnUIAsync(() => changeAccountStatus(ChatConversationAccountStatus.RequiresReconnect));
+            await SettleAsync();
+            await ui.RunOnUIAsync(() =>
+            {
+                var notice = Find<TextBlock>(surface, "ConversationPanelAccountStatus");
+                Assert.Same(originalNotice, notice);
+                Assert.Equal("The operator account changed. Reconnect before opening conversation panels.", notice.Text);
+                Assert.Equal(notice.Text, AutomationProperties.GetName(notice));
+            });
+            await CaptureAsync(surface, "Account-reconnect-required");
         }, unverifiedAccount: true);
     }
 
     private async Task WithRootAsync(
-        int width, Func<Border, ChatConversationPanelState, PanelProvider, Task> proof, bool dense = true,
+        int width, Func<Border, ChatConversationPanelState, PanelProvider, Action<ChatConversationAccountStatus>, Task> proof, bool dense = true,
         bool unverifiedAccount = false)
     {
         await ui.ResetContainerAsync();
         var provider = new PanelProvider(dense);
         var client = DispatchProxy.Create<IOperatorGatewayClient, ReadyClient>();
-        using var panels = new ChatConversationPanelState(_ => unverifiedAccount ? null : ChatConversationContext.Capture(
+        var accountStatus = unverifiedAccount ? ChatConversationAccountStatus.Unavailable : ChatConversationAccountStatus.Known;
+        using var panels = new ChatConversationPanelState(_ => accountStatus != ChatConversationAccountStatus.Known ? null : ChatConversationContext.Capture(
             "gateway-proof", client, new() { Key = "one", AgentId = "writing", SessionId = "session-one" }, "profile-proof"),
-            accountStatus: () => unverifiedAccount ? ChatConversationAccountStatus.Unavailable : ChatConversationAccountStatus.Known);
+            accountStatus: () => accountStatus);
         Border? surface = null;
         Window? window = null;
         ReactorHostControl? host = null;
@@ -185,25 +217,35 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
         {
             await ui.RunOnUIAsync(() =>
             {
+                LocalizationHelper.SetLanguageOverride("en-us");
                 theme = new("Light");
                 OpenClawReactorChatRoot.SetToolCallsVisible(true);
                 composer = new ChatComposerFactory(new WinUIDispatcher(ui.Dispatcher)).Create(
                     provider, new ChatComposerHostActions(null, null, null, null), initialSpeakerMuted: true);
                 composer.ViewModel.SetDraft("Keep this conversation draft.");
-                host = new ReactorHostControl();
+                host = new ReactorHostControl { RequestedTheme = theme.ElementTheme };
                 host.Mount(_ => Component<OpenClawReactorChatRoot, OpenClawReactorChatRootProps>(
                     new(provider, composer, InitialThreadId: "one", Panels: panels)));
-                surface = new Border { Width = width, Height = 720, Child = host };
+                surface = new Border { Width = width, Height = 720, Child = host, RequestedTheme = theme.ElementTheme };
                 window = new Window { Content = surface };
                 window.AppWindow.MoveAndResize(new(-32000, -32000, 1200, 900));
                 window.Activate();
+                RecordOwnedWindow(window);
             });
             await SettleAsync();
             await ui.RunOnUIAsync(() => WaitForRenderedConditionAsync(
                 () => FindDescendants<TextBox>(surface!).Any(control =>
-                    AutomationProperties.GetAutomationId(control) == "ChatComposerInput") && (unverifiedAccount || panels.IsReady),
+                    AutomationProperties.GetAutomationId(control) == "ChatComposerInput") &&
+                    (unverifiedAccount
+                        ? FindDescendants<TextBlock>(surface!).Any(text => text.Text ==
+                            "This Gateway cannot verify the operator account. Conversation panels are unavailable.")
+                        : panels.IsReady),
                 "production conversation panel host"));
-            await proof(surface!, panels, provider);
+            await proof(surface!, panels, provider, status =>
+            {
+                accountStatus = status;
+                panels.Refresh();
+            });
         }
         finally
         {
@@ -217,6 +259,72 @@ public sealed class ConversationPanelHostProofTests(UIThreadFixture ui)
             });
             await provider.DisposeAsync();
         }
+    }
+
+    private static void RecordOwnedWindow(Window window)
+    {
+        if (Environment.GetEnvironmentVariable("OPENCLAW_CONVERSATION_PANEL_PROOF_DIR") is not { Length: > 0 } directory)
+            return;
+        Directory.CreateDirectory(directory);
+        using var process = System.Diagnostics.Process.GetCurrentProcess();
+        var handle = WinRT.Interop.WindowNative.GetWindowHandle(window);
+        var metadata = new
+        {
+            RunId = Path.GetFileName(directory),
+            ProcessId = process.Id,
+            StartedUtc = process.StartTime.ToUniversalTime(),
+            Executable = Environment.ProcessPath,
+            CommandLine = Environment.CommandLine,
+            Window = handle.ToInt64(),
+            Port = (int?)null,
+            Data = Environment.GetEnvironmentVariable("OPENCLAW_TRAY_DATA_DIR"),
+            AppData = Environment.GetEnvironmentVariable("OPENCLAW_TRAY_APPDATA_DIR"),
+            LocalAppData = Environment.GetEnvironmentVariable("OPENCLAW_TRAY_LOCALAPPDATA_DIR"),
+            LegacyLocal = Environment.GetEnvironmentVariable("OPENCLAW_TRAY_LOCAL_DATA_DIR"),
+            SyntheticProvider = true,
+            RealGateway = false,
+            Binaries = new[]
+            {
+                typeof(ConversationPanelHostProofTests).Assembly.Location,
+                typeof(OpenClawReactorChatRoot).Assembly.Location,
+                typeof(ReactorHostControl).Assembly.Location
+            }.Select(path => new
+            {
+                Path = path,
+                Sha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path)))
+            }).ToArray()
+        };
+        File.WriteAllText(Path.Combine(directory, $"owned-window-{handle.ToInt64()}.json"),
+            System.Text.Json.JsonSerializer.Serialize(metadata));
+    }
+
+    private async Task CaptureAsync(FrameworkElement surface, string name)
+    {
+        if (Environment.GetEnvironmentVariable("OPENCLAW_VISUAL_TEST") != "1") return;
+        var directory = Environment.GetEnvironmentVariable("OPENCLAW_VISUAL_TEST_DIR")
+            ?? throw new InvalidOperationException("A proof capture directory is required.");
+        await ui.RunOnUIAsync(async () =>
+        {
+            await VisualTestCapture.CaptureAsync(surface, name);
+            var path = Path.Combine(directory, name, "capture-00.png");
+            Assert.True(File.Exists(path), $"Missing current-state capture: {path}");
+            using var bitmap = new System.Drawing.Bitmap(path);
+            Assert.True(bitmap.Width >= surface.ActualWidth && bitmap.Height >= surface.ActualHeight,
+                "The capture must contain the complete asserted component root.");
+            var colors = new HashSet<int>();
+            for (var y = 0; y < bitmap.Height; y += Math.Max(1, bitmap.Height / 64))
+                for (var x = 0; x < bitmap.Width; x += Math.Max(1, bitmap.Width / 64))
+                    colors.Add(bitmap.GetPixel(x, y).ToArgb());
+            Assert.True(colors.Count > 8, "Blank or unrendered proof frames are not evidence.");
+            File.WriteAllText(Path.Combine(directory, name, "capture.json"),
+                System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    Sha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))),
+                    bitmap.Width, bitmap.Height, RootWidth = surface.ActualWidth, RootHeight = surface.ActualHeight,
+                    ColorSamples = colors.Count, Theme = surface.ActualTheme.ToString(),
+                    SyntheticProvider = true, CompositorCapture = false
+                }));
+        });
     }
 
     private async Task SettleAsync()
