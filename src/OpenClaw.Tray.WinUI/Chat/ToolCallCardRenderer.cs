@@ -6,6 +6,7 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Markup;
 using Microsoft.UI.Xaml.Media;
 using OpenClaw.Chat;
 using OpenClawTray.Helpers;
@@ -23,6 +24,8 @@ internal static class ToolCallCardRenderer
 
     private static readonly ConditionalWeakTable<Expander, ActivityExpanderBinding>
         s_activityBindings = new();
+    private static readonly ConditionalWeakTable<ResourceDictionary, CaptionTypography>
+        s_captionTypography = new();
 
     public static Element BuildStandalone(
         ChatTimelinePresentationContext props,
@@ -146,19 +149,7 @@ internal static class ToolCallCardRenderer
 
     private static Element BuildDetailSection(string label, string content)
     {
-        var captionStyle = (Style)Application.Current.Resources["CaptionTextBlockStyle"];
-        var captionWeight = CaptionStyleValue<global::Windows.UI.Text.FontWeight>(
-            captionStyle, Microsoft.UI.Xaml.Controls.TextBlock.FontWeightProperty);
-        var captionFamily = CaptionStyleValue<FontFamily>(
-            captionStyle, Microsoft.UI.Xaml.Controls.TextBlock.FontFamilyProperty);
-        var captionWrapping = CaptionStyleValue<TextWrapping>(
-            captionStyle, Microsoft.UI.Xaml.Controls.TextBlock.TextWrappingProperty);
-        var captionTrimming = CaptionStyleValue<TextTrimming>(
-            captionStyle, Microsoft.UI.Xaml.Controls.TextBlock.TextTrimmingProperty);
-        var captionLineStacking = CaptionStyleValue<LineStackingStrategy>(
-            captionStyle, Microsoft.UI.Xaml.Controls.TextBlock.LineStackingStrategyProperty);
-        var captionLineBounds = CaptionStyleValue<TextLineBounds>(
-            captionStyle, Microsoft.UI.Xaml.Controls.TextBlock.TextLineBoundsProperty);
+        var caption = s_captionTypography.GetValue(Application.Current.Resources, ReadCaptionTypography);
 
         var body = RichTextBlock(content)
             .Set(text =>
@@ -175,15 +166,15 @@ internal static class ToolCallCardRenderer
             4,
             TextBlock(label)
                 // Theme.Ref owns a generated style, so keep native typography in the element record.
-                .FontSize(ThemeResource.Double("CaptionTextBlockFontSize"))
-                .FontWeight(captionWeight)
-                .FontFamily(captionFamily)
-                .TextWrapping(captionWrapping)
-                .TextTrimming(captionTrimming)
+                .FontSize(caption.Size)
+                .FontWeight(caption.Weight)
+                .FontFamily(caption.Family)
+                .TextWrapping(caption.Wrapping)
+                .TextTrimming(caption.Trimming)
                 .Set(text =>
                 {
-                    text.LineStackingStrategy = captionLineStacking;
-                    text.TextLineBounds = captionLineBounds;
+                    text.LineStackingStrategy = caption.LineStacking;
+                    text.TextLineBounds = caption.LineBounds;
                 })
                 .Foreground(Theme.Ref("TextFillColorSecondaryBrush")),
             ScrollViewer(body)
@@ -195,6 +186,28 @@ internal static class ToolCallCardRenderer
                 .MaxHeight(240));
     }
 
+    internal static CaptionTypography ReadCaptionTypography(ResourceDictionary resources)
+    {
+        if (!resources.TryGetValue("CaptionTextBlockStyle", out var value) || value is not Style style)
+            throw new InvalidOperationException("The native CaptionTextBlockStyle resource is unavailable.");
+        if (!resources.TryGetValue("CaptionTextBlockFontSize", out var sizeValue) ||
+            sizeValue is not double size || !double.IsFinite(size) || size <= 0)
+        {
+            throw new InvalidOperationException("The native CaptionTextBlockFontSize resource is unavailable or invalid.");
+        }
+
+        return new(
+            size,
+            CaptionStyleValue<global::Windows.UI.Text.FontWeight>(
+                style, Microsoft.UI.Xaml.Controls.TextBlock.FontWeightProperty),
+            CaptionStyleValue<FontFamily>(style, Microsoft.UI.Xaml.Controls.TextBlock.FontFamilyProperty),
+            CaptionStyleValue<TextWrapping>(style, Microsoft.UI.Xaml.Controls.TextBlock.TextWrappingProperty),
+            CaptionStyleValue<TextTrimming>(style, Microsoft.UI.Xaml.Controls.TextBlock.TextTrimmingProperty),
+            CaptionStyleValue<LineStackingStrategy>(
+                style, Microsoft.UI.Xaml.Controls.TextBlock.LineStackingStrategyProperty),
+            CaptionStyleValue<TextLineBounds>(style, Microsoft.UI.Xaml.Controls.TextBlock.TextLineBoundsProperty));
+    }
+
     private static T CaptionStyleValue<T>(Style style, DependencyProperty property)
     {
         for (Style? current = style; current is not null; current = current.BasedOn)
@@ -203,14 +216,24 @@ internal static class ToolCallCardRenderer
                 .LastOrDefault(item => item.Property == property);
             if (setter is null)
                 continue;
-            return setter.Value is T value
-                ? value
-                : throw new InvalidOperationException(
-                    $"The native caption style has an unsupported {typeof(T).Name} value.");
+            var converted = setter.Value is T typed
+                ? typed
+                : XamlBindingHelper.ConvertValue(typeof(T), setter.Value);
+            return converted is T value ? value
+                : throw new InvalidOperationException($"The native caption style has an unsupported {typeof(T).Name} value.");
         }
         throw new InvalidOperationException(
             $"The native caption style does not define {typeof(T).Name}.");
     }
+
+    internal sealed record CaptionTypography(
+        double Size,
+        global::Windows.UI.Text.FontWeight Weight,
+        FontFamily Family,
+        TextWrapping Wrapping,
+        TextTrimming Trimming,
+        LineStackingStrategy LineStacking,
+        TextLineBounds LineBounds);
 
     private static string FormatToolDisplayArgs(System.Text.Json.Nodes.JsonObject args)
     {
