@@ -8077,4 +8077,10 @@
     <value>此会话已不再为空，因此已取消待定的位置选择。请检查会话并重新发送，以在当前位置继续。</value>
   </data>
   <data name="SettingsPage_AppInfoSupport.Content" xml:space="preserve"><value>获取支持</value></data>
+  <data name="Chat_Panel_Close" xml:space="preserve"><value>关闭面板</value></data>
+  <data name="Chat_Panel_Show" xml:space="preserve"><value>显示对话面板</value></data>
+  <data name="Chat_Panel_Resize" xml:space="preserve"><value>调整面板大小。使用向左键和向右键调整宽度。</value></data>
+  <data name="Chat_Panel_WidthFormat" xml:space="preserve"><value>宽度为 {0} 像素</value></data>
+  <data name="Chat_Panel_Waiting" xml:space="preserve"><value>正在等待此对话连接。已保留您的面板选择。</value></data>
+  <data name="Chat_Panel_Unavailable" xml:space="preserve"><value>此内容在当前对话中已不可用。</value></data>
 </root>

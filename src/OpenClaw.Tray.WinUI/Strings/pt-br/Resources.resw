@@ -8129,4 +8129,10 @@ Após a inscrição, volte para Configurações &gt; Windows Update e verifique 
     <value>Esta sessão não está mais vazia, então a seleção de local pendente foi cancelada. Verifique a sessão e envie novamente para continuar no local atual.</value>
   </data>
   <data name="SettingsPage_AppInfoSupport.Content" xml:space="preserve"><value>Obter suporte</value></data>
+  <data name="Chat_Panel_Close" xml:space="preserve"><value>Fechar painel</value></data>
+  <data name="Chat_Panel_Show" xml:space="preserve"><value>Mostrar painel da conversa</value></data>
+  <data name="Chat_Panel_Resize" xml:space="preserve"><value>Redimensionar painel. Use Esquerda e Direita para ajustar a largura.</value></data>
+  <data name="Chat_Panel_WidthFormat" xml:space="preserve"><value>{0} pixels de largura</value></data>
+  <data name="Chat_Panel_Waiting" xml:space="preserve"><value>Aguardando a conexão desta conversa. Sua seleção de painel foi mantida.</value></data>
+  <data name="Chat_Panel_Unavailable" xml:space="preserve"><value>Este conteúdo não está mais disponível nesta conversa.</value></data>
 </root>

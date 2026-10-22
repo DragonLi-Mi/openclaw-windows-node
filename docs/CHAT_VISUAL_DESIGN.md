@@ -76,6 +76,27 @@ use the card fill above that content layer.
 
 ## Controls and states
 
+Conversation side panels share one native host beside the existing timeline and
+composer. `ChatConversationPanelState` retains only panel selection and width
+for the exact Gateway record, accepted signing identity and session key/id/agent.
+Changing connection epoch revokes pending work without treating the retained
+layout as authorization. A session id changing from unknown to known is an
+identity change, not a wildcard match.
+
+The conversation remains mounted while panels open, close or resize. At widths
+below 652 pixels, the panel fills the conversation area and the retained
+conversation is collapsed, not reparented. Close or Escape from inside the panel
+returns focus to its opener; wide layouts support F6 between panes. The resize
+grip supports pointer drag, Left/Right and Home/End. Panel transitions add no
+custom animation. Content owners supply their own scrolling and loading/error
+states; the host shows a connection-wait message instead of stale content.
+
+This foundation does not turn the agent Workspace page into conversation Files,
+resolve a filesystem root from chat labels, or reuse the global node Canvas.
+Files requires the selected session's Gateway-provided source and conflict-safe
+save contract. Hosted Canvas content requires its separate isolated content
+boundary; a native panel alone does not establish Canvas parity.
+
 Queued submissions leave the textbox and remain after the current turn as normal
 right-aligned user bubbles. A transparent `ChatPendingUserBrush`, subtle `ChatStrokeBrush`
 outline, and slightly faded `ChatSecondaryTextBrush` distinguish them from sent messages without

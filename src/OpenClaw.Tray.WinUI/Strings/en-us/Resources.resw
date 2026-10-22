@@ -8144,4 +8144,10 @@ After enrolling, return to Settings &gt; Windows Update and check for updates. I
     <value>This session is no longer empty, so the pending location selection was cancelled. Review the session and send again to continue in its current location.</value>
   </data>
   <data name="SettingsPage_AppInfoSupport.Content" xml:space="preserve"><value>Get support</value></data>
+  <data name="Chat_Panel_Close" xml:space="preserve"><value>Close panel</value></data>
+  <data name="Chat_Panel_Show" xml:space="preserve"><value>Show conversation panel</value></data>
+  <data name="Chat_Panel_Resize" xml:space="preserve"><value>Resize panel. Use Left and Right to adjust width.</value></data>
+  <data name="Chat_Panel_WidthFormat" xml:space="preserve"><value>{0} pixels wide</value></data>
+  <data name="Chat_Panel_Waiting" xml:space="preserve"><value>Waiting for this conversation to connect. Your panel selection is retained.</value></data>
+  <data name="Chat_Panel_Unavailable" xml:space="preserve"><value>This content is no longer available in this conversation.</value></data>
 </root>

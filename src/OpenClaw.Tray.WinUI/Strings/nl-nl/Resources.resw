@@ -8078,4 +8078,10 @@ Ga na inschrijving terug naar Instellingen &gt; Windows Update en controleer op 
     <value>Deze sessie is niet meer leeg, dus de wachtende locatiekeuze is geannuleerd. Controleer de sessie en verzend opnieuw om op de huidige locatie door te gaan.</value>
   </data>
   <data name="SettingsPage_AppInfoSupport.Content" xml:space="preserve"><value>Ondersteuning krijgen</value></data>
+  <data name="Chat_Panel_Close" xml:space="preserve"><value>Paneel sluiten</value></data>
+  <data name="Chat_Panel_Show" xml:space="preserve"><value>Gesprekspaneel tonen</value></data>
+  <data name="Chat_Panel_Resize" xml:space="preserve"><value>Paneelgrootte wijzigen. Gebruik Links en Rechts om de breedte aan te passen.</value></data>
+  <data name="Chat_Panel_WidthFormat" xml:space="preserve"><value>{0} pixels breed</value></data>
+  <data name="Chat_Panel_Waiting" xml:space="preserve"><value>Wachten tot dit gesprek verbinding maakt. Uw paneelselectie blijft behouden.</value></data>
+  <data name="Chat_Panel_Unavailable" xml:space="preserve"><value>Deze inhoud is niet meer beschikbaar in dit gesprek.</value></data>
 </root>
