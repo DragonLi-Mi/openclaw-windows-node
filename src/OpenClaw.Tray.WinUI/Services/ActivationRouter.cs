@@ -43,21 +43,21 @@ internal sealed class ActivationRouter : IAsyncDisposable
 
     public ActivationPlan PlanLaunch(LaunchActivationInput input)
     {
-        if (input.SetupShownDuringStartup)
-            return new ActivationPlan.Ignore();
-
-        var candidate = ResolveExplicitLaunchCandidate(input);
+        var candidate = ResolveLaunchCandidate(input);
         return candidate == null ? new ActivationPlan.Ignore() : PlanFromUri(candidate);
     }
+
+    internal Task<bool> CheckOrdinaryStartupUpdateAsync(LaunchActivationInput input, Func<Task<bool>> check) =>
+        PlanLaunch(input) is ActivationPlan.Dispatch { Route: ActivationRoute.CompleteAiSetup { Handle: not null } }
+            ? Task.FromResult(true)
+            : check();
 
     [SupportedOSPlatform("windows")]
     public async Task<bool> ForwardLaunchToPrimaryAsync(
         LaunchActivationInput input,
         CancellationToken cancellationToken)
     {
-        var candidate = ResolveExplicitLaunchCandidate(input);
-        if (candidate == null && IsNoArgumentLaunch(input))
-            candidate = $"{_protocolScheme}://hub";
+        var candidate = ResolveLaunchCandidate(input);
 
         if (candidate == null)
             return false;
@@ -74,20 +74,37 @@ internal sealed class ActivationRouter : IAsyncDisposable
         return false;
     }
 
-    private string? ResolveExplicitLaunchCandidate(LaunchActivationInput input)
+    private string? ResolveLaunchCandidate(LaunchActivationInput input)
     {
+        if (input.SetupShownDuringStartup)
+            return null;
+
         if (!string.IsNullOrEmpty(input.ProtocolUri))
             return input.ProtocolUri;
 
         if (input.CommandLineArguments.Count > 1 && IsDeepLinkArg(input.CommandLineArguments[1]))
             return input.CommandLineArguments[1];
 
-        return string.Equals(input.PostSetupLaunch, "chat", StringComparison.OrdinalIgnoreCase)
-            ? $"{_protocolScheme}://chat"
-            : null;
+        if (SetupDashboardHandoff.IsHandoffArgument(input.PostSetupLaunch))
+            return $"{_protocolScheme}://{SetupDashboardHandoff.Route}?handle={Uri.EscapeDataString(
+                SetupDashboardHandoff.ParseHandle(input.PostSetupLaunch) ?? "invalid")}";
+
+        if (GetPostSetupLaunchPath(input.PostSetupLaunch) is { } path)
+            return $"{_protocolScheme}://{path}";
+
+        return IsNoArgumentLaunch(input) ? $"{_protocolScheme}://hub" : null;
     }
 
+    internal static string? GetPostSetupLaunchPath(string? target) => target?.ToLowerInvariant() switch
+    {
+        "chat" => "chat",
+        "settings" => "settings",
+        "connection" => "commandcenter",
+        _ => null,
+    };
+
     private static bool IsNoArgumentLaunch(LaunchActivationInput input) =>
+        input.Kind == LaunchActivationKind.Launch &&
         string.IsNullOrEmpty(input.ProtocolUri) &&
         input.CommandLineArguments.Count <= 1 &&
         string.IsNullOrEmpty(input.PostSetupLaunch);
@@ -442,6 +459,10 @@ internal sealed class ActivationRouter : IAsyncDisposable
             Logger.Warn($"Rejected invalid deep link: {redacted}");
             return new ActivationPlan.Ignore();
         }
+
+        if (string.Equals(result.Path, SetupDashboardHandoff.Route, StringComparison.OrdinalIgnoreCase))
+            return new ActivationPlan.Dispatch(new ActivationRoute.CompleteAiSetup(
+                SetupDashboardHandoff.ParseHandle(result.Parameters.GetValueOrDefault("handle"))));
 
         var route = DeepLinkHandler.PlanRoute(uri, _protocolScheme);
         if (route == null)

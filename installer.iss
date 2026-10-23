@@ -118,6 +118,16 @@ Source: "src\OpenClaw.Connection\Migration\MigrationRecordCodec.cs"; DestDir: "{
 Source: "{#vcRedist}"; DestDir: "{tmp}"; DestName: "vc_redist.exe"; Flags: deleteafterinstall; AfterInstall: InstallVCRuntime
 #endif
 
+[InstallDelete]
+; Exact obsolete binaries shipped by the retired npm bridge. Do not remove sibling DLLs or directories.
+Type: files; Name: "{app}\tools\mxc\x64\wxc-exec.exe"; Check: LegacyMxcPathIsOrdinary(ExpandConstant('{app}\tools\mxc\x64\wxc-exec.exe'))
+Type: files; Name: "{app}\tools\mxc\x64\wslcsdk.dll"; Check: LegacyMxcPathIsOrdinary(ExpandConstant('{app}\tools\mxc\x64\wslcsdk.dll'))
+Type: files; Name: "{app}\tools\mxc\arm64\wxc-exec.exe"; Check: LegacyMxcPathIsOrdinary(ExpandConstant('{app}\tools\mxc\arm64\wxc-exec.exe'))
+Type: files; Name: "{app}\tools\mxc\arm64\wslcsdk.dll"; Check: LegacyMxcPathIsOrdinary(ExpandConstant('{app}\tools\mxc\arm64\wslcsdk.dll'))
+Type: dirifempty; Name: "{app}\tools\mxc\x64"; Check: LegacyMxcPathIsOrdinary(ExpandConstant('{app}\tools\mxc\x64'))
+Type: dirifempty; Name: "{app}\tools\mxc\arm64"; Check: LegacyMxcPathIsOrdinary(ExpandConstant('{app}\tools\mxc\arm64'))
+Type: dirifempty; Name: "{app}\tools\mxc"; Check: LegacyMxcPathIsOrdinary(ExpandConstant('{app}\tools\mxc'))
+
 [Registry]
 Root: HKCU; Subkey: "Software\Classes\{#MyProtocol}"; ValueType: string; ValueName: ""; ValueData: "URL:OpenClaw Protocol"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\{#MyProtocol}"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
@@ -132,7 +142,7 @@ Name: "{group}\OpenClaw Chat"; Filename: "{app}\{#MyAppExeName}"; Parameters: "{
 Name: "{group}\Check for Updates"; Filename: "{app}\{#MyAppExeName}"; Parameters: "{#MyProtocol}://check-updates"; IconFilename: "{app}\{#MyAppExeName}"; AppUserModelID: "{#MyAppAumid}"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; AppUserModelID: "{#MyAppAumid}"
-Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: startupicon; AppUserModelID: "{#MyAppAumid}"
+Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Parameters: "--background"; Tasks: startupicon; AppUserModelID: "{#MyAppAumid}"
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent; Check: ShouldLaunchTray
@@ -209,6 +219,13 @@ begin
     Path := Parent;
   end;
   Result := True;
+end;
+
+function LegacyMxcPathIsOrdinary(Path: String): Boolean;
+begin
+  Result := MigrationPathIsOrdinary(Path);
+  if not Result then
+    Log('Skipping legacy MXC cleanup: path is not ordinary or could not be checked.');
 end;
 
 function InitializeUninstall: Boolean;
@@ -442,6 +459,66 @@ begin
       'Remove Local Gateway before uninstalling. If OpenClaw is already removed, run:' + #13#10#13#10 +
       'wsl --unregister {#MyDistroName}',
       mbInformation, MB_OK);
+end;
+
+procedure MigrateLegacyBackgroundLaunch;
+var
+  ExecutablePath: string;
+  RunCommand: string;
+  ActionPath: string;
+  ActionArguments: string;
+  Scheduler: Variant;
+  Task: Variant;
+  Action: Variant;
+  ResultCode: Integer;
+begin
+  ExecutablePath := ExpandConstant('{app}\{#MyAppExeName}');
+  { Only migrate the exact old argument-free registration for this installation. }
+  if RegQueryStringValue(HKCU, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Run',
+      '{#MyAutoStartName}', RunCommand) then
+  begin
+    if CompareText(RemoveQuotes(RunCommand), ExecutablePath) = 0 then
+    begin
+      if RegWriteStringValue(HKCU, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Run',
+          '{#MyAutoStartName}', AddQuotes(ExecutablePath) + ' --background') then
+        Log('Migrated existing Run registration to background launch.')
+      else
+        Log('Could not migrate Run registration. Re-enable Start with Windows in Settings.');
+    end;
+  end;
+
+  try
+    Scheduler := CreateOleObject('Schedule.Service');
+    Scheduler.Connect;
+    Task := Scheduler.GetFolder('\').GetTask('{#MyStartupTaskName}');
+    if Task.Definition.Actions.Count <> 1 then
+      Exit;
+    Action := Task.Definition.Actions.Item(1);
+    { Only executable actions expose Path and Arguments. Other action types
+      fail the guarded lookup below without changing the task. }
+    ActionPath := Action.Path;
+    ActionArguments := Action.Arguments;
+    if (CompareText(RemoveQuotes(ActionPath), ExecutablePath) <> 0) or
+        (Trim(ActionArguments) <> '') then
+      Exit;
+
+    { /Change preserves the existing task's triggers, principal, and enabled state. }
+    if Exec(ExpandConstant('{sys}\schtasks.exe'),
+        '/Change /TN ' + AddQuotes('{#MyStartupTaskName}') +
+        ' /TR ' + AddQuotes('\"' + ExecutablePath + '\" --background'),
+        '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+      Log('Migrated existing scheduled task to background launch.')
+    else
+      Log('Could not migrate startup task. Re-enable Start with Windows in Settings.');
+  except
+    Log('No migratable startup task: ' + GetExceptionMessage);
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    MigrateLegacyBackgroundLaunch;
 end;
 
 procedure EnsureLocalGatewayCleanupChoice;
