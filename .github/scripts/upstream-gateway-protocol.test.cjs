@@ -508,7 +508,7 @@ test("live-shaped tooling/source discrepancy collects partial evidence without r
 // exact npm tarball validation. Only external transports are replaced.
 function boundary(t, value = report()) {
   const artifact = tarball(value.protocol.schema);
-  const state = { issues: [], pulls: [], tasks: [], timeline: [], calls: [], override: null,
+  const state = { issues: [], pulls: [], tasks: [], comments: [], calls: [], override: null,
     tracker: { number: 1829, title: "Gateway capability tracking", state: "open", labels: [], assignees: [],
       body: "<!-- upstream-gateway-tracker:v1 -->\n<!-- upstream-gateway-owned:begin -->\nNot activated.\n<!-- upstream-gateway-owned:end -->" },
   };
@@ -521,7 +521,7 @@ function boundary(t, value = report()) {
       dist: { integrity: artifact.integrity,
         tarball: "https://registry.npmjs.org/@openclaw/gateway-protocol/-/gateway-protocol-" + version + ".tgz" } }));
   });
-  const github = { async request(route, args) {
+  const transport = async (route, args) => {
     state.calls.push({ route, args: structuredClone(args) });
     if (state.override) { const result = await state.override(route, args); if (result) return result; }
     let data;
@@ -538,7 +538,7 @@ function boundary(t, value = report()) {
       case "GET /repos/{owner}/{repo}/pulls": data = state.pulls.filter((item) => item.state === "open"); break;
       case "GET /repos/{owner}/{repo}/issues/{issue_number}":
         data = args.issue_number === 1829 ? state.tracker : state.issues.find((item) => item.number === args.issue_number); break;
-      case "GET /repos/{owner}/{repo}/issues/{issue_number}/timeline": data = state.timeline; break;
+      case "GET /repos/{owner}/{repo}/issues/{issue_number}/comments": data = state.comments; break;
       case "GET /repos/{owner}/{repo}/pulls/{pull_number}": data = state.pulls.find((item) => item.number === args.pull_number); break;
       case "GET /repos/{owner}/{repo}/labels/{name}": data = {}; break;
       case "POST /repos/{owner}/{repo}/issues":
@@ -559,7 +559,7 @@ function boundary(t, value = report()) {
       case "POST /agents/repos/{owner}/{repo}/tasks":
         assert.equal(args.create_pull_request, false);
         assert.equal(args.base_ref, "main");
-        assert.equal(args.headers.authorization, "Bearer fixture-token");
+        assert.equal(args.headers.authorization, undefined, "auth belongs to the client, never a per-request header");
         assert.match(args.prompt, /independently|Independently/);
         assert.match(args.prompt, /Do not create any PR for supported/);
         data = { id: "d7832e67-83d9-4b96-93c0-59f0392494dc", state: "queued", created_at: "2026-10-22T00:00:00.123456789Z",
@@ -568,152 +568,141 @@ function boundary(t, value = report()) {
       default: assert.fail("Unexpected API request: " + route);
     }
     return { data: structuredClone(data), status };
+  };
+  const github = { request(route, args) {
+    assert.ok(!route.includes("/agents/"), "workflow-token client must never call Agent Tasks API");
+    return transport(route, args);
   } };
-  return { state, github,
+  const copilot = { request(route, args) {
+    assert.ok(route.includes("/agents/"), "personal-token client must never read/write repository issues");
+    return transport(route, args);
+  } };
+  return { state, github, copilot,
     publish: (reportValue = value, extra = {}) => publisher.publish({ github, context, core, report: reportValue, ...extra }),
-    handoff: (issueNumber = 1, extra = {}) => publisher.handoff({ github, context, core, report: value, issueNumber,
-      copilotToken: "fixture-token", now: Date.parse("2026-10-22T01:00:00Z"), ...extra }),
+    handoff: (issueNumber = 1829, extra = {}) => publisher.handoff({ github, copilot, context, core, report: value, issueNumber, now: Date.parse("2026-10-22T01:00:00Z"), ...extra }),
   };
 }
 const writes = (state) => state.calls.filter((call) => !call.route.startsWith("GET "));
 
-test("public workflow path reuses the fixed tracker and creates a no-PR task; repeated publication metadata is quiet", async (t) => {
-  const value = report();
-  const h = boundary(t, value);
+const trackerState = (h) => JSON.parse(h.state.tracker.body.match(/<!-- upstream-gateway-state:v2:(.*) -->/)[1]);
+function editState(h, edit) {
+  const state = trackerState(h);
+  edit(state);
+  h.state.tracker.body = h.state.tracker.body.replace(/<!-- upstream-gateway-state:v2:.* -->/,
+    "<!-- upstream-gateway-state:v2:" + JSON.stringify(state) + " -->");
+}
+function dispositionComment(h, result = "supported", extra = {}) {
+  return { user: { id: 198982749 }, author_association: "NONE",
+    body: "Evidence reviewed. <!-- upstream-gateway-disposition:v1:" + trackerState(h).current.candidateHash + ":" + result + " -->", ...extra };
+}
+
+test("public workflow uses only #1829 and separate task auth; repeated metadata is quiet", async (t) => {
+  const value = report(), h = boundary(t, value);
   const first = await h.publish();
-  assert.equal(first.issueNumber, 1);
+  assert.equal(first.issueNumber, 1829);
   assert.equal(first.trackerNumber, 1829);
   assert.equal((await h.handoff()).state, "queued");
   await h.publish(value, { createWork: false });
   const count = writes(h.state).length;
   const next = structuredClone(value);
   next.protocol.version = "2026.10.10";
-  next.released.package.version = "2026.10.11";
-  next.publication = { schema_version: 1, package_name: "openclaw", package_version: "2026.10.11",
-    package_integrity: integrity, source_repository: "openclaw/openclaw", source_commit: otherSha };
-  next.publicationProvenance = { workflowSha: sha, declaredSourceCommit: otherSha, sourceCoverage: "unverified" };
-  next.released.declaredSourceCommit = otherSha;
   next.observedAt = "2026-10-23T05:41:00Z";
   next.fingerprint = monitor.fingerprint(next);
   await h.publish(next, { context: { ...context, runId: 456 } });
   await h.handoff();
   assert.equal(writes(h.state).length, count);
   assert.equal(h.state.tasks.length, 1);
-  assert.equal(h.state.issues.length, 1);
-  assert.ok(!h.state.calls.some((call) => call.route.includes("/assignees") || call.route.endsWith("/comments")));
-  assert.ok(!h.state.calls.some((call) => call.args.pull_number === 4751512507), "task artifact database ID is not a PR number");
+  assert.equal(h.state.issues.length, 0);
+  assert.ok(writes(h.state).filter((call) => call.route.includes("/issues")).every((call) => call.args.issue_number === 1829));
+  const prompt = h.state.calls.find((call) => call.route.startsWith("POST /agents")).args.prompt;
+  assert.match(prompt, /Refs #1829, never Closes/);
+  assert.match(prompt, /Never close the permanent tracker/);
+  assert.match(prompt, /runs\/123/);
 });
 
-test("fixed tracker number ignores copied markers and title changes", async (t) => {
+test("fixed tracker preserves human prose and ignores copied markers and title changes", async (t) => {
   const h = boundary(t);
   h.state.tracker.title = "Renamed by a maintainer";
-  h.state.issues.push({ ...structuredClone(h.state.tracker), number: 80,
-    labels: [{ name: "upstream-gateway-tracker" }] });
+  h.state.tracker.body = "Human intro\n" + h.state.tracker.body + "\nHuman conclusion";
+  h.state.issues.push({ ...structuredClone(h.state.tracker), number: 80 });
   const copy = h.state.issues[0].body;
   assert.equal((await h.publish()).trackerNumber, 1829);
-  assert.match(h.state.tracker.body, /Capability review status/);
+  assert.match(h.state.tracker.body, /^Human intro/);
+  assert.match(h.state.tracker.body, /Human conclusion$/);
   assert.equal(h.state.issues[0].body, copy);
-  const posts = h.state.calls.filter((call) => call.route === "POST /repos/{owner}/{repo}/issues");
-  assert.equal(posts.length, 1, "only a candidate may be created, never a tracker");
-  assert.match(posts[0].args.body, /upstream-gateway-candidate:v1:/);
-  assert.ok(!h.state.calls.some((call) => call.args.labels === "upstream-gateway-tracker"));
+  assert.equal(h.state.calls.filter((call) => call.route === "POST /repos/{owner}/{repo}/issues").length, 0);
 });
 
-test("unavailable fixed tracker stops without creating a replacement", async (t) => {
+test("unavailable or malformed tracker stops without creating a replacement", async (t) => {
   const h = boundary(t);
+  const original = h.state.tracker.body;
   for (const mutate of [
     () => { h.state.tracker.state = "closed"; },
     () => { h.state.tracker.state = "open"; h.state.tracker.pull_request = {}; },
     () => { delete h.state.tracker.pull_request; h.state.tracker.body = "Marker removed"; },
+    () => { h.state.tracker.body = original.replace("Not activated.", '<!-- upstream-gateway-state:v2:{} -->'); },
   ]) {
     mutate();
-    await assert.rejects(h.publish(), /Tracker #1829/);
+    await assert.rejects(h.publish(), /Tracker #1829|Invalid tracker/);
     assert.equal(writes(h.state).length, 0);
   }
 });
 
-test("human prose survives meaningful tracker updates and closed exact candidates never reopen", async (t) => {
+test("legacy acknowledged fingerprints stay quiet; migration closures are not acknowledgments", async (t) => {
   const h = boundary(t);
-  await h.publish();
-  const [candidate] = h.state.issues;
-  const tracker = h.state.tracker;
-  tracker.body = "Human introduction\n" + tracker.body + "\nHuman conclusion";
-  candidate.state = "closed";
-  await h.publish();
-  assert.match(tracker.body, /^Human introduction/);
-  assert.match(tracker.body, /Human conclusion$/);
-  assert.match(tracker.body, /reviewed/);
-  const count = writes(h.state).length;
+  h.state.issues = [issue({ state: "closed", body: "<!-- upstream-gateway-candidate:v1:question-answer:"
+    + report().capabilities.families[0].candidateHash + ' -->\n<!-- upstream-gateway-task:v1:{"state":"ready","reservation":null,"taskId":null} -->' })];
   assert.equal((await h.publish()).issueNumber, undefined);
-  assert.equal(writes(h.state).length, count);
-  assert.equal(candidate.state, "closed");
   assert.equal(h.state.issues.length, 1);
+  h.state.issues[0].body += "\n<!-- upstream-gateway-migrated:v1 -->";
+  editState(h, (state) => { state.acknowledged = []; });
+  assert.equal((await h.publish()).issueNumber, 1829);
 });
 
-test("existing generic monitor work and assignments precede candidate creation", async (t) => {
+test("active legacy monitor work and Copilot assignments prevent duplicate investigation", async (t) => {
   const h = boundary(t);
-  for (const item of [
-    { labels: [{ name: publisher.LABEL }] },
-    { assignees: [{ login: "Copilot", id: 198982749 }] },
-  ]) {
-    h.state.issues = [{ number: 80, state: "open", body: "", labels: [], assignees: [], ...item }];
-    await h.publish();
-    assert.equal(h.state.issues.filter((issue) => issue.body.includes("upstream-gateway-candidate:v1:")).length, 0);
-    assert.match(h.state.tracker.body, /deferred-existing-work/);
+  for (const item of [{ labels: [{ name: publisher.LABEL }] }, { assignees: [{ id: 198982749 }] }]) {
+    h.state.issues = [issue({ number: 80, body: "", labels: [], assignees: [], ...item })];
+    assert.equal((await h.publish()).action, "deferred-existing-work");
+    assert.equal(trackerState(h).current, null);
   }
 });
 
-test("prose-matched related work informs investigation without suppressing it", async (t) => {
+test("related work informs investigation without suppressing it; marked implementation PR blocks", async (t) => {
   const h = boundary(t);
-  h.state.issues = [{ number: 80, state: "open", labels: [], assignees: [],
-    title: "Support question", body: "How does question.resolve work?" }];
-  h.state.pulls = [{ number: 100, state: "open", title: "Unrelated refactor",
-    body: "interactive Gateway fixture", assignees: [] }];
-  const { issueNumber } = await h.publish();
-  assert.equal(issueNumber, 2, "prose alone must not prevent candidate creation");
-  const candidate = h.state.issues.find((issue) => issue.number === issueNumber);
-  assert.match(candidate.body, /Possible overlap, not verified coverage/);
-  assert.match(candidate.body, /- #80\n- #100/);
-  h.state.issues[0].state = "closed";
-  let lists = 0;
-  h.state.override = (route) => {
-    if (route === "GET /agents/repos/{owner}/{repo}/tasks" && ++lists === 2)
-      h.state.pulls.push({ number: 101, state: "open", title: "Chat parity notes", body: "", assignees: [] });
-  };
-  assert.equal((await h.handoff(issueNumber)).state, "queued");
-  const task = h.state.calls.find((call) => call.route === "POST /agents/repos/{owner}/{repo}/tasks");
-  assert.equal(task.args.create_pull_request, false);
-  assert.match(task.args.prompt, /- #100\n- #101/);
-  assert.doesNotMatch(task.args.prompt, /#80\b/);
-  await h.publish(); await h.handoff(issueNumber);
-  assert.equal(h.state.tasks.length, 1, "repeat observations must reuse the exact investigation");
-  assert.equal(h.state.issues.length, 2);
+  h.state.issues = [issue({ number: 80, labels: [], title: "Support question", body: "question.resolve" })];
+  h.state.pulls = [{ number: 100, state: "open", title: "interactive Gateway fixture", body: "" }];
+  await h.publish();
+  assert.equal((await h.handoff()).state, "queued");
+  const prompt = h.state.calls.find((call) => call.route.startsWith("POST /agents")).args.prompt;
+  assert.match(prompt, /Possible overlap, not verified coverage/);
+  assert.match(prompt, /- #80\n- #100/);
+  const h2 = boundary(t);
+  await h2.publish();
+  h2.state.pulls = [{ number: 100, state: "open", body: "<!-- upstream-gateway-candidate:v1:question-answer:" + "a".repeat(64) + " -->" }];
+  assert.equal((await h2.handoff()).state, "deferred-existing-work");
+  assert.equal(h2.state.tasks.length, 0);
 });
 
-test("changed contract waits behind active candidate or PR rather than duplicating work", async (t) => {
-  const value = report();
-  const h = boundary(t, value);
+test("active task and changed evidence keep the current reservation instead of duplicating work", async (t) => {
+  const h = boundary(t);
+  await h.publish(); await h.handoff();
+  editState(h, (state) => { state.current.candidateHash = "f".repeat(64); });
   await h.publish();
-  h.state.issues[0].body = h.state.issues[0].body.replace(value.capabilities.families[0].candidateHash, "f".repeat(64));
-  await h.publish();
-  assert.equal(h.state.issues.length, 1);
-  assert.match(h.state.tracker.body, /deferred-existing-work/);
-  h.state.issues[0].state = "closed";
-  h.state.pulls = [{ number: 100, state: "open", body: "Closes #1", draft: true }];
-  await h.publish();
-  assert.equal(h.state.issues.length, 1);
+  assert.equal(trackerState(h).current.candidateHash, "f".repeat(64));
+  await h.handoff();
+  assert.equal(h.state.tasks.length, 1);
 });
 
-test("active agent task defers, unknown state or lookup failure performs no handoff writes", async (t) => {
+test("active agent task defers, invalid state or failed lookup does not write a reservation", async (t) => {
   const h = boundary(t);
   await h.publish();
-  h.state.calls = [];
   h.state.tasks = [{ id: "other-task", state: "in_progress", created_at: "2026-10-22T00:00:00Z" }];
   assert.equal((await h.handoff()).state, "deferred-active-task");
-  assert.match(h.state.issues[0].body, /deferred-active-task/);
+  assert.equal(trackerState(h).current.task.reservation, null);
   h.state.calls = [];
   h.state.override = (route) => route === "GET /agents/repos/{owner}/{repo}/tasks"
-    ? { data: { tasks: [{ id: "other-task", state: "new-unknown-state", created_at: "2026-10-22T00:00:00Z" }] } } : null;
+    ? { data: { tasks: [{ id: "other-task", state: "new-state", created_at: "2026-10-22T00:00:00Z" }] } } : null;
   await assert.rejects(h.handoff(), /Unknown or invalid/);
   h.state.override = (route) => { if (route === "GET /agents/repos/{owner}/{repo}/tasks") throw new Error("query failed"); };
   await assert.rejects(h.handoff(), /query failed/);
@@ -725,59 +714,56 @@ test("uncertain task POST reserves once and never replays", async (t) => {
   await h.publish();
   h.state.override = (route) => { if (route === "POST /agents/repos/{owner}/{repo}/tasks") throw new Error("response lost"); };
   await assert.rejects(h.handoff(), /response lost/);
-  assert.match(h.state.issues[0].body, /"state":"reserved"/);
+  assert.equal(trackerState(h).current.task.state, "reserved");
+  await assert.rejects(h.handoff(), /no automatic replay/);
+  await h.publish();
   await assert.rejects(h.handoff(), /no automatic replay/);
   assert.equal(h.state.calls.filter((call) => call.route === "POST /agents/repos/{owner}/{repo}/tasks").length, 1);
 });
 
-test("stalled or completed-without-disposition task remains visible, never resubmitted", async (t) => {
+test("completed task needs a trusted fingerprint-bound disposition and never restarts unchanged", async (t) => {
   const h = boundary(t);
   await h.publish(); await h.handoff();
-  await assert.rejects(h.handoff(1, { now: Date.parse("2026-10-24T01:00:00Z") }), /stalled/);
-  assert.match(h.state.issues[0].body, /"attention":"stalled"/);
+  await assert.rejects(h.handoff(1829, { now: Date.parse("2026-10-24T01:00:00Z") }), /stalled/);
   h.state.tasks[0].state = "completed";
-  await assert.rejects(h.handoff(), /without candidate disposition/);
-  h.state.issues[0].state = "closed";
+  h.state.comments = [dispositionComment(h, "supported", { user: { id: 12 }, author_association: "NONE" })];
+  await assert.rejects(h.handoff(), /needs-disposition/);
+  h.state.comments.push(dispositionComment(h, "existing-work"));
   assert.equal((await h.handoff()).state, "completed");
+  await h.publish(); await h.handoff(); await h.publish();
   assert.equal(h.state.tasks.length, 1);
+  assert.deepEqual(trackerState(h).acknowledged, [report().capabilities.families[0].candidateHash]);
+  assert.equal(h.state.tracker.state, "open");
 });
 
-test("returned Copilot timeline identity prevents a replacement task", async (t) => {
+test("new evidence can replace a completed acknowledged candidate, preserving its fingerprint", async (t) => {
   const h = boundary(t);
+  await h.publish(); await h.handoff();
+  editState(h, (state) => {
+    state.current.candidateHash = "f".repeat(64);
+    state.current.task.state = "completed";
+    state.current.task.disposition = "supported";
+  });
   await h.publish();
-  h.state.timeline = [{ event: "assigned", assignee: { login: "Copilot", id: 198982749 } }];
-  assert.equal((await h.handoff()).state, "legacy-assignment-needs-disposition");
-  assert.equal(h.state.tasks.length, 0);
+  assert.equal(trackerState(h).current.task.state, "ready");
+  assert.deepEqual(trackerState(h).acknowledged, ["f".repeat(64)]);
 });
 
-test("linked draft is reused and closing different issues is not implementation evidence", async (t) => {
-  const h = boundary(t);
-  await h.publish();
-  h.state.pulls = [{ number: 100, state: "open", draft: true, body: "Closes #1" }];
-  h.state.timeline = [{ event: "cross-referenced", source: { issue: { number: 100, pull_request: {},
-    repository_url: "https://api.github.com/repos/openclaw/openclaw-windows-node" } } }];
-  assert.equal((await h.handoff()).state, "draft-pr-observed");
-  assert.equal(h.state.tasks.length, 0);
-  h.state.pulls[0].body = "Closes #10";
-  assert.equal((await h.handoff()).state, "queued");
-});
-
-test("missing token and revoked queued authority never create a task", async (t) => {
+test("missing token, assigned tracker and revoked reservation never create a task", async (t) => {
   for (const revoke of [
     (issue) => { issue.state = "closed"; },
-    (issue) => { issue.labels = []; },
     (issue) => { issue.body = issue.body.replace('"taskId":null', '"taskId":"already-started"'); },
+    (issue) => { issue.assignees = [{ id: 12 }]; },
   ]) {
     const h = boundary(t);
     await h.publish();
-    await assert.rejects(h.handoff(1, { copilotToken: "" }), /no new agent task started/);
+    await assert.rejects(h.handoff(1829, { copilot: null }), /no new agent task started/);
     let lists = 0;
     h.state.override = (route) => {
-      if (route === "GET /agents/repos/{owner}/{repo}/tasks" && ++lists === 2) revoke(h.state.issues[0]);
+      if (route === "GET /agents/repos/{owner}/{repo}/tasks" && ++lists === 2) revoke(h.state.tracker);
     };
-    await assert.rejects(h.handoff(), /authority changed before task/);
+    await assert.rejects(h.handoff(), /authority changed before task|Tracker #1829/);
     assert.equal(h.state.tasks.length, 0);
-    assert.equal(h.state.issues.length, 1);
   }
 });
 
@@ -787,7 +773,7 @@ test("non-default or read-only dispatch cannot authorize a task", async (t) => {
   for (const changed of [
     { ref: "refs/heads/feature" }, { eventName: "pull_request" },
     { eventName: "workflow_dispatch", payload: { ...context.payload, inputs: { report_only: "true" } } },
-  ]) await assert.rejects(h.handoff(1, { context: { ...context, ...changed } }), /Dispatch context/);
+  ]) await assert.rejects(h.handoff(1829, { context: { ...context, ...changed } }), /Dispatch context/);
   assert.equal(h.state.calls.length, 0);
 });
 
@@ -804,15 +790,19 @@ test("invalid evidence and incomplete work queries fail closed before publicatio
   assert.equal(writes(h.state).length, 0);
 });
 
-test("health issue stays separate and preserves human notes on recovery failure", async (t) => {
+test("collection failures stay on #1829, preserve task state and human notes, and clear on recovery", async (t) => {
   const h = boundary(t);
-  const number = await publisher.publishFailure({ github: h.github, context });
-  h.state.issues[0].state = "closed"; h.state.issues[0].body += "\nMaintainer notes";
+  await h.publish(); await h.handoff();
+  h.state.tracker.body += "\nMaintainer notes";
+  const task = trackerState(h).current.task;
+  assert.equal(await publisher.publishFailure({ github: h.github, context }), 1829);
   await publisher.publishFailure({ github: h.github, context: { ...context, runId: 456 } });
-  assert.equal(number, 1); assert.equal(h.state.issues.length, 1);
-  assert.match(h.state.issues[0].body, /Maintainer notes$/);
-  assert.match(h.state.issues[0].body, /runs\/456/);
-  assert.equal(h.state.issues[0].state, "open");
+  assert.equal(h.state.issues.length, 0);
+  assert.match(h.state.tracker.body, /Maintainer notes$/);
+  assert.match(h.state.tracker.body, /runs\/456/);
+  assert.deepEqual(trackerState(h).current.task, task);
+  await h.publish();
+  assert.equal(trackerState(h).health, null);
 });
 
 test("workflow runs public paths with separate tokens and read-only report mode", () => {
@@ -825,10 +815,77 @@ test("workflow runs public paths with separate tokens and read-only report mode"
   assert.doesNotMatch(health + publish, /COPILOT_GITHUB_TOKEN/);
   assert.match(implement, /issues: write/);
   assert.doesNotMatch(implement, /github-token:.*COPILOT/);
-  assert.match(implement, /copilotToken: process.env.COPILOT_GITHUB_TOKEN/);
+  assert.match(implement, /getOctokit\(process.env.COPILOT_GITHUB_TOKEN\)/);
+  assert.match(implement, /handoff\(\{ github, copilot,/);
   assert.match(implement, /createWork: false/);
   assert.equal((workflow.match(/!inputs.report_only/g) ?? []).length, 2);
   assert.equal((workflow.match(/vars.UPSTREAM_GATEWAY_MONITOR_ENABLED == 'true'/g) ?? []).length, 2);
   assert.match(implement, /retries: 0/);
   assert.match(workflow, /await publish\(\{ github, context, core, report/);
+});
+
+test("workflow constructs an independently authenticated task client instead of overriding a header", async () => {
+  const workflow = fs.readFileSync(path.join(__dirname, "../workflows/upstream-gateway-protocol.yml"), "utf8");
+  const step = workflow.split("- name: Reconcile or start investigation without an automatic PR")[1].split("- name: Refresh tracker")[0];
+  const script = step.split("script: |\n")[1].split("\n").map((line) => line.replace(/^ {12}/, "")).join("\n");
+  // Model the real Octokit auth hook: client auth replaces request headers.
+  class AuthClient {
+    constructor({ auth, retry = { enabled: true } }) { this.auth = auth; this.retry = retry; }
+    async request(route, options = {}) { return { route, authorization: this.auth, ...options, headers: { authorization: this.auth } }; }
+  }
+  const github = new AuthClient({ auth: "fixture-actions-token" });
+  let invoked = false;
+  const imports = (name) => name === "node:fs" ? { readFileSync: () => "{}" } : {
+    handoff: async ({ github: issueClient, copilot }) => {
+      assert.ok(copilot && copilot !== issueClient, "task calls require a distinct client");
+      assert.equal(copilot.retry.enabled, false, "task POSTs must not be retried");
+      assert.equal((await copilot.request("GET /agents/repos/o/r/tasks")).headers.authorization, "fixture-personal-token");
+      assert.equal((await issueClient.request("PATCH /repos/o/r/issues/1829")).headers.authorization, "fixture-actions-token");
+      invoked = true;
+      return { state: "queued" };
+    },
+  };
+  const summary = { addRaw() { return this; }, async write() {} };
+  const run = new (Object.getPrototypeOf(async function () {}).constructor)("github", "context", "core", "process", "require", "getOctokit", script);
+  await run(github, context, { summary }, { env: { COPILOT_GITHUB_TOKEN: "fixture-personal-token", ISSUE_NUMBER: "1829", REPORT: "unused" } }, imports, (token) => new AuthClient({ auth: token, retry: { enabled: false } }));
+  assert.equal(invoked, true);
+});
+
+
+test("closed legacy reservations still block a new task, including migration closures", async (t) => {
+  const h = boundary(t);
+  for (const state of ["reserved", "uncertain", "queued", "in_progress"]) {
+    h.state.issues = [issue({ state: "closed", body: "<!-- upstream-gateway-candidate:v1:question-answer:"
+      + report().capabilities.families[0].candidateHash + " -->\n<!-- upstream-gateway-migrated:v1 -->\n"
+      + '<!-- upstream-gateway-task:v1:' + JSON.stringify({ state, reservation: "a".repeat(64), taskId: null }) + " -->" })];
+    assert.equal((await h.publish()).action, "deferred-existing-work");
+    assert.equal(trackerState(h).current, null);
+    assert.deepEqual(trackerState(h).acknowledged, []);
+  }
+  assert.equal(h.state.tasks.length, 0);
+});
+
+test("changed candidate replaces only an unreserved ready attempt", async (t) => {
+  const h = boundary(t);
+  await h.publish();
+  editState(h, (state) => { state.current.candidateHash = "f".repeat(64); });
+  await h.publish();
+  assert.equal(trackerState(h).current.candidateHash, report().capabilities.families[0].candidateHash);
+  assert.equal((await h.handoff()).state, "queued");
+});
+
+
+test("legacy closing-reference PR remains a blocker after a ready candidate is migration-closed", async (t) => {
+  const h = boundary(t);
+  h.state.issues = [issue({ number: 1845, state: "closed", body: "<!-- upstream-gateway-candidate:v1:question-answer:"
+    + report().capabilities.families[0].candidateHash + " -->\n<!-- upstream-gateway-migrated:v1 -->\n"
+    + '<!-- upstream-gateway-task:v1:{"state":"ready","reservation":null,"taskId":null} -->' })];
+  h.state.pulls = [{ number: 100, state: "open", draft: true, body: "Closes #1845", user: { id: 12 }, assignees: [] }];
+  assert.equal((await h.publish()).action, "deferred-existing-work");
+  assert.equal(trackerState(h).current, null);
+  h.state.pulls[0].body = "Closes #18450";
+  assert.equal((await h.publish()).issueNumber, 1829);
+  h.state.pulls[0].body = "Closes https://github.com/openclaw/openclaw-windows-node/issues/1845";
+  assert.equal((await h.handoff()).state, "deferred-existing-work");
+  assert.equal(h.state.tasks.length, 0);
 });

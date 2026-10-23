@@ -263,7 +263,8 @@ Contents write on this repository; its private key stays upstream.
 An enabled `report_only: false` run updates [tracker #1829](https://github.com/openclaw/openclaw-windows-node/issues/1829)
 and can start one deduplicated Copilot investigation with automatic PR creation
 disabled. A confirmed gap may lead to one focused draft PR, never automatic merge.
-Verify the tracker, candidate, task ID and disposition after activation.
+Candidate fingerprints, task IDs, deduplication and health stay on that one issue.
+Verify its task ID and disposition comment after activation; never close the tracker.
 Restore a missing/closed tracker rather than creating a replacement. For uncertain
 or stalled tasks, inspect the recorded task and reconcile manually; do not delete
 reservations to force retries. Unset the activation variable to stop new writes;
