@@ -809,7 +809,12 @@ public sealed class LocalAiOnboardingTests
     [InlineData("extra-history")]
     [InlineData("removed-history")]
     [InlineData("provenance")]
-    public async Task Host_PendingStartAcceptsOnlyItsOwnProducedEndpointHistory(string change)
+    [InlineData("fallback")]
+    [InlineData("installation")]
+    [InlineData("model")]
+    [InlineData("path")]
+    [InlineData("hash")]
+    public async Task Host_PendingStartIgnoresOptionalHintsButFencesInstallationChanges(string change)
     {
         using var directory = new TempDirectory();
         var paths = new LocalAiPaths(directory.Path);
@@ -840,6 +845,15 @@ public sealed class LocalAiOnboardingTests
                     "removed-history" => published.Manifest with { PreviousEndpoints = [previous] },
                     "provenance" => published.Manifest with
                     { ReplacedManifest = published.Manifest.ReplacedManifest! with { GatewayFallbackModel = "other/cloud" } },
+                    "fallback" => published.Manifest with { GatewayFallbackModel = "other/cloud" },
+                    "installation" => published.Manifest with
+                    { InstalledAtUtc = published.Manifest.InstalledAtUtc.AddDays(1) },
+                    "model" => published.Manifest with
+                    { ModelCatalogId = LocalModelCatalog.Qwen27BModelId, ModelAlias = LocalModelCatalog.Qwen27BModelId },
+                    "path" => published.Manifest with
+                    { ModelPath = Path.Combine("models", "different", published.Manifest.ModelAsset.FileName) },
+                    "hash" => published.Manifest with
+                    { ModelAsset = published.Manifest.ModelAsset with { Sha256 = new string('b', 64) } },
                     _ => published.Manifest,
                 };
                 await store.SaveAsync(changed);
@@ -853,19 +867,33 @@ public sealed class LocalAiOnboardingTests
         var selected = await host.ObserveAsync(default);
         Assert.Equal(LocalAiOnboardingState.StartAndUse, selected.State);
         var use = new LocalAiOnboardingUse(host);
-        if (change is "append" or "already-recorded" or "same-endpoint")
+        if (change is "installation" or "model" or "path" or "hash")
         {
-            await use.UseAsync(selected, default);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => use.UseAsync(selected, default));
             Assert.Equal(new SetupLocalAiUseResult("gateway", selected.ModelRef!), use.Expected);
-            Assert.Equal(change == "same-endpoint" ? [older] : new[] { older, previous },
-                install.Manifest.PreviousEndpoints!.Value);
-            Assert.Equal(4, commands.Reads);
+            Assert.Equal(2, commands.Reads); // No provider publication after critical receipt drift.
         }
         else
         {
-            await Assert.ThrowsAsync<InvalidOperationException>(() => use.UseAsync(selected, default));
-            Assert.NotNull(use.Expected); // Runtime mutation happened; reconciliation remains required.
-            Assert.Equal(2, commands.Reads); // No second provider publication.
+            await use.UseAsync(selected, default);
+            Assert.Equal(new SetupLocalAiUseResult("gateway", selected.ModelRef!), use.Expected);
+            string[] expectedHistory = change switch
+            {
+                "same-endpoint" => [older],
+                "extra-history" => [older, previous, "http://127.0.0.1:28770/v1"],
+                "removed-history" => [previous],
+                _ => [older, previous],
+            };
+            Assert.Equal(expectedHistory, install.Manifest.PreviousEndpoints!.Value);
+            Assert.Equal(change == "provenance" ? "other/cloud" : null,
+                install.Manifest.ReplacedManifest!.GatewayFallbackModel);
+            Assert.Equal(change == "fallback" ? "other/cloud" : initial.Manifest.GatewayFallbackModel,
+                install.Manifest.GatewayFallbackModel);
+            Assert.Equal(initial.ModelPath, install.ModelPath);
+            Assert.Equal(initial.Manifest.ModelAsset, install.Manifest.ModelAsset);
+            Assert.Equal(selected.ModelRef, LocalAiGatewayProviderDefinition.BuildPrimaryModel(install));
+            Assert.Equal(install.Endpoint, commands.Install.Endpoint);
+            Assert.Equal(4, commands.Reads); // Admission and post-start provider verification both ran.
         }
         Assert.Equal(LocalAiRuntimeState.Healthy, runtime.Snapshot.State);
         Assert.Single(fixture.Published);

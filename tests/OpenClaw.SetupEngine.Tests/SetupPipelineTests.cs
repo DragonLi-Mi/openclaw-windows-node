@@ -612,8 +612,10 @@ public class SetupPipelineTests
         Assert.Equal(LocalAiRuntimeState.Healthy, runtime.Snapshot.State);
     }
 
-    [Fact]
-    public async Task OrdinaryRecoveryRollback_PreservesConcurrentlyUpdatedReceipt()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OrdinaryRecoveryRollback_OnlyArtifactDriftBlocksReceiptRestoration(bool artifactDrift)
     {
         using var temp = new TempDirectory("local-ai-borrowed-runtime-concurrent-receipt-");
         SetupConfig config = LocalAiRecoveryConfig();
@@ -632,6 +634,9 @@ public class SetupPipelineTests
         LocalAiInstallManifest concurrent = original.Manifest with
         {
             Endpoint = "http://127.0.0.1:18803/v1",
+            ModelAsset = artifactDrift
+                ? original.Manifest.ModelAsset with { Sha256 = new string('b', 64) }
+                : original.Manifest.ModelAsset,
         };
         var pipeline = new SetupPipeline([
             new PreserveLocalAiRecoveryGatewayStep(
@@ -646,9 +651,14 @@ public class SetupPipelineTests
         PipelineResult result = await pipeline.RunAsync(context);
 
         Assert.Equal(PipelineOutcome.Failed, result.Outcome);
-        Assert.Equal(concurrent.Endpoint, (await store.LoadAsync())!.Manifest.Endpoint);
-        Assert.True(context.LocalAiRecoveryRollbackUncertain);
-        Assert.Equal(0, runtime.RestartForSetupRollbackCalls);
+        LocalAiResolvedInstall retained = (await store.LoadAsync())!;
+        Assert.Equal(artifactDrift ? concurrent.Endpoint : original.Manifest.Endpoint, retained.Manifest.Endpoint);
+        Assert.Equal(artifactDrift ? concurrent.ModelAsset : original.Manifest.ModelAsset, retained.Manifest.ModelAsset);
+        Assert.Equal(original.Manifest.ModelCatalogId, retained.Manifest.ModelCatalogId);
+        Assert.Equal(original.ModelPath, retained.ModelPath);
+        Assert.Equal(artifactDrift, context.LocalAiRecoveryRollbackUncertain);
+        Assert.Equal(!artifactDrift, context.LocalAiBorrowedRuntimeRestored);
+        Assert.Equal(artifactDrift ? 0 : 1, runtime.RestartForSetupRollbackCalls);
     }
 
     /// <summary>
@@ -780,7 +790,7 @@ public class SetupPipelineTests
     {
         using var temp = new TempDirectory("local-ai-start-drift-");
         var context = CreateContext(LocalAiRecoveryConfig(), localDataDir: temp.Path);
-        LocalAiResolvedInstall original = CreateLocalAiResolvedInstall(temp.Path, 18801);
+        LocalAiResolvedInstall original = CreateCatalogLocalAiResolvedInstall(temp.Path, 18801);
         var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
         await store.SaveAsync(original.Manifest);
         context.LocalAiResolvedInstall = original;
@@ -869,11 +879,10 @@ public class SetupPipelineTests
         config.LocalAi.Enabled = true;
         config.RollbackOnFailure = true;
         var context = CreateContext(config, cancellation.Token, localDataDir: temp.Path);
-        LocalAiResolvedInstall original = CreateLocalAiResolvedInstall(temp.Path, port: 18801);
-        LocalAiInstallManifest pendingManifest = original.Manifest with
+        LocalAiResolvedInstall original = CreateCatalogLocalAiResolvedInstall(temp.Path, port: 18801);
+        LocalAiInstallManifest pendingManifest = CreateCatalogLocalAiResolvedInstall(
+            context.LocalDataDir, port: 18802, LocalModelCatalog.Qwen27BModelId).Manifest with
         {
-            ModelCatalogId = "replacement-model",
-            ModelAlias = "replacement-model",
             Endpoint = "http://127.0.0.1:18802/v1",
             ReplacedManifest = original.Manifest,
             PreviousEndpoints = [original.Manifest.Endpoint!],
@@ -885,6 +894,7 @@ public class SetupPipelineTests
         };
         var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
         await store.SaveAsync(pendingManifest);
+        Assert.NotNull((await store.LoadAsync())!.Manifest.ReplacedManifest);
         LocalAiResolvedInstall pending = store.ResolveAndValidate(pendingManifest);
         LocalAiResolvedInstall moved = store.ResolveAndValidate(movedManifest);
         context.LocalAiResolvedInstall = pending;
@@ -1096,21 +1106,21 @@ public class SetupPipelineTests
         SetupConfig config = LocalAiRecoveryConfig();
         config.RollbackOnFailure = true;
         var context = CreateContext(config, localDataDir: temp.Path);
-        LocalAiResolvedInstall original = CreateLocalAiResolvedInstall(context.LocalDataDir, port: 18801);
+        LocalAiResolvedInstall original = CreateCatalogLocalAiResolvedInstall(context.LocalDataDir, port: 18801);
         original = original with
         {
             Manifest = original.Manifest with { RequestedPort = 0 },
         };
-        LocalAiInstallManifest pendingManifest = original.Manifest with
+        LocalAiInstallManifest pendingManifest = CreateCatalogLocalAiResolvedInstall(
+            context.LocalDataDir, port: 18802, LocalModelCatalog.Qwen27BModelId).Manifest with
         {
-            ModelCatalogId = "replacement-model",
-            ModelAlias = "replacement-model",
             Endpoint = "http://127.0.0.1:18802/v1",
             ReplacedManifest = original.Manifest,
             PreviousEndpoints = [original.Manifest.Endpoint!],
         };
         var store = new LocalAiManifestStore(new LocalAiPaths(context.LocalDataDir));
         await store.SaveAsync(pendingManifest);
+        Assert.NotNull((await store.LoadAsync())!.Manifest.ReplacedManifest);
         context.LocalAiResolvedInstall = store.ResolveAndValidate(pendingManifest);
         context.LocalAiRecoveryOriginalInstall = original;
         context.LocalAiRecoveryProviderTransition = true;
@@ -1215,21 +1225,21 @@ public class SetupPipelineTests
         SetupConfig config = LocalAiRecoveryConfig();
         config.RollbackOnFailure = true;
         var context = CreateContext(config, localDataDir: temp.Path);
-        LocalAiResolvedInstall original = CreateLocalAiResolvedInstall(context.LocalDataDir, port: 18801);
+        LocalAiResolvedInstall original = CreateCatalogLocalAiResolvedInstall(context.LocalDataDir, port: 18801);
         original = original with
         {
             Manifest = original.Manifest with { RequestedPort = 0 },
         };
-        LocalAiInstallManifest pendingManifest = original.Manifest with
+        LocalAiInstallManifest pendingManifest = CreateCatalogLocalAiResolvedInstall(
+            context.LocalDataDir, port: 18802, LocalModelCatalog.Qwen27BModelId).Manifest with
         {
-            ModelCatalogId = "replacement-model",
-            ModelAlias = "replacement-model",
             Endpoint = "http://127.0.0.1:18802/v1",
             ReplacedManifest = original.Manifest,
             PreviousEndpoints = [original.Manifest.Endpoint!],
         };
         var store = new LocalAiManifestStore(new LocalAiPaths(context.LocalDataDir));
         await store.SaveAsync(pendingManifest);
+        Assert.NotNull((await store.LoadAsync())!.Manifest.ReplacedManifest);
         context.LocalAiResolvedInstall = store.ResolveAndValidate(pendingManifest);
         context.LocalAiRecoveryOriginalInstall = original;
         context.LocalAiRecoveryProviderTransition = true;
@@ -1293,18 +1303,20 @@ public class SetupPipelineTests
         SetupConfig config = LocalAiRecoveryConfig();
         config.LocalAi.Enabled = true;
         var context = CreateContext(config, localDataDir: temp.Path);
-        LocalAiResolvedInstall original = CreateLocalAiResolvedInstall(temp.Path, port: 18801);
-        LocalAiInstallManifest pendingManifest = original.Manifest with
+        LocalAiResolvedInstall original = CreateCatalogLocalAiResolvedInstall(temp.Path, port: 18801);
+        LocalAiInstallManifest pendingManifest = CreateCatalogLocalAiResolvedInstall(
+            context.LocalDataDir, port: 18802, LocalModelCatalog.Qwen27BModelId).Manifest with
         {
-            ModelCatalogId = "replacement-model",
-            ModelAlias = "replacement-model",
             Endpoint = "http://127.0.0.1:18802/v1",
             ReplacedManifest = original.Manifest,
             PreviousEndpoints = [original.Manifest.Endpoint!],
         };
         var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
         await store.SaveAsync(pendingManifest);
+        Assert.NotNull((await store.LoadAsync())!.Manifest.ReplacedManifest);
         context.LocalAiResolvedInstall = store.ResolveAndValidate(pendingManifest);
+        Assert.NotEqual(original.Manifest.ModelCatalogId, context.LocalAiResolvedInstall.Manifest.ModelCatalogId);
+        Assert.NotEqual(original.ModelPath, context.LocalAiResolvedInstall.ModelPath);
         context.LocalAiRecoveryOriginalInstall = original;
         context.LocalAiRecoveryProviderTransition = true;
         context.LocalAiRuntimeInstall = new LlamaRuntimeInstallResult(
@@ -1387,17 +1399,18 @@ public class SetupPipelineTests
     {
         using var temp = new TempDirectory("local-ai-recovery-rollback-");
         var context = CreateContext(LocalAiRecoveryConfig(), localDataDir: temp.Path);
-        LocalAiResolvedInstall originalInstall = CreateLocalAiResolvedInstall(context.LocalDataDir, port: 18801);
-        LocalAiResolvedInstall replacementInstall = CreateLocalAiResolvedInstall(context.LocalDataDir, port: 18802);
+        LocalAiResolvedInstall originalInstall = CreateCatalogLocalAiResolvedInstall(context.LocalDataDir, port: 18801);
+        LocalAiResolvedInstall replacementInstall = CreateCatalogLocalAiResolvedInstall(
+            context.LocalDataDir, port: 18802, LocalModelCatalog.Qwen27BModelId);
         LocalAiInstallManifest pendingManifest = replacementInstall.Manifest with
         {
-            ModelCatalogId = "replacement-model",
-            ModelAlias = "replacement-model",
             ReplacedManifest = originalInstall.Manifest,
             PreviousEndpoints = [originalInstall.Manifest.Endpoint!],
         };
         replacementInstall = replacementInstall with { Manifest = pendingManifest };
-        await new LocalAiManifestStore(new LocalAiPaths(context.LocalDataDir)).SaveAsync(pendingManifest);
+        var store = new LocalAiManifestStore(new LocalAiPaths(context.LocalDataDir));
+        await store.SaveAsync(pendingManifest);
+        Assert.NotNull((await store.LoadAsync())!.Manifest.ReplacedManifest);
         context.LocalAiRecoveryOriginalInstall = originalInstall;
         context.LocalAiRecoveryReceiptRollbackAllowed = true;
         context.LocalAiResolvedInstall = replacementInstall;
@@ -1419,17 +1432,18 @@ public class SetupPipelineTests
         SetupConfig config = LocalAiRecoveryConfig();
         config.RollbackOnFailure = true;
         var context = CreateContext(config, localDataDir: temp.Path);
-        LocalAiResolvedInstall originalInstall = CreateLocalAiResolvedInstall(context.LocalDataDir, port: 18801);
-        LocalAiResolvedInstall replacementInstall = CreateLocalAiResolvedInstall(context.LocalDataDir, port: 18802);
+        LocalAiResolvedInstall originalInstall = CreateCatalogLocalAiResolvedInstall(context.LocalDataDir, port: 18801);
+        LocalAiResolvedInstall replacementInstall = CreateCatalogLocalAiResolvedInstall(
+            context.LocalDataDir, port: 18802, LocalModelCatalog.Qwen27BModelId);
         LocalAiInstallManifest pendingManifest = replacementInstall.Manifest with
         {
-            ModelCatalogId = "replacement-model",
-            ModelAlias = "replacement-model",
             ReplacedManifest = originalInstall.Manifest,
             PreviousEndpoints = [originalInstall.Manifest.Endpoint!],
         };
         replacementInstall = replacementInstall with { Manifest = pendingManifest };
-        await new LocalAiManifestStore(new LocalAiPaths(context.LocalDataDir)).SaveAsync(pendingManifest);
+        var store = new LocalAiManifestStore(new LocalAiPaths(context.LocalDataDir));
+        await store.SaveAsync(pendingManifest);
+        Assert.NotNull((await store.LoadAsync())!.Manifest.ReplacedManifest);
         context.LocalAiRecoveryOriginalInstall = originalInstall;
         context.LocalAiResolvedInstall = replacementInstall;
         context.LocalAiRecoveryProviderTransition = true;
@@ -1483,6 +1497,10 @@ public class SetupPipelineTests
             new LocalAiPaths(context.LocalDataDir)).LoadAsync())!.Manifest;
         Assert.Equal(pendingManifest.ModelCatalogId, retained.ModelCatalogId);
         Assert.NotNull(retained.ReplacedManifest);
+        Assert.Equal(originalInstall.Manifest.ModelCatalogId, retained.ReplacedManifest.ModelCatalogId);
+        Assert.Equal(originalInstall.Manifest.ModelPath, retained.ReplacedManifest.ModelPath);
+        Assert.Equal(pendingManifest.Endpoint, retained.Endpoint);
+        Assert.True(context.LocalAiRecoveryRollbackUncertain);
     }
 
     private sealed class DisposeTrackingRuntime(LocalAiRuntimeSnapshot? snapshot = null) : ILocalAiRuntime
@@ -1629,6 +1647,28 @@ public class SetupPipelineTests
     {
         GatewayRouteRequiresResolution = false,
     };
+
+    private static LocalAiResolvedInstall CreateCatalogLocalAiResolvedInstall(
+        string localDataDirectory, int port, string modelId = LocalModelCatalog.Qwen35BModelId)
+    {
+        LocalAiResolvedInstall install = CreateLocalAiResolvedInstall(localDataDirectory, port);
+        var model = LocalModelCatalog.FindInstalled(modelId)!;
+        var source = (HuggingFaceRevisionSource)model.Weights.Source;
+        return new LocalAiManifestStore(new LocalAiPaths(localDataDirectory)).ResolveAndValidate(install.Manifest with
+        {
+            ModelCatalogId = model.Id,
+            ModelAlias = model.Id,
+            ModelId = $"{source.RepositoryId}@{source.RevisionSha}",
+            ModelPath = Path.Combine("models", model.Weights.RelativePath),
+            ModelAsset = new LocalAiAssetReceipt
+            {
+                FileName = Path.GetFileName(model.Weights.RelativePath),
+                SourceUrl = model.Weights.DownloadUri.AbsoluteUri,
+                SizeBytes = model.Weights.SizeBytes,
+                Sha256 = model.Weights.Sha256.Value,
+            },
+        });
+    }
 
     private static LocalAiResolvedInstall CreateLocalAiResolvedInstall(string localDataDirectory, int port)
     {

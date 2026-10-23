@@ -1739,10 +1739,22 @@ public sealed class LocalAiInstallRecoveryTests
 
         // A new process has only the receipt/hints and live Gateway state, not failed's baselines.
         SetupContext fresh = FreshContext(c);
-        Assert.Equal(StepOutcome.Success, (await new ReconcileLocalAiInstallationStep(
+        Assert.Equal(StepOutcome.Skipped, (await new ReconcileLocalAiInstallationStep(
             new LocalAiInstallReconciler(new ValidRuntimeInspector(), new AcceptingModelVerifier()))
             .ExecuteAsync(fresh, CancellationToken.None)).Outcome);
-        await new CompleteModelRepairStep(temp.Path, c).ExecuteAsync(fresh, CancellationToken.None);
+        Assert.Null(fresh.LocalAiResolvedInstall); // C still needs acquisition, not reuse of A.
+        Assert.Equal(a.Model.Id, fresh.LocalAiRecoveryOriginalInstall!.Manifest.ModelCatalogId);
+        Assert.Equal(a.Model.Id, fresh.LocalAiRecoveryPendingInstall!.Manifest.ModelCatalogId);
+        Assert.Contains(fresh.LocalAiRecoveryPendingInstall.Manifest.RecoveryRoutes, route =>
+            route.ModelCatalogId == b.Model.Id);
+        Assert.NotNull(fresh.LocalAiRuntimeInstall);
+        Assert.False(fresh.LocalAiRuntimeInstall.CreatedThisRun);
+        Assert.Null(fresh.LocalAiModelInstall);
+        Assert.True(fresh.LocalAiRecoveryRollbackUncertain);
+        Assert.Equal(oldProvider, commands.ProviderJson);
+        Assert.Equal(oldPrimary, commands.PrimaryJson);
+        Assert.Equal(StepOutcome.Success, (await new CompleteModelRepairStep(temp.Path, c)
+            .ExecuteAsync(fresh, CancellationToken.None)).Outcome);
         Assert.Equal(StepOutcome.Success, (await new PersistLocalAiManifestStep()
             .ExecuteAsync(fresh, CancellationToken.None)).Outcome);
         await PrepareRuntimeFilesAsync(fresh.LocalAiResolvedInstall!);
