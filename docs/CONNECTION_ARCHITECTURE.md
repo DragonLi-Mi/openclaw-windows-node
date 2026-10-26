@@ -299,6 +299,7 @@ The `EnableMcpServer=true`, `EnableNodeMode=false` path creates a local-only `No
 
 Tray actions should never silently no-op on common pairing/configuration issues:
 
+- **Update Gateway…** opens the active Gateway Dashboard at `settings/updates` through the existing dashboard credential and SSH-tunnel resolver. It only navigates, so it remains available while the native connection is disconnected or awaiting pairing. Missing credentials open Connection settings, just like Dashboard. The Control UI owns live `operator.admin` and `update.run` availability checks, target confirmation, update progress/results, and restart reconciliation. This does not invoke the Companion updater or start an update on menu activation. Settings **Check for updates** continues to update the Companion app only.
 - Chat resolves credentials from the active registry record and per-gateway identity. If no usable credential exists, it opens Connection settings instead.
 - Canvas opens only when the Windows node is initialized, paired, and the Canvas capability is enabled in settings; otherwise it opens Connection settings.
 - Quick Send uses the live operator client and surfaces scope/pairing errors from gateway calls.

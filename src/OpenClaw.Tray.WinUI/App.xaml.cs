@@ -1171,6 +1171,7 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
             case "connection": ShowHub("connection"); break;
             case "permissions": ShowHub("permissions"); break;
             case "dashboard": OpenDashboard(); break;
+            case "updategateway": OpenDashboard(GatewayDashboardUrlBuilder.UpdatesPath); break;
             case "diagnostics": ShowHub("debug"); break;
             case "canvas": ShowCanvasWindow(); break;
             case "openchat": ShowHub("chat"); break;
