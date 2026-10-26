@@ -201,6 +201,26 @@ public sealed class InnoMigrationContractTests
     }
 
     [Fact]
+    public void InnoHandoff_OffersSetupRecoveryOnlyForTheRecognizedPayloadFailure()
+    {
+        var helper = Read("src", "OpenClaw.Tray.WinUI", "Helpers", "InnoMigrationHandoff.cs");
+        Assert.Contains("requiresInstallerRepair ? \"Migration2_InnoRepairRequired\" : \"Migration2_InnoFailed\"", helper);
+        Assert.Contains("isOwnProcess && detected.Status == InnoInstallationStatus.Unsupported", helper);
+        Assert.Contains("detected.RequiresInstallerRepair", helper);
+        var settings = Read("src", "OpenClaw.Tray.WinUI", "Pages", "SettingsPage.xaml.cs");
+        Assert.DoesNotContain("InnoMigrationHandoff.Check", settings);
+        Assert.Contains("canDownloadSetup: messageKey == \"Migration2_InnoRepairRequired\"", settings);
+        var download = settings[settings.IndexOf("private async Task DownloadMigrationSetupAsync()", StringComparison.Ordinal)..];
+        download = download[..download.IndexOf("private void ShowStoreMigrationStatus", StringComparison.Ordinal)];
+        Assert.Contains("Launcher.LaunchUriAsync(InnoMigrationHandoff.InstallerUri)", download);
+        Assert.DoesNotContain("Process.Start", download);
+        Assert.DoesNotContain("GrantAndLaunchAsync", download);
+        var xaml = Read("src", "OpenClaw.Tray.WinUI", "Pages", "SettingsPage.xaml");
+        Assert.Contains("x:Uid=\"Migration2_InnoDownloadSetup\"", xaml);
+        Assert.Contains("Click=\"OnDownloadMigrationSetup\"", xaml);
+    }
+
+    [Fact]
     public void MigrationWindow_HasAccessibleNamedActionsAndNoInventedProgress()
     {
         var xaml = Read("src", "OpenClaw.Tray.WinUI", "Windows", "StoreMigrationWindow.xaml");

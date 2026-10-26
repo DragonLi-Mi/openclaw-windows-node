@@ -7764,6 +7764,15 @@ Uw instellingen, gateway, bestanden en modellen blijven op hun plaats.</value>
   <data name="Migration2_InnoGranted" xml:space="preserve">
     <value>De toestemming voor migratie is opgeslagen. Installeer en open de Store-versie om door te gaan. Laat deze app geïnstalleerd totdat de voltooiing van de migratie is bevestigd.</value>
   </data>
+  <data name="Migration2_InnoRepairRequired" xml:space="preserve">
+    <value>Vereiste installatiebestanden ontbreken of zijn ongeldig. Download het volledige OpenClaw-installatieprogramma. Sluit OpenClaw af, voer het installatieprogramma over deze installatie uit als dezelfde Windows-gebruiker en open de app opnieuw om de migratie nogmaals te proberen. Verwijder OpenClaw niet vooraf.</value>
+  </data>
+  <data name="Migration2_InnoSetupLinkFailed" xml:space="preserve">
+    <value>Windows kon de downloadlink voor het installatieprogramma niet openen. Kopieer dit adres naar uw browser: {0}. Verwijder OpenClaw niet vooraf.</value>
+  </data>
+  <data name="Migration2_InnoDownloadSetup.Content" xml:space="preserve">
+    <value>Installatieprogramma voor herstel downloaden</value>
+  </data>
   <data name="Migration2_InnoFailed" xml:space="preserve">
     <value>OpenClaw kon de toestemming voor migratie niet opslaan of de Store-pagina niet openen. Bekijk het applogboek en probeer het opnieuw. Verwijder deze app niet.</value>
   </data>

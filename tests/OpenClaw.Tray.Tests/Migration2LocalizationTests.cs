@@ -26,6 +26,33 @@ public sealed class Migration2LocalizationTests
     };
 
     [Theory]
+    [InlineData("en-us", "same Windows user", "Do not uninstall OpenClaw first")]
+    [InlineData("fr-fr", "même utilisateur Windows", "Ne désinstallez pas OpenClaw au préalable")]
+    [InlineData("nl-nl", "dezelfde Windows-gebruiker", "Verwijder OpenClaw niet vooraf")]
+    [InlineData("pt-br", "mesmo usuário do Windows", "Não desinstale o OpenClaw antes")]
+    [InlineData("zh-cn", "同一 Windows 用户", "请勿先卸载 OpenClaw")]
+    [InlineData("zh-tw", "同一 Windows 使用者", "請勿先解除安裝 OpenClaw")]
+    public void InnoRepairGuidance_DisclosesInPlaceRecoveryAndHasADownloadAction(
+        string locale, string sameUser, string keepInstalled)
+    {
+        var resources = ReadResources(locale);
+        var repair = resources["Migration2_InnoRepairRequired"];
+        Assert.Contains(sameUser, repair);
+        Assert.Contains(keepInstalled, repair);
+        Assert.NotEqual(resources["Migration2_InnoFailed"], repair);
+        Assert.False(string.IsNullOrWhiteSpace(resources["Migration2_InnoDownloadSetup.Content"]));
+        Assert.Contains("{0}", resources["Migration2_InnoSetupLinkFailed"]);
+        foreach (var key in new[]
+        {
+            "Migration2_InnoRepairRequired", "Migration2_InnoSetupLinkFailed"
+        })
+        {
+            Assert.False(string.IsNullOrWhiteSpace(resources[key]));
+            Assert.DoesNotContain("\u2014", resources[key]);
+        }
+    }
+
+    [Theory]
     [InlineData("en-us", "Microsoft Store opens", "close this app",
         "without asking again", "settings, gateway, files, and models stay where they are")]
     [InlineData("fr-fr", "Le Microsoft Store s'ouvre", "fermer cette application",

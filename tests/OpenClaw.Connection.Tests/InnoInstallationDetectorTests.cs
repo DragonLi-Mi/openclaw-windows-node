@@ -201,6 +201,7 @@ public sealed class InnoInstallationDetectorTests
             fixture.Payload("OpenClaw.Tray.WinUI.exe"), fixture.Payload("unins000.exe"),
             "x64", new Version(2026, 9, 5, 0)), result.Installation);
         Assert.Empty(fixture.Logger.Warnings);
+        Assert.False(result.RequiresInstallerRepair);
     }
 
     [Fact]
@@ -257,6 +258,7 @@ public sealed class InnoInstallationDetectorTests
         using var fixture = new Fixture();
         File.Delete(fixture.Payload(name));
         fixture.AssertUnsupported();
+        Assert.True(fixture.Detect().RequiresInstallerRepair);
     }
 
     [Fact]

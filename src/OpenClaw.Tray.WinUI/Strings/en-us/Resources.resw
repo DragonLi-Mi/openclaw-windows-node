@@ -7832,6 +7832,15 @@ Your settings, gateway, files, and models stay where they are.</value>
   <data name="Migration2_InnoGranted" xml:space="preserve">
     <value>Migration consent was saved. Install and open the Store version to continue. Keep this app installed until migration completion is confirmed.</value>
   </data>
+  <data name="Migration2_InnoRepairRequired" xml:space="preserve">
+    <value>Required installation files are missing or invalid. Download the full OpenClaw Setup installer. Exit OpenClaw, run Setup over this installation as the same Windows user, then reopen the app and try migration again. Do not uninstall OpenClaw first.</value>
+  </data>
+  <data name="Migration2_InnoSetupLinkFailed" xml:space="preserve">
+    <value>Windows could not open the Setup download link. Copy this address into your browser: {0}. Do not uninstall OpenClaw first.</value>
+  </data>
+  <data name="Migration2_InnoDownloadSetup.Content" xml:space="preserve">
+    <value>Download Setup to repair</value>
+  </data>
   <data name="Migration2_InnoFailed" xml:space="preserve">
     <value>OpenClaw could not save migration consent or open the Store listing. Check the app log and retry. Do not uninstall this app.</value>
   </data>

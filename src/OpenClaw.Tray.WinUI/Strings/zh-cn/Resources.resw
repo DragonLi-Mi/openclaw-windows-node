@@ -7763,6 +7763,15 @@
   <data name="Migration2_InnoGranted" xml:space="preserve">
     <value>已保存迁移授权。请安装并打开 Store 版本以继续。在确认迁移完成之前，请保留此应用。</value>
   </data>
+  <data name="Migration2_InnoRepairRequired" xml:space="preserve">
+    <value>所需的安装文件缺失或无效。请下载完整的 OpenClaw 安装程序。退出 OpenClaw，以同一 Windows 用户运行安装程序覆盖此安装，然后重新打开应用并重试迁移。请勿先卸载 OpenClaw。</value>
+  </data>
+  <data name="Migration2_InnoSetupLinkFailed" xml:space="preserve">
+    <value>Windows 无法打开安装程序下载链接。请将此地址复制到浏览器中：{0}。请勿先卸载 OpenClaw。</value>
+  </data>
+  <data name="Migration2_InnoDownloadSetup.Content" xml:space="preserve">
+    <value>下载安装程序以修复</value>
+  </data>
   <data name="Migration2_InnoFailed" xml:space="preserve">
     <value>OpenClaw 无法保存迁移授权或打开 Store 中的应用页面。请查看应用日志并重试。请勿卸载此应用。</value>
   </data>

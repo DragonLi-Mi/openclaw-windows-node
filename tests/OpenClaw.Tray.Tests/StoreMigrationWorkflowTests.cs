@@ -718,6 +718,13 @@ public sealed class StoreMigrationWorkflowTests
         Assert.Equal("ms-windows-store://pdp/?ProductId=9EXAMPLE0000", uri!.AbsoluteUri);
     }
 
+    [Theory]
+    [InlineData("x64", "https://github.com/openclaw/openclaw-windows-node/releases/latest/download/OpenClawCompanion-Setup-x64.exe")]
+    [InlineData("arm64", "https://github.com/openclaw/openclaw-windows-node/releases/latest/download/OpenClawCompanion-Setup-arm64.exe")]
+    [InlineData("unknown", "https://github.com/openclaw/openclaw-windows-node/releases/latest")]
+    public void InstallerLink_UsesOfficialFullSetupForTheRequestedArchitecture(string architecture, string expected) =>
+        Assert.Equal(expected, StoreMigrationListing.CreateInstallerUri(architecture).AbsoluteUri);
+
     private static StoreMigrationWorkflow Create(Operations operations) => new(operations, NullLogger.Instance);
 
     private sealed class Operations : IStoreMigrationOperations

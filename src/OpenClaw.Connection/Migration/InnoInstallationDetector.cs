@@ -121,7 +121,7 @@ public sealed class InnoInstallationDetector : IInnoInstallationDetector
                     // to update instead of declaring the installation unsupportable.
                     return Unsupported(
                         $"The required Inno payload {name} is missing or is not an ordinary file.", version,
-                        sourcePayloadPresent);
+                        sourcePayloadPresent, requiresInstallerRepair: true);
                 }
             }
 
@@ -216,12 +216,13 @@ public sealed class InnoInstallationDetector : IInnoInstallationDetector
 
     private InnoInstallationDetection Unsupported(
         string reason, Version? registeredVersion = null, bool sourcePayloadPresent = false,
-        bool registeredVersionUnsupported = false)
+        bool registeredVersionUnsupported = false, bool requiresInstallerRepair = false)
     {
         _logger.Warn(reason);
         return new(InnoInstallationStatus.Unsupported, Reason: reason,
             RegisteredVersion: registeredVersion, SourcePayloadPresent: sourcePayloadPresent,
-            RegisteredVersionUnsupported: registeredVersionUnsupported);
+            RegisteredVersionUnsupported: registeredVersionUnsupported,
+            RequiresInstallerRepair: requiresInstallerRepair);
     }
 }
 
