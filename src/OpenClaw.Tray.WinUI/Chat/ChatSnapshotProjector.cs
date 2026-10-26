@@ -1,6 +1,7 @@
 using OpenClaw.Chat;
 using OpenClaw.Shared;
 using OpenClawTray.Services;
+using System.Collections.Immutable;
 
 namespace OpenClawTray.Chat;
 
@@ -20,7 +21,8 @@ internal sealed record ChatSnapshotProjectionInput(
     string? RememberedDefaultThreadId,
     string? RememberedThreadTitle,
     string? RememberedModel,
-    string? RememberedModelProvider);
+    string? RememberedModelProvider,
+    IReadOnlySet<string>? CurrentHistoryThreads = null);
 
 internal static class ChatSnapshotProjector
 {
@@ -91,7 +93,11 @@ internal static class ChatSnapshotProjector
             CommandsSupported: input.CommandCatalog?.IsSupported ?? true,
             TimelineGenerations: input.TimelineGenerations,
             HistoryRevisions: input.HistoryRevisions,
-            QueuedMessagesByThread: input.QueuedMessages);
+            QueuedMessagesByThread: input.QueuedMessages,
+            CurrentHistoryThreads: input.Status == ConnectionStatus.Connected
+                ? input.CurrentHistoryThreads?.ToImmutableHashSet(StringComparer.Ordinal)
+                    ?? ImmutableHashSet<string>.Empty
+                : ImmutableHashSet<string>.Empty);
     }
 
     internal static string? ResolveDefaultThreadId(ChatSnapshotProjectionInput input)
@@ -128,12 +134,16 @@ internal static class ChatSnapshotProjector
             Title = title,
             AgentId = display.AgentId,
             IsBackground = display.IsBackground,
+            IsArchived = session.Archived,
+            IsChannelSession = display.Classification.ToLowerInvariant() is "direct" or "group" or "channel" or "thread",
             Status = SessionVisibilityFilter.ToChatThreadStatus(session),
             Activity = SessionVisibilityFilter.ToChatThreadActivity(session),
             Workspace = session.Channel,
             Model = session.Model,
             ModelProvider = session.Provider,
             ThinkingLevel = session.ThinkingLevel,
+            ThinkingContext = session.ThinkingContext,
+            ThinkingDefaults = session.ThinkingDefaults,
             InputTokens = session.InputTokens,
             OutputTokens = session.OutputTokens,
             TotalTokens = session.TotalTokens,

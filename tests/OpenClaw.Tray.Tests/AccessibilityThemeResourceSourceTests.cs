@@ -3,6 +3,39 @@ namespace OpenClaw.Tray.Tests;
 public sealed class AccessibilityThemeResourceSourceTests
 {
     [Fact]
+    public void MainWindowShells_PreserveMicaAndHighContrastChatResources()
+    {
+        // Retirement: replace when production window shells can be mounted in native tests.
+        var hub = System.Xml.Linq.XElement.Parse(ReadSource("src", "OpenClaw.Tray.WinUI", "Windows", "HubWindow.xaml"));
+        var workspace = System.Xml.Linq.XElement.Parse(ReadSource("src", "OpenClaw.Tray.WinUI", "Windows", "WorkspaceWindow.xaml"));
+        var resources = System.Xml.Linq.XElement.Parse(ReadSource("src", "OpenClaw.Tray.WinUI", "Themes", "ChatResources.xaml"));
+        System.Xml.Linq.XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        Assert.Single(hub.Descendants(), element => element.Name.LocalName == "MicaBackdrop");
+        Assert.Single(workspace.Descendants(), element => element.Name.LocalName == "MicaBackdrop");
+        foreach (var shell in new[] { hub, workspace })
+        {
+            var title = shell.Descendants().Single(element =>
+                (string?)element.Attribute(x + "Name") == (shell == hub ? "AppTitleBar" : "WorkspaceTitleBar"));
+            Assert.Null(title.Attribute("Background"));
+        }
+        Assert.DoesNotContain(hub.Descendants(), element =>
+            (string?)element.Attribute("Background") == "{ThemeResource NavigationViewContentBackground}");
+        foreach (var theme in resources.Descendants().Where(element =>
+            element.Name.LocalName == "ResourceDictionary" && element.Attribute(x + "Key") is not null))
+        {
+            var canvas = theme.Elements().Single(element => (string?)element.Attribute(x + "Key") == "ChatCanvasBrush");
+            var highContrast = (string?)theme.Attribute(x + "Key") == "HighContrast";
+            Assert.Equal(highContrast ? "{ThemeResource SystemColorWindowColor}" : "Transparent",
+                (string?)canvas.Attribute("Color"));
+            if (!highContrast)
+            {
+                var composer = theme.Elements().Single(element => (string?)element.Attribute(x + "Key") == "ChatComposerBrush");
+                Assert.Equal("{ThemeResource CardBackgroundFillColorDefault}", (string?)composer.Attribute("Color"));
+            }
+        }
+    }
+
+    [Fact]
     public void TrayThemeChanges_AreOwnedByXamlResourcesInsteadOfAccessibilitySettings()
     {
         var connection = ReadSource("src", "OpenClaw.Tray.WinUI", "Pages", "ConnectionPage.xaml.cs");
@@ -24,7 +57,8 @@ public sealed class AccessibilityThemeResourceSourceTests
         Assert.Contains("Theme.Ref(\"CardBackgroundFillColorDefaultBrush\")", timeline);
         Assert.Contains("Theme.Ref(\"ControlStrokeColorDefaultBrush\")", timeline);
         Assert.Contains("ConnectionCapabilityPillSuccessBrush", connectionXaml);
-        Assert.Contains("ImageIcon Source=\"{StaticResource Chat_Icon}\"", hubXaml);
+        Assert.Contains("Source=\"{StaticResource Chat_Icon}\"", hubXaml);
+        Assert.Contains("MicaBackdrop", ReadSource("src", "OpenClaw.Tray.WinUI", "Windows", "WorkspaceWindow.xaml"));
         Assert.Contains("new ImageIcon", hub);
         Assert.Contains("NavView.Resources[\"Agents_Icon\"]", hub);
         Assert.Contains("ApplyHighContrastFallbackIfNeeded", hub);

@@ -12,6 +12,8 @@ public enum LocalAiQuiesceReason
     Teardown,
 }
 
+public enum LocalAiRuntimeStartStage { StartingRuntime, CheckingConfiguration, PublishingProvider, VerifyingEndpoint }
+
 /// <summary>
 /// Coordinates consumers of the app-owned endpoint with native process changes.
 /// Implementations must remove managed routing before a listener can disappear,
@@ -19,6 +21,29 @@ public enum LocalAiQuiesceReason
 /// </summary>
 public interface ILocalAiEndpointLifecycle
 {
+    bool HasReleasableOwnership => false;
+    /// <summary>Presentation hint only. Start must still revalidate the selected Gateway.</summary>
+    bool RequiresNativeSelection => false;
+    event EventHandler? SelectionChanged { add { } remove { } }
+    bool AutomaticRecoveryEnabled => true;
+    Task ReleaseOwnershipAsync(CancellationToken cancellationToken)
+        => throw new InvalidOperationException("There is no native Local AI ownership to release.");
+    Task PrepareStartAsync(LocalAiResolvedInstall install, CancellationToken cancellationToken)
+        => Task.CompletedTask;
+    Task PrepareUnownedStopAsync(CancellationToken cancellationToken)
+        => Task.CompletedTask;
+    /// <summary>Confirm withdrawal through the original owner without inferring provider ownership from damaged artifacts.</summary>
+    Task ConfirmWithdrawnWithoutInstallAsync(CancellationToken cancellationToken)
+        => throw new InvalidOperationException("Restore the Local AI installation receipt before resolving its Gateway route.");
+    Task<LocalAiEndpointLifecycleResult> CompleteStartAsync(LocalAiResolvedInstall install, CancellationToken cancellationToken)
+        => Task.FromResult(LocalAiEndpointLifecycleResult.Ok());
+    Task<LocalAiEndpointLifecycleResult> CompleteStartAsync(LocalAiResolvedInstall install, CancellationToken cancellationToken,
+        IProgress<LocalAiRuntimeStartStage>? progress) => CompleteStartAsync(install, cancellationToken);
+
+    /// <summary>Durable owners persist explicit running intent; stateless transports need no receipt.</summary>
+    Task SetAutomaticRecoveryEnabledAsync(bool enabled, CancellationToken cancellationToken = default)
+        => Task.CompletedTask;
+
     Task<LocalAiEndpointLifecycleResult> QuiesceAsync(
         LocalAiResolvedInstall install,
         LocalAiQuiesceReason reason = LocalAiQuiesceReason.Teardown,
@@ -27,6 +52,14 @@ public interface ILocalAiEndpointLifecycle
     Task<LocalAiEndpointLifecycleResult> PublishAsync(
         LocalAiResolvedInstall install,
         CancellationToken cancellationToken = default);
+
+    Task<LocalAiEndpointLifecycleResult> PublishAsync(LocalAiResolvedInstall install, CancellationToken cancellationToken,
+        IProgress<LocalAiRuntimeStartStage>? progress)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        progress?.Report(LocalAiRuntimeStartStage.PublishingProvider);
+        return PublishAsync(install, cancellationToken);
+    }
 }
 
 internal sealed class NullLocalAiEndpointLifecycle : ILocalAiEndpointLifecycle

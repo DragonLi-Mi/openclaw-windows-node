@@ -42,6 +42,7 @@ function New-GateArguments {
         Arm64ReleaseResult = "skipped"
         MetadataResult = "skipped"
         MsixResult = "skipped"
+        MsixBundleResult = "skipped"
     }
 }
 
@@ -52,10 +53,11 @@ function Invoke-Gate([hashtable]$Arguments) {
 function Assert-GateFails {
     param(
         [Parameter(Mandatory)][hashtable]$Overrides,
-        [Parameter(Mandatory)][string]$Scenario
+        [Parameter(Mandatory)][string]$Scenario,
+        [hashtable]$BaseArguments = (New-GateArguments)
     )
 
-    $arguments = New-GateArguments
+    $arguments = $BaseArguments.Clone()
     foreach ($entry in $Overrides.GetEnumerator()) {
         $arguments[$entry.Key] = $entry.Value
     }
@@ -83,6 +85,48 @@ $docsArguments.CoreResult = "skipped"
 $docsOnly = Invoke-Gate $docsArguments
 if ($docsOnly -ne "docs_only") {
     throw "Expected the docs-only gate to pass."
+}
+
+$fastArguments = $docsArguments.Clone()
+$fastArguments.Classification = "fast_only"
+if ((Invoke-Gate $fastArguments) -ne "fast_only") {
+    throw "Expected fast-only tooling with successful mandatory checks and skipped product lanes to pass."
+}
+foreach ($classification in @("docs_only", "fast_only")) {
+    $arguments = $fastArguments.Clone()
+    $arguments.Classification = $classification
+    foreach ($prefix in @("Classification", "FastValidation", "ProofPoolContracts")) {
+        foreach ($result in @("failure", "cancelled", "skipped", "", "unknown")) {
+            Assert-GateFails -BaseArguments $arguments -Overrides @{ "${prefix}Result" = $result } `
+                -Scenario "$classification mandatory $prefix returned '$result'"
+        }
+    }
+    foreach ($prefix in @("Core", "Tray", "Ui", "SetupE2e", "RevocationE2e", "NetworkE2e", "X64Release", "Arm64Release")) {
+        foreach ($value in @("true", "", "invalid")) {
+            Assert-GateFails -BaseArguments $arguments -Overrides @{ "${prefix}Required" = $value } `
+                -Scenario "$classification invalid $prefix selection '$value'"
+        }
+    }
+    foreach ($value in @("true", "", "invalid")) {
+        Assert-GateFails -BaseArguments $arguments -Overrides @{ FullRequired = $value } `
+            -Scenario "$classification invalid full selection '$value'"
+    }
+    foreach ($prefix in @("Core", "Tray", "Ui", "SetupE2e", "RevocationE2e", "NetworkE2e",
+            "X64Release", "Arm64Release", "Metadata", "Msix", "MsixBundle")) {
+        foreach ($result in @("success", "failure", "cancelled", "", "unknown")) {
+            Assert-GateFails -BaseArguments $arguments -Overrides @{ "${prefix}Result" = $result } `
+                -Scenario "$classification unselected $prefix returned '$result'"
+        }
+    }
+}
+Assert-GateFails -BaseArguments $fastArguments -Overrides @{ Classification = "targeted" } `
+    -Scenario "Targeted classification with no selected product lanes"
+Assert-GateFails -Overrides @{ FullRequired = "true" } -Scenario "Targeted classification set full"
+foreach ($prefix in @("Core", "Tray", "Ui", "SetupE2e", "RevocationE2e", "NetworkE2e", "X64Release", "Arm64Release")) {
+    foreach ($result in @("failure", "cancelled", "skipped", "", "unknown")) {
+        Assert-GateFails -Overrides @{ "${prefix}Required" = "true"; "${prefix}Result" = $result } `
+            -Scenario "Targeted selected $prefix returned '$result'"
+    }
 }
 
 $uiArguments = New-GateArguments
@@ -114,6 +158,7 @@ foreach ($prefix in @(
 }
 $fullArguments.MetadataResult = "success"
 $fullArguments.MsixResult = "success"
+$fullArguments.MsixBundleResult = "success"
 $full = Invoke-Gate $fullArguments
 if ($full -ne "full") {
     throw "Expected the full gate to pass."
@@ -135,6 +180,7 @@ foreach ($prefix in @(
 }
 $fullPrArguments.MetadataResult = "success"
 $fullPrArguments.MsixResult = "success"
+$fullPrArguments.MsixBundleResult = "success"
 $fullPr = Invoke-Gate $fullPrArguments
 if ($fullPr -ne "full") {
     throw "Expected full pull request validation without ARM64 publish to pass."
@@ -148,19 +194,29 @@ Assert-GateFails -Overrides @{ CoreResult = "skipped" } -Scenario "Required lane
 Assert-GateFails -Overrides @{ CoreResult = "cancelled" } -Scenario "Required lane cancelled"
 Assert-GateFails -Overrides @{ CoreResult = "failure" } -Scenario "Required lane failed"
 Assert-GateFails -Overrides @{ MsixResult = "success" } -Scenario "Unselected MSIX lane ran"
+Assert-GateFails -Overrides @{ MsixBundleResult = "success" } -Scenario "Unselected MSIX bundle lane ran"
 foreach ($result in @("failure", "cancelled", "skipped", "")) {
     Assert-GateFails -Overrides @{
         X64ReleaseRequired = "true"
         X64ReleaseResult = "success"
         MetadataResult = "success"
         MsixResult = $result
+        MsixBundleResult = "success"
     } -Scenario "Selected MSIX lane returned '$result'"
+    Assert-GateFails -Overrides @{
+        X64ReleaseRequired = "true"
+        X64ReleaseResult = "success"
+        MetadataResult = "success"
+        MsixResult = "success"
+        MsixBundleResult = $result
+    } -Scenario "Selected MSIX bundle lane returned '$result'"
 }
 $arm64Arguments = New-GateArguments
 $arm64Arguments.Arm64ReleaseRequired = "true"
 $arm64Arguments.Arm64ReleaseResult = "success"
 $arm64Arguments.MetadataResult = "success"
 $arm64Arguments.MsixResult = "success"
+$arm64Arguments.MsixBundleResult = "success"
 if ((Invoke-Gate $arm64Arguments) -ne "targeted") {
     throw "Expected ARM64 release selection to require successful MSIX artifacts."
 }

@@ -1,4 +1,5 @@
 using OpenClaw.Connection;
+using OpenClaw.Shared;
 using OpenClawTray;
 using System;
 using System.Collections.Generic;
@@ -29,12 +30,28 @@ internal sealed class WslGatewayKeepAliveService(
     /// </summary>
     public async Task TryEnsureAsync()
     {
+        // This must precede BOTH the start path and stale cleanup. A loopback fixture
+        // is not a local WSL gateway, and an invalid context must fail before any IO.
+        if (GatewayFixtureIsolation.IsEnabled)
+        {
+            Logger.Info("[WslKeepAlive] Gateway fixture mode: skipping keepalive start and stale cleanup.");
+            return;
+        }
+
         try
         {
             var settings = _getSettings();
             if (settings is null) return;
 
             var activeRecord = _getRegistry()?.GetActive();
+            // An isolated profile has no authority to adopt the normal user's
+            // default distro or clean up keepalives discovered outside its records.
+            if (!WslKeepAlivePolicy.CanManageGateway(activeRecord, AppIdentity.IsIsolated))
+            {
+                Logger.Info("[WslKeepAlive] Isolated profile has no explicitly managed gateway; skipping lifecycle actions.");
+                return;
+            }
+
             if (!WslKeepAlivePolicy.ShouldStart(activeRecord, settings.GetEffectiveGatewayUrl()))
             {
                 await StopStaleLocalGatewayKeepAliveAsync();
@@ -205,7 +222,7 @@ internal sealed class WslGatewayKeepAliveService(
                 !doc.RootElement.TryGetProperty("Pid", out var pidElement) ||
                 !pidElement.TryGetInt32(out var pid) ||
                 !doc.RootElement.TryGetProperty("StartTimeUtc", out var startElement) ||
-                !startElement.TryGetDateTime(out var markerStartTimeUtc))
+                !WslKeepAlivePolicy.TryReadMarkerStartTimeUtc(startElement, out var markerStartTimeUtc))
             {
                 return false;
             }

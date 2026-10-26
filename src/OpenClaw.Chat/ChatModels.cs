@@ -1,3 +1,5 @@
+using OpenClaw.Shared;
+
 namespace OpenClaw.Chat;
 
 public enum ChatThreadStatus
@@ -112,8 +114,8 @@ public record ChatThread
     public required string Title { get; init; }
     public string? AgentId { get; init; }
     public bool IsBackground { get; init; }
-    public bool IsVisibleInSessionPicker(string? activeThreadId) =>
-        !IsBackground || string.Equals(Id, activeThreadId, StringComparison.Ordinal);
+    public bool IsArchived { get; init; }
+    public bool IsChannelSession { get; init; }
     public ChatThreadStatus Status { get; init; }
     public ChatActivity Activity { get; init; }
     public string? Cwd { get; init; }
@@ -126,6 +128,8 @@ public record ChatThread
     public string? Model { get; init; }
     public string? ModelProvider { get; init; }
     public string? ThinkingLevel { get; init; }
+    public ThinkingContext? ThinkingContext { get; init; }
+    public ThinkingContext? ThinkingDefaults { get; init; }
     public long InputTokens { get; init; }
     public long OutputTokens { get; init; }
     public long TotalTokens { get; init; }
@@ -157,7 +161,8 @@ public record ChatTimelineItem(
     long ToolOutcomeSequence = 0,
     string? ToolRunId = null,
     long ToolLegacyTurn = 0,
-    ChatToolErrorTextQuality ToolErrorTextQuality = ChatToolErrorTextQuality.Unspecified);
+    ChatToolErrorTextQuality ToolErrorTextQuality = ChatToolErrorTextQuality.Unspecified,
+    bool IsBackgroundFinal = false);
 
 public readonly record struct ChatToolCorrelationKey(
     string? RunId,
@@ -239,6 +244,7 @@ public record ChatReasoningDeltaEvent(string Text) : ChatEvent;
 public record ChatReasoningEndEvent() : ChatEvent;
 public record ChatMessageEvent(string Text, string? ReasoningText = null, bool ReconcilePrevious = false, bool IsStreaming = false) : ChatEvent;
 public record ChatMessageDeltaEvent(string Text) : ChatEvent;
+public record ChatBackgroundFinalEvent(string Text) : ChatEvent;
 public record ChatTurnEndEvent(bool RetainToolCorrelations = true) : ChatEvent;
 public record ChatIntentEvent(string Intent) : ChatEvent;
 public record ChatToolStartEvent(
@@ -274,6 +280,10 @@ public record ChatPermissionRequestEvent(string RequestId, string PermissionKind
 public record ChatModelChangedEvent(string Model) : ChatEvent;
 public record ChatRawEvent(string EventType, string? Text = null) : ChatEvent;
 
+/// <remarks>
+/// <see cref="CurrentHistoryThreads"/> contains session keys whose history is authoritative for the current connection.
+/// Null means freshness is unknown, even when a cached timeline has HistoryLoaded.
+/// </remarks>
 public record ChatDataSnapshot(
     ChatThread[] Threads,
     IReadOnlyDictionary<string, ChatTimelineState> Timelines,
@@ -286,7 +296,8 @@ public record ChatDataSnapshot(
     bool CommandsSupported = true,
     IReadOnlyDictionary<string, long>? TimelineGenerations = null,
     IReadOnlyDictionary<string, long>? HistoryRevisions = null,
-    IReadOnlyDictionary<string, IReadOnlyList<ChatQueuedMessage>>? QueuedMessagesByThread = null);
+    IReadOnlyDictionary<string, IReadOnlyList<ChatQueuedMessage>>? QueuedMessagesByThread = null,
+    IReadOnlySet<string>? CurrentHistoryThreads = null);
 
 /// <summary>
 /// Describes where the UI may send the next chat message. Distinct from
@@ -337,6 +348,7 @@ public sealed class ChatProviderNotificationEventArgs(ChatProviderNotification n
 public interface IChatDataProvider : IAsyncDisposable
 {
     string DisplayName { get; }
+    IChatPlacementGateway? PlacementGateway => null;
 
     event EventHandler<ChatDataChangedEventArgs>? Changed;
     event EventHandler<ChatProviderNotificationEventArgs>? NotificationRequested;

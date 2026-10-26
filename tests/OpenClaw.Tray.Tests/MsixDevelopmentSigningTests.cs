@@ -53,6 +53,10 @@ public sealed class MsixDevelopmentSigningTests
         Assert.Contains("[ValidateRange(1, 65535)]", buildScript);
         Assert.Contains("$explicitMsixRevision", buildScript);
         Assert.Contains("-MsixRevision and -MsixOutputDirectory require -Msix Dev.", buildScript);
+        Assert.Contains("-MsixBaseVersion requires -Msix Dev.", buildScript);
+        Assert.Contains("Select-LocalDevMsixBaseVersion", buildScript);
+        Assert.Contains("Get-CurrentAppBaseVersion", buildScript);
+        Assert.Contains("-p:MsixPackageBaseVersion=$effectiveMsixBaseVersion", buildScript);
         Assert.Contains("The Dev MSIX output directory must be absent or empty:", buildScript);
         Assert.Contains("([version]$installedDevPackage.Version.ToString()).Revision + 1", buildScript);
         Assert.Contains("setup-dev-msix-cert.ps1", buildScript);
@@ -94,7 +98,8 @@ public sealed class MsixDevelopmentSigningTests
 
         // Exactly one package per architecture, deterministically named, with provenance.
         Assert.Contains("$builtPackages.Count -ne 1", packagingScript);
-        Assert.Contains("\"OpenClawCompanion-$Architecture.msix\"", packagingScript);
+        Assert.Contains("\"OpenClaw-$Architecture.msix\"", packagingScript);
+        Assert.Contains(@"artifacts\msix\$storeArchitecture\OpenClaw-$storeArchitecture.msix", buildScript);
         Assert.Contains("msix-metadata.json", packagingScript);
         Assert.Contains("signed = $false", packagingScript);
         Assert.Contains("sourceTreeDirty = $sourceTreeDirty", packagingScript);
@@ -109,7 +114,13 @@ public sealed class MsixDevelopmentSigningTests
         Assert.Contains("'vcruntime140.dll',", packagingScript);
         Assert.Contains("'msvcp140.dll',", packagingScript);
         Assert.Contains("The MSIX is missing required content:", packagingScript);
-        Assert.Contains("\"tools/mxc/$Architecture/wxc-exec.exe\"", packagingScript);
+        Assert.Contains("'Microsoft.Mxc.Sdk.dll'", packagingScript);
+        Assert.Contains("'mxc_ffi.dll'", packagingScript);
+        Assert.Contains("'plm.exe'", packagingScript);
+        Assert.Contains("'wxc-wslc-daemon.exe'", packagingScript);
+        Assert.Contains("'tools/local-ai-vc-runtime/msvcp140.dll'", packagingScript);
+        Assert.Contains("'tools/local-ai-vc-runtime/vcruntime140.dll'", packagingScript);
+        Assert.Contains("'tools/local-ai-vc-runtime/vcruntime140_1.dll'", packagingScript);
         Assert.Contains("'OpenClaw.SetupEngine.UI.dll',", packagingScript);
         Assert.Contains("'coreclr.dll',", packagingScript);
 
@@ -117,6 +128,27 @@ public sealed class MsixDevelopmentSigningTests
         Assert.DoesNotContain("DevBuild", packagingScript);
         Assert.DoesNotContain("PackageCertificate", packagingScript);
         Assert.DoesNotContain("MsixRevision", packagingScript);
+        Assert.Contains("Read-MsixVersionInfo", packagingScript);
+        Assert.Contains("-p:MsixPackageBaseVersion=", packagingScript);
+        Assert.Contains("msixVersionAllocation = $versionInfo", packagingScript);
+        Assert.DoesNotContain("UpdateVersionProperties=false", packagingScript);
+        Assert.DoesNotContain("UpdateAssemblyInfo=false", packagingScript);
+    }
+
+    [Fact]
+    public void MsixPackageAllocation_DoesNotOverrideApplicationVersionMetadata()
+    {
+        var root = TestRepositoryPaths.GetRepositoryRoot();
+        var project = File.ReadAllText(Path.Combine(
+            root, "src", "OpenClaw.Tray.WinUI", "OpenClaw.Tray.WinUI.csproj"));
+        var buildScript = File.ReadAllText(Path.Combine(root, "build.ps1"));
+
+        Assert.Contains("<_AppxBaseVersion Condition=\"'$(MsixPackageBaseVersion)' != ''\">$(MsixPackageBaseVersion)</_AppxBaseVersion>", project);
+        Assert.Contains("packageVersion.Build > 65535", project);
+        Assert.DoesNotContain("<Version>$(MsixPackageBaseVersion)</Version>", project);
+        Assert.DoesNotContain("-p:Version=$MsixBaseVersion", buildScript);
+        Assert.DoesNotContain("UpdateVersionProperties=false", buildScript);
+        Assert.DoesNotContain("UpdateAssemblyInfo=false", buildScript);
     }
 
     [Fact]
@@ -144,15 +176,17 @@ public sealed class MsixDevelopmentSigningTests
             root, "src", "OpenClaw.Tray.WinUI", "OpenClaw.Tray.WinUI.csproj"));
         var directoryTargets = File.ReadAllText(Path.Combine(root, "src", "Directory.Build.targets"));
 
-        Assert.Contains("AddWxcExecToPublishItems", project);
-        Assert.Contains("<ResolvedFileToPublish Include=\"@(_WxcExecPackageFiles)\">", project);
-        Assert.Contains(@"<RelativePath>tools\mxc\$(MxcArch)\%(Filename)%(Extension)</RelativePath>", project);
+        var sharedProject = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.Shared", "OpenClaw.Shared.csproj"));
+        Assert.Contains("Microsoft.Mxc.Sdk", sharedProject);
+        Assert.DoesNotContain("AddWxcExecToPublishItems", project);
+        Assert.DoesNotContain("_WxcExecPackageFiles", project);
 
-        // The VC runtime deliberately does NOT use publish items. MSIX resolves the CRT
-        // through its VCLibs framework dependency, so the loose DLLs are only needed by
-        // the unpackaged Inno payload, where the post-publish copy already delivers them.
+        // The app itself resolves the CRT through VCLibs. The downloaded llama-server
+        // runs outside the package graph, so MSIX also carries a private staging copy.
         Assert.Contains("CopyOpenClawVCRuntimeToPublish", directoryTargets);
         Assert.DoesNotContain("AddOpenClawVCRuntimeToPublishItems", directoryTargets);
+        Assert.Contains("AddLocalAiVCRuntimeToPublishItems", project);
+        Assert.Contains(@"tools\local-ai-vc-runtime\%(Filename)%(Extension)", project);
     }
 
     [Fact]

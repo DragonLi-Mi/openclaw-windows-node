@@ -30,6 +30,9 @@ public static class AutoStartManager
     /// </remarks>
     public static bool IsAutoStartEnabled()
     {
+        if (AppIdentity.IsIsolated)
+            return false;
+
         if (PackageHelper.IsPackaged)
             return IsPackagedAutoStartEnabled();
 
@@ -48,6 +51,8 @@ public static class AutoStartManager
 
     public static void SetAutoStart(bool enable)
     {
+        ThrowIfFixtureMutation();
+        EnsureRegistrationAllowed();
         if (PackageHelper.IsPackaged)
         {
             SetPackagedAutoStartAsync(enable).GetAwaiter().GetResult();
@@ -57,10 +62,48 @@ public static class AutoStartManager
         SetUnpackagedAutoStart(enable);
     }
 
-    public static Task SetAutoStartAsync(bool enable) =>
-        PackageHelper.IsPackaged
+    public static Task SetAutoStartAsync(bool enable)
+    {
+        ThrowIfFixtureMutation();
+        EnsureRegistrationAllowed();
+        return PackageHelper.IsPackaged
             ? SetPackagedAutoStartAsync(enable)
             : Task.Run(() => SetUnpackagedAutoStart(enable));
+    }
+
+    public static Task ApplySetupPreferenceAsync(bool enable)
+    {
+        ThrowIfFixtureMutation();
+        EnsureRegistrationAllowed();
+        if (PackageHelper.IsPackaged) return SetPackagedAutoStartAsync(enable);
+        return Task.Run(() =>
+        {
+            var exe = Environment.ProcessPath ?? System.Reflection.Assembly.GetExecutingAssembly().Location;
+            if (enable && (string.IsNullOrWhiteSpace(exe) || !File.Exists(exe)))
+                throw new InvalidOperationException("The OpenClaw executable is unavailable for Windows startup.");
+            SetupStartupPolicy.ApplyUnpackaged(enable,
+                () => WindowsStartupTaskRegistration.RegisterForSetup(exe, AppIdentity.StartupTaskName),
+                () => WindowsStartupTaskRegistration.InspectStrict(AppIdentity.StartupTaskName, enable ? exe : null),
+                () => WindowsStartupTaskRegistration.Unregister(AppIdentity.StartupTaskName),
+                () =>
+                {
+                    using var key = Registry.CurrentUser.CreateSubKey(RegistryKey, writable: true)
+                        ?? throw new InvalidOperationException("The Windows startup registry key is unavailable.");
+                    key.SetValue(AppName, $"\"{exe}\"");
+                },
+                () =>
+                {
+                    using var key = Registry.CurrentUser.OpenSubKey(RegistryKey, writable: true);
+                    key?.DeleteValue(AppName, throwOnMissingValue: false);
+                });
+        });
+    }
+
+    private static void EnsureRegistrationAllowed()
+    {
+        if (AppIdentity.IsIsolated)
+            throw new AutoStartRefusedException("Windows startup registration is unavailable in an isolated app instance.");
+    }
 
     /// <summary>
     /// Reports whether auto-start is currently enabled.
@@ -73,7 +116,9 @@ public static class AutoStartManager
     /// <see cref="ResolveAutoStartAfterFailedChangeAsync"/> when the result will be stored.
     /// </remarks>
     public static Task<bool> IsAutoStartEnabledAsync() =>
-        PackageHelper.IsPackaged
+        AppIdentity.IsIsolated
+            ? Task.FromResult(false)
+            : PackageHelper.IsPackaged
             ? IsPackagedAutoStartEnabledAsync()
             : Task.Run(IsAutoStartEnabled);
 
@@ -88,6 +133,12 @@ public static class AutoStartManager
     /// </remarks>
     public static Task<bool> ResolveAutoStartAfterFailedChangeAsync(bool requested, Exception failure)
     {
+        if (GatewayFixtureIsolation.IsEnabled)
+            return Task.FromResult(false);
+
+        if (AppIdentity.IsIsolated)
+            return Task.FromResult(false);
+
         if (!PackageHelper.IsPackaged)
             return Task.Run(IsAutoStartEnabled);
 
@@ -114,6 +165,10 @@ public static class AutoStartManager
     /// </remarks>
     public static Task<bool> ReconcileAutoStartAsync(bool configured)
     {
+        ThrowIfFixtureMutation();
+        if (AppIdentity.IsIsolated)
+            return Task.FromResult(false);
+
         if (!PackageHelper.IsPackaged)
             return Task.FromResult(configured);
 
@@ -123,8 +178,24 @@ public static class AutoStartManager
             SetPackagedAutoStartAsync);
     }
 
+    private static void ThrowIfFixtureMutation()
+    {
+        try
+        {
+            AutoStartReconciliation.ThrowIfFixtureMutation();
+        }
+        catch (AutoStartRefusedException ex)
+        {
+            Logger.Warn(ex.Message);
+            throw;
+        }
+    }
+
     private static void SetUnpackagedAutoStart(bool enable)
     {
+        // Outside the legacy best-effort catch so fixture refusals cannot look successful.
+        ThrowIfFixtureMutation();
+
         try
         {
             if (enable)
@@ -144,7 +215,7 @@ public static class AutoStartManager
                     return;
                 }
 
-                key.SetValue(AppName, $"\"{exePath}\"");
+                key.SetValue(AppName, $"\"{exePath}\" --background");
                 Logger.Info("Auto-start enabled");
             }
             else
@@ -198,6 +269,8 @@ public static class AutoStartManager
 
     private static async Task SetPackagedAutoStartAsync(bool enable)
     {
+        ThrowIfFixtureMutation();
+
         var startupTask = await StartupTask.GetAsync(AppIdentity.PackageStartupTaskId);
         if (!enable)
         {
@@ -219,14 +292,16 @@ public static class AutoStartManager
             return;
         }
 
-        throw new AutoStartRefusedException(state switch
-        {
-            StartupTaskState.DisabledByUser =>
-                "Windows startup is disabled by the user. Re-enable OpenClaw Companion in Settings > Apps > Startup.",
-            StartupTaskState.DisabledByPolicy =>
-                "Windows startup is disabled by policy.",
-            _ => $"Windows did not enable the packaged startup task (state: {state})."
-        });
+        throw new AutoStartRefusedException(
+            state switch
+            {
+                StartupTaskState.DisabledByUser =>
+                    "Windows startup is disabled by the user. Re-enable OpenClaw Companion in Settings > Apps > Startup.",
+                StartupTaskState.DisabledByPolicy =>
+                    "Windows startup is disabled by policy.",
+                _ => $"Windows did not enable the packaged startup task (state: {state})."
+            },
+            state is StartupTaskState.DisabledByUser or StartupTaskState.DisabledByPolicy);
     }
 
     private static void DeleteRunKey()
