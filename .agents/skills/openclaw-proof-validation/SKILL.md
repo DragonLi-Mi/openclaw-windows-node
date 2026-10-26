@@ -14,6 +14,7 @@ If the validation host is macOS, read [PARALLELS.md](PARALLELS.md) for the optio
 - Required automated/focused tests are mandatory. Do not ask to skip them.
 - Prefer isolated tray data so proof does not mutate `%APPDATA%\OpenClawTray`.
 - Computer-use is usually a batched closeout proof pass, not a continuous dev-loop tool. Mid-development use is fine when explicitly requested or needed to unblock work; ask first whether to run it or provide manual screenshot/output steps.
+- Use [Windows proof video](../proof-video/SKILL.md) for measured screenshot annotations, captioned video, zoom/speed cues, and fail-closed visual inspection.
 - Local MCP is part of every Windows node command contract: command discovery and invocation must work through `winnode` or raw MCP JSON-RPC.
 - Rubber-duck review is required before PR publication for non-trivial UI/MCP/node-command/setup/pairing/security/permissions/diagnostics work; it is also useful mid-development when extra design/testing validation is requested.
 - Report blockers explicitly. Do not turn missing UI, MCP, gateway, camera, screen, or permission proof into success-shaped wording.
