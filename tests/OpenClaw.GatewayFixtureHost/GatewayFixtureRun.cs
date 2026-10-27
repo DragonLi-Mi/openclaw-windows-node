@@ -500,14 +500,78 @@ public sealed class GatewayFixtureRun : IAsyncDisposable
         _client?.Dispose();
         _client = null;
         if (_process is null) return;
-        if (!_process.HasExited)
+        // Retain direct WebView children before killing the app. A browser can
+        // outlive its parent during tree termination and keep Crashpad files open.
+        var browsers = FindOwnedBrowsers(_process);
+        try
         {
-            _process.Kill(entireProcessTree: true);
-            await _process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            if (!_process.HasExited)
+            {
+                _process.Kill(entireProcessTree: true);
+                await _process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+            foreach (var browser in browsers)
+            {
+                if (!browser.HasExited)
+                    browser.Kill(entireProcessTree: true);
+                await browser.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            }
+        }
+        finally
+        {
+            foreach (var browser in browsers)
+                browser.Dispose();
         }
         _process.Dispose();
         _process = null;
     }
+
+    private static List<Process> FindOwnedBrowsers(Process app)
+    {
+        var owned = new List<Process>();
+        foreach (var candidate in Process.GetProcessesByName("msedgewebview2"))
+        {
+            var keep = false;
+            try
+            {
+                if (!candidate.HasExited && candidate.StartTime >= app.StartTime
+                    && NtQueryInformationProcess(candidate.Handle, 0, out var info,
+                        Marshal.SizeOf<ProcessBasicInformation>(), out _) == 0
+                    && info.ParentProcessId == (nuint)app.Id)
+                {
+                    // The retained process handle, parent ID and start time bind this
+                    // to the fixture app, never another session's browser.
+                    keep = true;
+                    owned.Add(candidate);
+                }
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                // An inaccessible process cannot be established as ours; leave it alone.
+            }
+            catch (InvalidOperationException)
+            {
+                // The candidate exited during discovery.
+            }
+            finally
+            {
+                if (!keep)
+                    candidate.Dispose();
+            }
+        }
+        return owned;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessBasicInformation
+    {
+        public nint Reserved1, PebBaseAddress, Reserved2, Reserved3;
+        public nuint ProcessId, ParentProcessId;
+    }
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtQueryInformationProcess(nint process, int informationClass,
+        out ProcessBasicInformation information, int informationLength, out int returnLength);
 
     public async ValueTask DisposeAsync()
     {
