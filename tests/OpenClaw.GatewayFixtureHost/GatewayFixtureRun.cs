@@ -503,38 +503,49 @@ public sealed class GatewayFixtureRun : IAsyncDisposable
         // Retain direct WebView children before killing the app. A browser can
         // outlive its parent during tree termination and keep Crashpad files open.
         var browsers = FindOwnedBrowsers(_process);
+        var owned = new List<Process> { _process };
+        owned.AddRange(browsers);
+        var failures = new List<Exception>();
         try
         {
-            if (!_process.HasExited)
+            foreach (var process in owned)
             {
-                _process.Kill(entireProcessTree: true);
-                await _process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
-            }
-            foreach (var browser in browsers)
-            {
-                if (!browser.HasExited)
-                    browser.Kill(entireProcessTree: true);
-                await browser.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                try
+                {
+                    if (!process.HasExited)
+                        process.Kill(entireProcessTree: true);
+                    await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                }
+                catch (Exception ex) when (ex is TimeoutException or System.ComponentModel.Win32Exception or InvalidOperationException)
+                {
+                    // Still attempt every retained child. Preserve failures rather than
+                    // masking them or leaving later browser handles unprocessed.
+                    failures.Add(new InvalidOperationException($"Could not stop fixture process {process.Id}.", ex));
+                }
             }
         }
         finally
         {
-            foreach (var browser in browsers)
-                browser.Dispose();
+            foreach (var process in owned)
+                process.Dispose();
+            _process = null;
         }
-        _process.Dispose();
-        _process = null;
+        if (failures.Count > 0)
+            throw new AggregateException("Fixture process cleanup failed.", failures);
     }
 
     private static List<Process> FindOwnedBrowsers(Process app)
     {
         var owned = new List<Process>();
+        var appStarted = app.StartTime.ToUniversalTime();
+        var latestChildStart = app.HasExited ? app.ExitTime.ToUniversalTime() : DateTime.UtcNow;
         foreach (var candidate in Process.GetProcessesByName("msedgewebview2"))
         {
             var keep = false;
             try
             {
-                if (!candidate.HasExited && candidate.StartTime >= app.StartTime
+                if (!candidate.HasExited && candidate.StartTime.ToUniversalTime() >= appStarted
+                    && candidate.StartTime.ToUniversalTime() <= latestChildStart
                     && NtQueryInformationProcess(candidate.Handle, 0, out var info,
                         Marshal.SizeOf<ProcessBasicInformation>(), out _) == 0
                     && info.ParentProcessId == (nuint)app.Id)
