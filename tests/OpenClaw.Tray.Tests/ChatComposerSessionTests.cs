@@ -99,4 +99,20 @@ public sealed class ChatComposerSessionTests
         Assert.Equal("second", session.ViewModel.Inputs.CurrentThread.Id);
         session.Dispose();
     }
+    [Fact]
+    public void EffectiveThreadProjectionBindsInitialFallbackAndChangedSpeechTargetsWithoutRenderDuplicates()
+    {
+        var observed = new List<string>();
+        var factory = new ChatComposerFactory(new RecordingUiDispatcher());
+        using var session = factory.Create(new FakeChatDataProviderForComposerTests(),
+            new ChatComposerHostActions(null, null, null, null, SpeechTargetChanged: observed.Add), false);
+        session.ApplyInputs(MakeInputs("initial-default"));
+        session.ApplyInputs(MakeInputs("initial-default"));
+        session.ApplyInputs(MakeInputs("fallback-thread"));
+        session.ApplyInputs(MakeInputs("selected-thread"));
+        session.Dispose();
+        session.ApplyInputs(MakeInputs("retired-thread"));
+        Assert.Equal(new[] { "initial-default", "fallback-thread", "selected-thread" }, observed);
+    }
+
 }

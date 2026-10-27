@@ -42,7 +42,8 @@ public static class ReactorChatHostExtensions
         Action<bool>? onSpeakerMuteChanged,
         bool initialMuted,
         Action? onSessionNavigationStarting = null,
-        Action<string, string?>? onSessionSelected = null)
+        Action<string, string?>? onSessionSelected = null,
+        Action<string>? onSpeechTargetChanged = null)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(composerFactory);
@@ -81,7 +82,8 @@ public static class ReactorChatHostExtensions
             onVoiceRequest,
             onSpeakerMuteChanged,
             onSessionNavigationStarting,
-            onSessionSelected);
+            onSessionSelected,
+            onSpeechTargetChanged);
         return composerFactory.Create(provider, hostActions, initialMuted);
     }
 
@@ -141,6 +143,8 @@ public sealed class MountedReactorChat(
     ChatComposerSession session) : IDisposable
 {
     private int _disposed;
+
+    internal string? CurrentThreadId => session.ViewModel.Inputs?.CurrentThread.Id;
 
     internal bool TrySelectSession(string sessionKey) => session.Controller.TrySelectSession(sessionKey);
 
