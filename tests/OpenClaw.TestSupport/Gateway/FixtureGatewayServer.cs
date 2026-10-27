@@ -16,7 +16,8 @@ public sealed record GatewayFixtureRequest(
     string? ApprovalId = null,
     bool AdvertisesExecApprovals = false,
     string? ModelCatalogView = null,
-    bool? IncludeModelDetails = null);
+    bool? IncludeModelDetails = null,
+    string? AgentId = null);
 
 public sealed record GatewayFixtureEvent(string Event, int DeliveredConnections);
 
@@ -156,6 +157,18 @@ public sealed class FixtureGatewayServer : IAsyncDisposable
         // authoritative for reconnect; never retain message or question content here.
         lock (_sync) _events.Add(new GatewayFixtureEvent(eventName, delivered));
     }
+
+    private bool _refuseConnections;
+
+    /// <summary>Simulates an unreachable Gateway: new sockets are dropped and open ones are closed.</summary>
+    public Task GoOfflineAsync(CancellationToken cancellationToken = default)
+    {
+        Volatile.Write(ref _refuseConnections, true);
+        return CloseConnectionsAsync(cancellationToken);
+    }
+
+    /// <summary>Accepts connections again after <see cref="GoOfflineAsync"/>.</summary>
+    public void GoOnline() => Volatile.Write(ref _refuseConnections, false);
 
     public async Task CloseConnectionsAsync(CancellationToken cancellationToken = default)
     {
@@ -527,6 +540,11 @@ public sealed class FixtureGatewayServer : IAsyncDisposable
             while (true)
             {
                 var tcp = await _listener.AcceptTcpClientAsync(_lifetime.Token);
+                if (Volatile.Read(ref _refuseConnections))
+                {
+                    tcp.Dispose();
+                    continue;
+                }
                 var id = Interlocked.Increment(ref _connectionCount);
                 lock (_sync)
                     _connections.Add(ServeConnectionAsync(tcp, id));
@@ -620,7 +638,9 @@ public sealed class FixtureGatewayServer : IAsyncDisposable
                         method == "models.list" && parameters.ValueKind == JsonValueKind.Object
                             && parameters.TryGetProperty("includeDetails", out var details)
                             && details.ValueKind is JsonValueKind.True or JsonValueKind.False
-                                ? details.GetBoolean() : null);
+                                ? details.GetBoolean() : null,
+                        // Agent scope is a synthetic fixture identifier, recorded to prove request scoping.
+                        method!.StartsWith("cron.", StringComparison.Ordinal) ? ReadString(parameters, "agentId") : null);
                     if (!authenticated || method == "connect")
                     {
                         try
@@ -644,7 +664,7 @@ public sealed class FixtureGatewayServer : IAsyncDisposable
                         }
                         catch (FixtureRequestException ex)
                         {
-                            await SendErrorAsync(socket, sendLock, id, ex.Code, ex.Message, connection.Token);
+                            await SendErrorAsync(socket, sendLock, id, ex.Code, ex.Message, connection.Token, ex.DetailCode);
                             Complete(requestIndex, $"error:{ex.Code}");
                         }
                         continue;
@@ -756,7 +776,7 @@ public sealed class FixtureGatewayServer : IAsyncDisposable
                 if (gate is not null)
                     await gate.WaitAsync(cancellationToken);
                 Complete(requestIndex, $"error:{ex.Code}", ex.Unexpected);
-                await SendErrorAsync(socket, sendLock, id, ex.Code, ex.Message, cancellationToken);
+                await SendErrorAsync(socket, sendLock, id, ex.Code, ex.Message, cancellationToken, ex.DetailCode);
                 return;
             }
             catch (InvalidOperationException) when (Interactive is not null
@@ -852,13 +872,14 @@ public sealed class FixtureGatewayServer : IAsyncDisposable
         string? approvalId = null,
         bool advertisesExecApprovals = false,
         string? modelCatalogView = null,
-        bool? includeModelDetails = null)
+        bool? includeModelDetails = null,
+        string? agentId = null)
     {
         lock (_sync)
         {
             var index = _requests.Count;
             _requests.Add(new GatewayFixtureRequest(method, key, "pending", decision, approvalId,
-                advertisesExecApprovals, modelCatalogView, includeModelDetails));
+                advertisesExecApprovals, modelCatalogView, includeModelDetails, agentId));
             SignalRequestChanged();
             return index;
         }
@@ -910,11 +931,11 @@ public sealed class FixtureGatewayServer : IAsyncDisposable
         && method.All(c => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '-');
 
     private static Task SendErrorAsync(
-        WebSocket socket, SemaphoreSlim sendLock, string? id, string code, string message, CancellationToken ct) =>
+        WebSocket socket, SemaphoreSlim sendLock, string? id, string code, string message, CancellationToken ct, string? detailCode = null) =>
         SendAsync(socket, sendLock, new
         {
             type = "res", id, ok = false,
-            error = new { code, message, details = new { code } }
+            error = new { code, message, details = new { code = detailCode ?? code } }
         }, ct);
 
     private static async Task SendAsync(WebSocket socket, SemaphoreSlim sendLock, object value, CancellationToken ct)
