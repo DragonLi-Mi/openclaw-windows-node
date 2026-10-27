@@ -213,7 +213,10 @@ public sealed class OnboardingPresentationContractTests
         Assert.Contains("AccessDraft.TryAcceptNativeConnection(route, result)", window);
         Assert.Contains("RootFrame.Content is SetupNativeConnectionPage nativePage", window);
         Assert.Contains("nativePage.DisposeAsync().AsTask()", window);
-        Assert.True(window.IndexOf("await _nativePageCleanupTask", StringComparison.Ordinal) <
+        Assert.Contains("await Task.WhenAll(\n                                " +
+            "_nativePageCleanupTask, _aiPageCleanupTask, _preparationTask,",
+            window.Replace("\r\n", "\n", StringComparison.Ordinal));
+        Assert.True(window.IndexOf("_localAiTransitionTask ?? Task.CompletedTask", StringComparison.Ordinal) <
             window.IndexOf("_setupLock?.Dispose()", StringComparison.Ordinal));
         Assert.Contains("AccessDraft?.ClearNativeConnectionSecrets()", window);
         Assert.DoesNotContain("new GatewayConnectionManager", window);

@@ -599,8 +599,7 @@ public sealed partial class WizardPage : Page
                 moreButton.Click += (_, _) =>
                 {
                     // Remove the More button
-                    if (moreButton.Parent is Panel parent)
-                        parent.Children.Remove(moreButton);
+                    StepInputs.Children.Remove(moreButton);
                     if (ReferenceEquals(_moreOptionsButton, moreButton))
                         _moreOptionsButton = null;
 
@@ -621,14 +620,11 @@ public sealed partial class WizardPage : Page
                         }
                     }
                 };
-                // Insert the button after SelectOptions in the parent StackPanel
-                var parentPanel = SelectOptions.Parent as Panel;
-                if (parentPanel != null)
-                {
-                    var idx = parentPanel.Children.IndexOf(SelectOptions);
-                    parentPanel.Children.Insert(idx + 1, moreButton);
-                    _moreOptionsButton = moreButton;
-                }
+                // A fast Gateway reply can arrive before the page is mounted. Use the
+                // declared owner instead of a visual Parent that may not exist yet.
+                var idx = StepInputs.Children.IndexOf(SelectOptions);
+                StepInputs.Children.Insert(idx + 1, moreButton);
+                _moreOptionsButton = moreButton;
             }
 
             var initialValue = WizardAnswerBuilder.ValueKeys(initial).FirstOrDefault();
@@ -1227,8 +1223,8 @@ public sealed partial class WizardPage : Page
 
     private void ResetInputs()
     {
-        if (_moreOptionsButton?.Parent is Panel morePanel)
-            morePanel.Children.Remove(_moreOptionsButton);
+        if (_moreOptionsButton is { } moreButton)
+            StepInputs.Children.Remove(moreButton);
         _moreOptionsButton = null;
         SelectOptions.Items.Clear();
         SelectOptions.Visibility = Visibility.Collapsed;
