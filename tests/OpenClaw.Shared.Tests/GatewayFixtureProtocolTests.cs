@@ -495,6 +495,8 @@ public sealed partial class GatewayFixtureProtocolTests
         client.NodePairListUpdated += (_, pairs) => nodePairsReceived.TrySetResult(pairs);
         client.DevicePairListUpdated += (_, pairs) => devicePairsReceived.TrySetResult(pairs);
 
+        var projects = await client.SendWizardRequestAsync("projects.list");
+        Assert.Empty(projects.GetProperty("projects").EnumerateArray());
         await client.RequestModelsListAsync();
         var models = await modelsReceived.Task.WaitAsync(Deadline);
         Assert.Equal(2, models.Models.Count);

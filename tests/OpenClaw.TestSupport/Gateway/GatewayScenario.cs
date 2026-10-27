@@ -257,6 +257,7 @@ public sealed partial class GatewayScenario
         var configHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(config.GetRawText()))).ToLowerInvariant();
         var reads = new Dictionary<string, JsonElement>(StringComparer.Ordinal)
         {
+            ["projects.list"] = JsonSerializer.SerializeToElement(new { projects = Array.Empty<object>() }),
             ["users.self"] = JsonSerializer.SerializeToElement(new
             {
                 profile = new { id = "fixture-owner", displayName = "Fixture Owner", emails = new[] { "owner@example.test" } }
