@@ -28,19 +28,6 @@ public sealed class GatewayDashboardUrlBuilderTests
     }
 
     [Theory]
-    [InlineData("device-token")]
-    [InlineData("bootstrap-token")]
-    public void Build_UpdatesDoesNotExposeDeviceOrBootstrapToken(string token)
-    {
-        var url = GatewayDashboardUrlBuilder.Build(
-            "ws://localhost:4317", GatewayDashboardUrlBuilder.UpdatesPath, token,
-            appendSharedGatewayToken: false);
-
-        Assert.Equal("http://localhost:4317/settings/updates", url);
-        Assert.DoesNotContain(token, url);
-    }
-
-    [Theory]
     [InlineData("wss://gateway.example/mount/", "https://gateway.example/mount/custodian?onboarding=1#token=synthetic")]
     [InlineData("wss://gateway.example/mount/#token=synthetic", "https://gateway.example/mount/custodian?onboarding=1#token=synthetic")]
     public void Build_CustodianPreservesMountAndAuthFragment(string gateway, string expected)

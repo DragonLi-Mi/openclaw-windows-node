@@ -1731,6 +1731,7 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
                     _settings.NodeTtsEnabled,
                     _settings.NodeSttEnabled,
                     _settings.NodeOllamaInferenceEnabled),
+            UpdateGatewayLabel = LocalizationHelper.GetString("HubWindow_UpdateGateway.Content"),
             SetupMenuLabel = setupMenuLabel,
             ShowSetupMenuEntry = !hasSetupManagedLocalWslGateway,
             LastUpdated = _appState?.LastCheckTime,

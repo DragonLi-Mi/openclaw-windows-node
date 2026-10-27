@@ -187,6 +187,16 @@ public sealed class TrayMenuPresenterTests
     }
 
     [Fact]
+    public void UpdateGateway_UsesLocalizedSnapshotLabelForTextAndAutomation()
+    {
+        var presentation = Present(DetailedSnapshot() with { UpdateGatewayLabel = "Mettre à jour la passerelle…" });
+        var action = Find(presentation, "updategateway");
+
+        Assert.Equal("Mettre à jour la passerelle…", action.Text);
+        Assert.Equal(action.Text, action.AutomationName);
+    }
+
+    [Fact]
     public void GatewayPairingAuthPresenceSelfAndDeviceCapabilities_AreFullyProjected()
     {
         var presentation = Present(DetailedSnapshot());
@@ -428,6 +438,7 @@ public sealed class TrayMenuPresenterTests
             false,
             true,
             false),
+        UpdateGatewayLabel = "Update Gateway…",
         SetupMenuLabel = "Reconfigure...",
         ShowSetupMenuEntry = true,
         LastUpdated = NowUtc.AddSeconds(-10),

@@ -870,6 +870,7 @@ public sealed class AppRefactorContractTests
         Assert.Contains("ShowTransientConnectionError(ex.Message)", captureMethod);
         Assert.Contains("hasExistingConfig = true", captureMethod);
         Assert.Contains("return new TrayMenuSnapshot", captureMethod);
+        Assert.Contains("UpdateGatewayLabel = LocalizationHelper.GetString(\"HubWindow_UpdateGateway.Content\")", captureMethod);
     }
 
     [Fact]
