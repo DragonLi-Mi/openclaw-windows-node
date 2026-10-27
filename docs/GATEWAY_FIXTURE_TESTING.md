@@ -171,7 +171,10 @@ scenario with:
 ```
 
 The UI proof checks agent scoping, details, run history and transcript, editing,
-pause confirmation, the empty agent and the offline state. Run it only with
+pause confirmation, the empty agent and the offline state in both Light and Dark
+app themes. It scans the populated states with Axe.Windows, using the fixture
+process's explicit ID. Automations remains mounted with Open Connection while
+the Gateway is offline, including during reconnect attempts. Run it only with
 exclusive desktop access:
 
 ```powershell
