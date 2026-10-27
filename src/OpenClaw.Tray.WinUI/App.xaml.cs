@@ -4039,7 +4039,11 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
                     () => _windowManager?.ShowDashboardLaunchFailureAsync(
                         () => OpenDashboard(path))
                         ?? Task.CompletedTask, new AppLogger(), "Dashboard launch error"),
-                () => _appNotificationService?.Dismiss(GatewayDashboardLauncher.FailureNotificationId));
+                () => _appNotificationService?.Dismiss(GatewayDashboardLauncher.FailureNotificationId),
+                getActiveGateway: () => _gatewayRegistry?.GetActive(),
+                inspectWslOwner: (record, ct) => _managedLocalPortProvenance?.InspectAsync(record, ct)
+                    ?? Task.FromResult(new GatewayEndpointProvenance(GatewayEndpointProvenanceKind.UnknownListener, 0)),
+                wslCommands: new WslExeCommandRunner(new AppLogger()));
             await launcher.OpenAsync(path);
         }, new AppLogger(), nameof(OpenDashboard));
     }
