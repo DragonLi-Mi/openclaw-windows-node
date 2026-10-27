@@ -203,6 +203,8 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
     private UpdateCoordinator? _updateCoordinator;
     private GatewayService? _gatewayService;
     private PairingApprovalCoordinator? _pairingApprovalCoordinator;
+    /// <summary>Inbound pairing approvals, surfaced inline by the Systems page.</summary>
+    internal PairingApprovalCoordinator? PairingApprovals => _pairingApprovalCoordinator;
     private OpenClawTray.Dialogs.PairingApprovalDialog? _pairingApprovalDialog;
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _pairingApprovalPollTimer;
     
