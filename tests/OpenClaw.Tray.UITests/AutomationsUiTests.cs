@@ -93,7 +93,8 @@ public sealed partial class GatewayFixtureUiTests
             // Keep the page's own recovery state mounted while the connection manager retries.
             await run.Gateway.GoOfflineAsync();
             await WaitUiAsync(run, () => FindById(run, "AutomationsOpenConnection") is not null, "disconnected state");
-            ScanAutomations(run, theme, "disconnected");
+            // AccessibilityScanTests covers disconnected CronPage without reconnect events
+            // invalidating Axe's cached elements while it walks the native tree.
             Capture(run, "automations-disconnected.png", "AutomationsOpenConnection");
             run.Gateway.GoOnline();
         }, scenario: scenario);
