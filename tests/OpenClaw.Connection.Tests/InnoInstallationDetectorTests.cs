@@ -542,6 +542,7 @@ public sealed class InnoInstallationDetectorTests
         using var fixture = new Fixture();
         fixture.Registration = fixture.Registration with { DisplayName = name, Publisher = publisher };
         fixture.AssertUnsupported();
+        Assert.False(fixture.Detect().RequiresInstallerRepair);
     }
 
     [Theory]
