@@ -37,20 +37,21 @@ public sealed partial class GatewayFixtureUiTests
             Assert.Null(FindById(run, $"AutomationRow:{GatewayScenario.AutomationsOtherAgentJobId}"));
             Assert.All(run.Gateway.Requests.Where(r => r.Method == "cron.list"), r => Assert.Equal("main", r.AgentId));
             await WaitUiAsync(run, () => FindById(run, "AutomationsListCount") is not null, "list count");
-            ScanAutomations(run, theme, "list");
+            await ScanAutomationsAsync(run, theme, "list");
             Capture(run, "automations-list.png", "AutomationsListCount", "AutomationsRefresh", "AutomationRow:morning-brief");
 
             Invoke(FindById(run, "AutomationRow:morning-brief")!);
             await WaitUiAsync(run, () => FindById(run, "AutomationDetailTitle") is not null
                 && FindById(run, "AutomationScheduleSummary") is not null, "morning brief details");
-            ScanAutomations(run, theme, "details");
+            await WaitUiAsync(run, () => FindText(run, "92% succeeded") is not null, "loaded recent run summary");
+            await ScanAutomationsAsync(run, theme, "details");
             Capture(run, "automations-details.png", "AutomationDetailTitle", "AutomationScheduleSummary", "CronRunNow:morning-brief");
 
             SelectItem(run, "Run history", detailPane: true);
             await WaitUiAsync(run, () => FindByIdPrefix(run, "AutomationRunTranscript:") is not null, "job run history");
             Invoke(FindByIdPrefix(run, "AutomationRunTranscript:")!);
             await WaitUiAsync(run, () => FindText(run, "Three things today") is not null && FindText(run, "Run transcript") is not null, "run transcript");
-            ScanAutomations(run, theme, "run transcript");
+            await ScanAutomationsAsync(run, theme, "run transcript");
             Capture(run, "automations-run-history.png", "AutomationRunsSearch", "AutomationRunsStatusFilter");
 
             SelectItem(run, "Overview", detailPane: true);
@@ -60,7 +61,7 @@ public sealed partial class GatewayFixtureUiTests
             var updates = run.Gateway.Requests.Count(r => r.Method == "cron.update" && r.Outcome == "ok");
             SetValue(FindById(run, "AutomationEditorName")!, "Morning brief (edited)");
             await WaitUiAsync(run, () => FindById(run, "AutomationEditorTitle") is not null, "editor title");
-            ScanAutomations(run, theme, "editor");
+            await ScanAutomationsAsync(run, theme, "editor");
             Capture(run, "automations-editor.png", "AutomationEditorName", "AutomationEditorTitle");
             Invoke(FindById(run, "AutomationEditorSave")!);
             await run.WaitForAsync(() => Task.FromResult(run.Gateway.Requests.Count(r => r.Method == "cron.update" && r.Outcome == "ok") > updates), "accepted cron.update");
@@ -87,7 +88,7 @@ public sealed partial class GatewayFixtureUiTests
             await run.InvokeAsync("app.navigate", new { page = "agent:research:cron" });
             await WaitUiAsync(run, () => FindById(run, "AutomationSuggestion:repoPulse") is not null, "empty research agent");
             Assert.Null(FindByIdPrefix(run, "AutomationRow:"));
-            ScanAutomations(run, theme, "empty");
+            await ScanAutomationsAsync(run, theme, "empty");
             Capture(run, "automations-empty.png", "AutomationsEmptyNew", "AutomationSuggestion:repoPulse");
 
             // Keep the page's own recovery state mounted while the connection manager retries.
@@ -100,10 +101,14 @@ public sealed partial class GatewayFixtureUiTests
         }, scenario: scenario);
     }
 
-    private static void ScanAutomations(GatewayFixtureRun run, string theme, string state) =>
+    private static async Task ScanAutomationsAsync(GatewayFixtureRun run, string theme, string state)
+    {
+        await WaitUiAsync(run, () => run.Gateway.Requests.All(request => request.Outcome != "pending"),
+            $"completed Gateway reads before {state} scan");
         AxeHelper.AssertNoAccessibilityErrors(run.AppProcessId,
             new IntPtr(AutomationsWindow(run).Current.NativeWindowHandle),
             context: $"Automations {theme}: {state}");
+    }
 
     private static AutomationElement AutomationsWindow(GatewayFixtureRun run) =>
         AppWindows(run).First(window => window.FindFirst(TreeScope.Descendants,
