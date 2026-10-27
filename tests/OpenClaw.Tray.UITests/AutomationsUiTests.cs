@@ -16,7 +16,8 @@ public sealed partial class GatewayFixtureUiTests
     [Trait("Category", "GatewayFixture")]
     public async Task Automations_ScopesToAgentAndCoversMainStates(string theme)
     {
-        output.WriteLine($"Requested app theme: {theme}; Windows high contrast: {new global::Windows.UI.ViewManagement.AccessibilitySettings().HighContrast}");
+        var highContrast = new global::Windows.UI.ViewManagement.AccessibilitySettings().HighContrast;
+        output.WriteLine($"Requested app theme: {theme}; Windows high contrast: {highContrast}");
         var scenario = GatewayScenario.CreateAutomations();
         await WithAppAsync(async run =>
         {
