@@ -377,6 +377,21 @@ serialized on a shared desktop; focus-dependent GUI workers need separate
 Windows sessions or VMs. Interactive streaming uses the same per-instance
 server/profile ownership described below.
 
+## Dashboards without a real Gateway
+
+The opt-in `dashboards` scenario serves synthetic boards for the Dashboards
+page: a multi-tab board with HTML, report, website, pending, rejected,
+broken, MCP app and disabled-plugin widgets, plus release, research and empty
+boards. Widget documents and the sandbox proxy are served from loopback, so
+no real board or capability grant is touched:
+
+```powershell
+.\scripts\run-gateway-fixture.ps1 -AppPath $app -Scenario dashboards
+```
+
+Set `OPENCLAW_FIXTURE_APP_THEME` to `Dark` (or `Light`, the default) in the
+calling shell to seed the disposable profile's app theme for theme proof.
+
 ## Interactive chat without a real Gateway
 
 The opt-in `chat-interactive` scenario runs a memory-only chat runtime behind

@@ -64,7 +64,7 @@ public sealed class GatewayFixtureProfile : IDisposable
                 VoiceAudioFeedback = false,
                 UseLegacyWebChat = false,
                 ShowCompletedSessions = true,
-                AppTheme = "Light",
+                AppTheme = Environment.GetEnvironmentVariable("OPENCLAW_FIXTURE_APP_THEME") is { Length: > 0 } theme ? theme : "Light",
                 OpenTelemetryEndpoint = null
             };
             File.WriteAllText(Path.Combine(DataDirectory, "settings.json"), settings.ToJson());
