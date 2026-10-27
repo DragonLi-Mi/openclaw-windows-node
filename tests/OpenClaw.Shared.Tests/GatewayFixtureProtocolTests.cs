@@ -495,8 +495,10 @@ public sealed partial class GatewayFixtureProtocolTests
         client.NodePairListUpdated += (_, pairs) => nodePairsReceived.TrySetResult(pairs);
         client.DevicePairListUpdated += (_, pairs) => devicePairsReceived.TrySetResult(pairs);
 
-        var projects = await client.SendWizardRequestAsync("projects.list");
-        Assert.Empty(projects.GetProperty("projects").EnumerateArray());
+        var placement = await client.CreateChatPlacementGateway().LoadAsync("main", CancellationToken.None);
+        Assert.Empty(placement.Environments);
+        Assert.Empty(placement.Workspaces);
+        Assert.Equal("default", placement.DefaultWorkspace.Id);
         await client.RequestModelsListAsync();
         var models = await modelsReceived.Task.WaitAsync(Deadline);
         Assert.Equal(2, models.Models.Count);

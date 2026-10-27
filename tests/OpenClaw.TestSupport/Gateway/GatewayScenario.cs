@@ -258,6 +258,7 @@ public sealed partial class GatewayScenario
         var reads = new Dictionary<string, JsonElement>(StringComparer.Ordinal)
         {
             ["projects.list"] = JsonSerializer.SerializeToElement(new { projects = Array.Empty<object>() }),
+            ["environments.list"] = JsonSerializer.SerializeToElement(new { environments = Array.Empty<object>() }),
             ["users.self"] = JsonSerializer.SerializeToElement(new
             {
                 profile = new { id = "fixture-owner", displayName = "Fixture Owner", emails = new[] { "owner@example.test" } }
