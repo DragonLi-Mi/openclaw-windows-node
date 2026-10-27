@@ -562,7 +562,12 @@ public sealed class NativeSharedFlowTests(UIThreadFixture ui, ITestOutputHelper 
             new CredentialResolver(DeviceIdentityFileReader.Instance), new GatewayClientFactory(),
             registry, NullLogger.Instance, nativeGatewayRuntime: normalRuntime);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var startupOccurrence = server.Requests.Count(request => request.Method == "agents.list") + 1;
         await manager.ConnectAsync(preparation.Verification.GatewayId, deadline.Token);
+        // Connect completes before the client's initial background reads. Drain their final request
+        // before asserting that Ready invalidation and navigation issue no new requests.
+        await server.WaitForCompletedRequestAsync("agents.list", occurrence: startupOccurrence,
+            cancellationToken: deadline.Token);
         Task<SetupVerifiedNativeRoute> VerifyAsync(CancellationToken ct) =>
             SetupNativeCompletionVerifier.VerifyAsync(data, preparation.Verification, ct, manager, captureReadiness: true);
         var store = new SetupDashboardHandoffStore(data);
