@@ -36,6 +36,7 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
     private static readonly string[] s_operatorBoundedBootstrapScopes =
     [
         "operator.approvals",
+        "operator.questions",
         "operator.read",
         "operator.talk.secrets",
         "operator.write"
@@ -2493,7 +2494,8 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
                     okWiz.ValueKind == JsonValueKind.False)
                 {
                     var message = TryGetErrorMessage(root) ?? "wizard request failed";
-                    wizardCompletion.TryFault(new InvalidOperationException(message));
+                    wizardCompletion.TryFault(QuestionRequestError(pending.Method, root)
+                        ?? new InvalidOperationException(message));
                 }
                 else if (root.TryGetProperty("payload", out var wizPayload))
                 {
@@ -3574,6 +3576,10 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
             case "agent":
                 HandleAgentEvent(root, rawMessageLength);
                 break;
+            case "question.requested":
+            case "question.resolved":
+                HandleQuestionEvent(root, eventType);
+                break;
             case "health":
                 if (root.TryGetProperty("payload", out var hp) &&
                     hp.TryGetProperty("channels", out var ch))
@@ -3583,6 +3589,8 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
                 }
                 break;
             case "chat":
+                HandleChatEventForConnection(root, rawMessageLength, sourceConnectionGeneration);
+                break;
             case "session.message":
                 HandleChatEvent(root, rawMessageLength);
                 break;

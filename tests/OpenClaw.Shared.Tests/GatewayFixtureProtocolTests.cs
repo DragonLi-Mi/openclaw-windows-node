@@ -479,7 +479,10 @@ public sealed partial class GatewayFixtureProtocolTests
     public async Task RealClient_SupportingReadsUseTypedModelsAndConsistentConfiguration()
     {
         var token = CreateToken();
-        await using var server = await FixtureGatewayServer.StartAsync(GatewayScenario.CreateBrowse(), token);
+        var scenario = GatewayScenario.CreateBrowse();
+        Assert.Contains("projects.list", scenario.ReadMethods);
+        Assert.Contains("environments.list", scenario.ReadMethods);
+        await using var server = await FixtureGatewayServer.StartAsync(scenario, token);
         await using var connected = await ConnectedClient.OpenAsync(server, token);
         var client = connected.Client;
         var modelsReceived = Signal<ModelsListInfo>();
@@ -495,10 +498,6 @@ public sealed partial class GatewayFixtureProtocolTests
         client.NodePairListUpdated += (_, pairs) => nodePairsReceived.TrySetResult(pairs);
         client.DevicePairListUpdated += (_, pairs) => devicePairsReceived.TrySetResult(pairs);
 
-        var placement = await client.CreateChatPlacementGateway().LoadAsync("main", CancellationToken.None);
-        Assert.Empty(placement.Environments);
-        Assert.Empty(placement.Workspaces);
-        Assert.Equal("default", placement.DefaultWorkspace.Id);
         await client.RequestModelsListAsync();
         var models = await modelsReceived.Task.WaitAsync(Deadline);
         Assert.Equal(2, models.Models.Count);
@@ -539,6 +538,16 @@ public sealed partial class GatewayFixtureProtocolTests
         var agents = await client.SendWizardRequestAsync("agents.list");
         Assert.Equal("main", agents.GetProperty("defaultId").GetString());
         Assert.Equal(2, agents.GetProperty("agents").GetArrayLength());
+        var placement = await client.CreateChatPlacementGateway()
+            .LoadAsync("main", CancellationToken.None).WaitAsync(Deadline);
+        Assert.Equal("Fixture Main", placement.AgentName);
+        Assert.Empty(placement.Workspaces);
+        Assert.Equal("default", placement.DefaultWorkspace.Id);
+        var environment = Assert.Single(placement.Environments);
+        Assert.Equal("gateway:fixture", environment.Id);
+        Assert.Equal("Fixture Gateway", environment.Label);
+        Assert.True(environment.IsLocal);
+        Assert.True(environment.IsSelectable);
         Assert.Empty(server.UnexpectedRequests);
     }
 
@@ -583,6 +592,8 @@ public sealed partial class GatewayFixtureProtocolTests
     [InlineData("sessions.preview", """{"keys":[7]}""", "session key strings")]
     [InlineData("models.list", """{"view":"invented"}""", "configured or all")]
     [InlineData("usage.cost", """{"days":-1}""", "positive integer")]
+    [InlineData("projects.list", """{"unexpected":true}""", "Unsupported fixture request parameter")]
+    [InlineData("environments.list", """{"unexpected":true}""", "Unsupported fixture request parameter")]
     public async Task RealClient_InvalidOrUnknownParametersFailExplicitly(string method, string json, string message)
     {
         var token = CreateToken();
@@ -605,6 +616,7 @@ public sealed partial class GatewayFixtureProtocolTests
     [InlineData("config.patch")]
     [InlineData("config.apply")]
     [InlineData("node.invoke")]
+    [InlineData("projects.add")]
     public async Task RealClient_WritesAreRejectedWithoutChangingScenario(string method)
     {
         var token = CreateToken();
