@@ -19,6 +19,19 @@ internal static class CliUninstallHandler
     /// <summary>Passed only by the tray's own removal child.</summary>
     internal const string TrayOwnedFlag = "--tray-owned";
 
+    // An inaccessible mutex still means another instance owns it, so treat it as running.
+    private static bool IsTrayRunning()
+    {
+        try
+        {
+            if (!Mutex.TryOpenExisting(AppIdentity.ResolveSingleInstanceMutexName(), out var runningTray))
+                return false;
+            runningTray.Dispose();
+            return true;
+        }
+        catch (UnauthorizedAccessException) { return true; }
+    }
+
     public static async Task RunAsync(string[] args)
     {
         AttachConsole(AttachParentProcess);
@@ -58,10 +71,8 @@ internal static class CliUninstallHandler
             // A running tray keeps the removed record in memory and would fail every later save.
             // Only the tray's own child, which reconciles the registry afterward, may run while it is open.
             var trayOwned = args.Contains(TrayOwnedFlag, StringComparer.OrdinalIgnoreCase);
-            if (!dryRun && !trayOwned &&
-                Mutex.TryOpenExisting(AppIdentity.ResolveSingleInstanceMutexName(), out var runningTray))
+            if (!dryRun && !trayOwned && IsTrayRunning())
             {
-                runningTray.Dispose();
                 Console.Error.WriteLine("ERROR: OpenClaw is running. Remove the Gateway from Settings or exit OpenClaw first. No uninstall was started.");
                 Environment.Exit(2);
                 return;

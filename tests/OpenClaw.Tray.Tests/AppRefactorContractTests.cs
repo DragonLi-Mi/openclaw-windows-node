@@ -1897,7 +1897,7 @@ public sealed class AppRefactorContractTests
 
         Assert.Contains("ResolveCurrentExecutablePath()", source);
         Assert.Contains("psi.ArgumentList.Add(\"--uninstall\")", source);
-        Assert.Contains("proc.WaitForExitAsync(_uninstallCts.Token)", source);
+        Assert.Contains("proc.WaitForExitAsync(removalCts.Token)", source);
         Assert.Contains("proc.Kill(entireProcessTree: true)", source);
         Assert.DoesNotContain("OpenClaw.SetupEngine.Program.Main(setupArgs)", source);
         Assert.DoesNotContain("OpenClaw.SetupEngine.UI.exe", source);

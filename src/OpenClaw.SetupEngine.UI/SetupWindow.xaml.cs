@@ -675,6 +675,7 @@ public sealed partial class SetupWindow : Window
         ResetLocalAiRecoveryMode();
         _existingWslSetup?.Restore(_config);
         _existingWslSetup = null;
+        AccessDraft?.ResetManagedGatewayUrl(_config.GatewayUrl);
     }
 
     public bool TryNavigateToGatewayInstalledMilestone()

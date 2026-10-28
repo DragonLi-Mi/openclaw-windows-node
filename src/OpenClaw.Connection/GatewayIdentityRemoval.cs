@@ -5,6 +5,20 @@ namespace OpenClaw.Connection;
 /// <summary>Stages profile deletion so a rejected registry write can restore the original identity.</summary>
 public static class GatewayIdentityRemoval
 {
+    /// <summary>
+    /// True when an earlier removal left this gateway's profile in a staging folder. Reconnecting then would
+    /// create a fresh profile and could pick weaker credentials, so callers must not restore the connection.
+    /// </summary>
+    public static bool HasPendingProfileStage(GatewayRegistry registry, string gatewayId)
+    {
+        NativeGatewayPaths.ValidateGatewayId(gatewayId);
+        var dataDirectory = Path.GetDirectoryName(Path.GetDirectoryName(registry.GetIdentityDirectory(gatewayId))!)!;
+        var stagingPrefix = $"gateway-removal-{gatewayId}-";
+        return Directory.Exists(dataDirectory) &&
+            Directory.EnumerateDirectories(dataDirectory, stagingPrefix + "*").Any(stage =>
+                Guid.TryParseExact(Path.GetFileName(stage)[stagingPrefix.Length..], "N", out _));
+    }
+
     public static void Remove(GatewayRegistry registry, GatewayRecord expected)
     {
         NativeGatewayPaths.ValidateGatewayId(expected.Id);

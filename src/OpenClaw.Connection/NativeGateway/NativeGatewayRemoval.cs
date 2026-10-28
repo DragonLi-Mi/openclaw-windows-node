@@ -8,7 +8,8 @@ public sealed class NativeGatewayRemoval(
     GatewayRegistry registry, INativeGatewayPackageResolver resolver, NativeGatewayPackageClient packageClient)
 {
     public async Task RemoveAsync(
-        GatewayRecord expected, Func<Task> disconnect, CancellationToken cancellationToken)
+        GatewayRecord expected, Func<Task> disconnect, CancellationToken cancellationToken,
+        Action? onTeardownStarted = null)
     {
         var kind = LocalGatewaySettings.Classify(expected);
         if (kind is not (LocalGatewayKind.Native or LocalGatewayKind.LegacyNative))
@@ -31,7 +32,10 @@ public sealed class NativeGatewayRemoval(
         RequireTarget(expected, registry.CapturePersistedSnapshot(), kind);
         cancellationToken.ThrowIfCancellationRequested();
         if (package is not null)
+        {
+            onTeardownStarted?.Invoke();
             await packageClient.TeardownAsync(package, cancellationToken).ConfigureAwait(false);
+        }
 
         try
         {

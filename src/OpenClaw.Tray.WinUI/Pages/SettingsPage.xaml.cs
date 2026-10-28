@@ -447,7 +447,17 @@ public sealed partial class SettingsPage : Page
             new OpenClawTray.AppLogger(),
             nameof(OnRemoveGateway));
 
+    private bool _removalActive;
+
     private async Task OnRemoveGatewayAsync()
+    {
+        if (_removalActive) return;
+        _removalActive = true;
+        try { await RemoveGatewayCoreAsync(); }
+        finally { _removalActive = false; }
+    }
+
+    private async Task RemoveGatewayCoreAsync()
     {
         var target = _localGatewayTarget;
         if (target is null || !LocalGatewaySettings.IsSameTarget(target, CurrentApp.Registry?.GetActive()))
@@ -500,11 +510,12 @@ public sealed partial class SettingsPage : Page
         ApplyUninstallUiState(UninstallUiState.InProgress);
         UninstallResultBar.IsOpen = false;
 
-        _uninstallCts = new CancellationTokenSource();
+        var removalCts = _uninstallCts = new CancellationTokenSource();
         Process? proc = null;
         string? jsonOutput = null;
         var wslDisconnected = false;
         var wslRemoved = false;
+        var wslWasConnectionAllowed = false;
         var removalChildStarted = false;
         GatewayRegistrySnapshot? removalBaselineForCleanup = null;
         try
@@ -512,7 +523,7 @@ public sealed partial class SettingsPage : Page
             if (kind is LocalGatewayKind.Native or LocalGatewayKind.LegacyNative)
             {
                 var binding = new LocalAiNativeBindingStore(new LocalAiPaths(AppIdentity.ResolveSetupLocalDataDirectory()));
-                await using var ownershipLock = await binding.AcquireAsync(_uninstallCts.Token);
+                await using var ownershipLock = await binding.AcquireAsync(removalCts.Token);
                 if (binding.Exists)
                     throw new InvalidOperationException(LocalizationHelper.GetString("SettingsPage_GatewayRemovalLocalAi"));
                 if (!SetupRunLock.TryAcquire(AppIdentity.ResolveRoamingDataDirectory(), out var setupLock, out var message))
@@ -522,7 +533,7 @@ public sealed partial class SettingsPage : Page
                     var manager = CurrentApp.ConnectionManager ??
                         throw new InvalidOperationException("The Gateway connection manager is unavailable.");
                     await manager.RemoveNativeGatewayAsync(target,
-                        new OpenClaw.SetupEngine.UI.NativeGatewayPackageResolver(), _uninstallCts.Token);
+                        new OpenClaw.SetupEngine.UI.NativeGatewayPackageResolver(), removalCts.Token);
                 }
                 ShowUninstallSuccess(LocalizationHelper.GetString("SettingsPage_NativeGatewayRemoved"));
                 return;
@@ -535,9 +546,11 @@ public sealed partial class SettingsPage : Page
             var wslManager = CurrentApp.ConnectionManager;
             if (wslManager is not null)
             {
-                if (!await wslManager.DisconnectByUserIfCurrentAsync(target, _uninstallCts.Token))
+                var wasAllowed = wslManager.IsAutomaticReconnectAllowed(target.Id);
+                if (!await wslManager.DisconnectByUserIfCurrentAsync(target, removalCts.Token))
                     throw new InvalidOperationException(LocalizationHelper.GetString("SettingsPage_GatewayRemovalTargetChanged"));
                 wslDisconnected = true;
+                wslWasConnectionAllowed = wasAllowed;
             }
             var exePath = ResolveCurrentExecutablePath()
                 ?? throw new FileNotFoundException("OpenClaw tray executable could not be resolved for local gateway removal.");
@@ -561,7 +574,7 @@ public sealed partial class SettingsPage : Page
 
             proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start OpenClaw uninstall process.");
             removalChildStarted = true;
-            await proc.WaitForExitAsync(_uninstallCts.Token);
+            await proc.WaitForExitAsync(removalCts.Token);
 
             if (proc.ExitCode == 0)
             {
@@ -629,15 +642,15 @@ public sealed partial class SettingsPage : Page
             {
                 ReconcileRemovalRegistry(cleanupRegistry, baselineForCleanup);
             }
-            if (wslDisconnected && !wslRemoved && CurrentApp.ConnectionManager is { } restoreManager)
+            if (wslDisconnected && !wslRemoved && wslWasConnectionAllowed && CurrentApp.ConnectionManager is { } restoreManager)
             {
                 try { await restoreManager.ReconnectIfSameTargetAsync(target); }
                 catch (Exception ex) { Logger.Warn($"SettingsPage: Failed to restore the Gateway connection after a failed removal: {ex.Message}"); }
             }
             try { if (jsonOutput is not null && File.Exists(jsonOutput)) File.Delete(jsonOutput); }
             catch (Exception ex) { Logger.Warn($"SettingsPage: Failed to delete uninstall result file '{jsonOutput}': {ex.Message}"); }
-            _uninstallCts?.Dispose();
-            _uninstallCts = null;
+            removalCts.Dispose();
+            if (ReferenceEquals(_uninstallCts, removalCts)) _uninstallCts = null;
             if (CurrentApp.Settings is { } settings) LoadGatewaySection(settings);
         }
     }
