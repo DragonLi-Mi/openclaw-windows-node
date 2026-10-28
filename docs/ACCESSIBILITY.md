@@ -21,6 +21,10 @@ distinguish COM-wrapper initialization from Windows App SDK bootstrap.
 Watchdog-terminated hangs may have no Application Error event; use the phase logs
 and interrupted-test sequence in that case. An instrumented passing run does not
 erase an earlier crash or establish its cause.
+The test application writes unhandled exception types, HRESULTs and managed method
+names directly to the standard error stream. This bypasses per-test console
+buffering that can lose the last diagnostic on native fail-fast. Exception messages,
+data, file paths and locals are not included, and exceptions remain unhandled.
 
 ## Running locally
 
