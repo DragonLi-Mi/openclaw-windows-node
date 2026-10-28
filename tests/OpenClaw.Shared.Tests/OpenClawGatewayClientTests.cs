@@ -13,6 +13,8 @@ namespace OpenClaw.Shared.Tests;
 public class OpenClawGatewayClientTests
 {
     private static readonly TimeSpan CloseHandshakeTimeout = TimeSpan.FromSeconds(3);
+    // Session-event regressions explicitly unset the refresh-window override.
+    private static readonly TimeSpan SessionRefreshQuietInterval = TimeSpan.FromMilliseconds(600);
 
     [Theory]
     [InlineData("QUESTION_NOT_FOUND", true)]
@@ -183,6 +185,12 @@ public class OpenClawGatewayClientTests
         private bool _pendingRegistryOpened;
 
         public OpenClawGatewayClient Client => _client;
+
+        public GatewayClientTestHelper(OpenClawGatewayClient client) => _client = client;
+
+        public Task OnConnectedAsync() => (Task)typeof(OpenClawGatewayClient).GetMethod(
+            "OnConnectedAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .Invoke(_client, Array.Empty<object>())!;
 
         public GatewayClientTestHelper(
             bool tokenIsBootstrapToken = false,
@@ -762,6 +770,125 @@ public class OpenClawGatewayClientTests
             ? client.DeleteSessionConfirmedAsync("agent:test:session", client.SessionMutationConnectionEpoch!.Value, timeoutMs)
             : client.PatchSessionConfirmedAsync("agent:test:session", new SessionPatch { Archived = true },
                 client.SessionMutationConnectionEpoch!.Value, timeoutMs);
+
+    [Fact]
+    public async Task SessionEventBurst_CoalescesBothEventKinds_WithoutDelayingExplicitRefresh()
+    {
+        using var refreshWindow = new EnvironmentScope("OPENCLAW_SESSION_REFRESH_WINDOW_MS", null);
+        using var server = new LoopbackWebSocketServer();
+        using var identity = new TempDirectory("session-refresh-");
+        await server.StartAsync();
+        var helper = new GatewayClientTestHelper(gatewayUrl: server.WebSocketUrl, identityPath: identity.Path);
+        using var client = helper.Client;
+        await client.ConnectAsync();
+        helper.MarkHandshakeReady();
+
+        for (var i = 0; i < 50; i++)
+            helper.ProcessRawMessage(i % 2 == 0
+                ? """{"type":"event","event":"sessions.changed","payload":{}}"""
+                : """{"type":"event","event":"session","payload":{}}""");
+
+        // The explicit, agent-filtered refresh is never delayed by event batching.
+        await client.RequestSessionsAsync("research");
+        using var explicitFrame = JsonDocument.Parse(await server.ReceiveTextAsync().WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal("research", explicitFrame.RootElement.GetProperty("params").GetProperty("agentId").GetString());
+        using var automaticFrame = JsonDocument.Parse(await server.ReceiveTextAsync().WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal("sessions.list", automaticFrame.RootElement.GetProperty("method").GetString());
+        Assert.True(automaticFrame.RootElement.GetProperty("params").GetProperty("includeDerivedTitles").GetBoolean());
+        Assert.False(automaticFrame.RootElement.GetProperty("params").TryGetProperty("agentId", out _));
+
+        // Allow a wrongly retained trailing timer to expire before the wire ordering barrier.
+        await Task.Delay(SessionRefreshQuietInterval);
+        await client.RequestSessionsAsync("barrier");
+        using var barrier = JsonDocument.Parse(await server.ReceiveTextAsync().WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal("barrier", barrier.RootElement.GetProperty("params").GetProperty("agentId").GetString());
+
+        helper.ProcessRawMessage("""{"type":"event","event":"sessions.changed","payload":{}}""");
+        using var later = JsonDocument.Parse(await server.ReceiveTextAsync().WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.False(later.RootElement.GetProperty("params").TryGetProperty("agentId", out _));
+    }
+
+    [Fact]
+    public async Task SessionEventRefresh_DisconnectCancelsOldWindow_AndNewEventsStillRefresh()
+    {
+        using var refreshWindow = new EnvironmentScope("OPENCLAW_SESSION_REFRESH_WINDOW_MS", null);
+        using var server = new LoopbackWebSocketServer();
+        using var identity = new TempDirectory("session-refresh-");
+        await server.StartAsync();
+        var helper = new GatewayClientTestHelper(gatewayUrl: server.WebSocketUrl, identityPath: identity.Path);
+        using var client = helper.Client;
+        await client.ConnectAsync();
+        helper.MarkHandshakeReady();
+        helper.ProcessRawMessage("""{"type":"event","event":"sessions.changed","payload":{}}""");
+        helper.OnDisconnected();
+        await helper.OnConnectedAsync();
+        helper.MarkHandshakeReady();
+
+        // Exercise expiration, not transport rejection: the socket remains ready throughout.
+        // This exceeds the default 250 ms batching window and admits no new event until it expires.
+        await Task.Delay(SessionRefreshQuietInterval);
+        await client.RequestSessionsAsync("after-disconnect");
+        using var explicitFrame = JsonDocument.Parse(await server.ReceiveTextAsync().WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal("after-disconnect", explicitFrame.RootElement.GetProperty("params").GetProperty("agentId").GetString());
+        helper.ProcessRawMessage("""{"type":"event","event":"session","payload":{}}""");
+        using var fresh = JsonDocument.Parse(await server.ReceiveTextAsync().WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal("sessions.list", fresh.RootElement.GetProperty("method").GetString());
+        Assert.False(fresh.RootElement.GetProperty("params").TryGetProperty("agentId", out _));
+    }
+
+    private sealed class DelayedRefreshClient(string url, string identityPath, IOpenClawLogger logger)
+        : OpenClawGatewayClient(url, "test-token", logger, identityPath: identityPath)
+    {
+        public TaskCompletionSource FirstSendStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseFirstSend { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int AutomaticSends;
+
+        protected override async Task<bool> SendRawAsync(string message, long generation, CancellationToken cancellationToken)
+        {
+            using var frame = JsonDocument.Parse(message);
+            if (frame.RootElement.GetProperty("method").GetString() == "sessions.list"
+                && !frame.RootElement.GetProperty("params").TryGetProperty("agentId", out _)
+                && Interlocked.Increment(ref AutomaticSends) == 1)
+            {
+                FirstSendStarted.TrySetResult();
+                await ReleaseFirstSend.Task.WaitAsync(cancellationToken);
+                throw new IOException("synthetic transport failure");
+            }
+            return await base.SendRawAsync(message, generation, cancellationToken);
+        }
+    }
+
+    [Fact]
+    public async Task SessionEventRefresh_SlowFailedSend_ObservesFailureAndKeepsOneTrailingRefresh()
+    {
+        using var refreshWindow = new EnvironmentScope("OPENCLAW_SESSION_REFRESH_WINDOW_MS", null);
+        using var server = new LoopbackWebSocketServer();
+        using var identity = new TempDirectory("session-refresh-");
+        await server.StartAsync();
+        var logger = new OpenClaw.Shared.Tests.TestLogger();
+        using var client = new DelayedRefreshClient(server.WebSocketUrl, identity.Path, logger);
+        var helper = new GatewayClientTestHelper(client);
+        await client.ConnectAsync();
+        helper.MarkHandshakeReady();
+        helper.ProcessRawMessage("""{"type":"event","event":"sessions.changed","payload":{}}""");
+        await client.FirstSendStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        for (var i = 0; i < 50; i++)
+            helper.ProcessRawMessage("""{"type":"event","event":"session","payload":{}}""");
+
+        // Hold the send past a batching window. Further events may not enqueue more sends.
+        await Task.Delay(SessionRefreshQuietInterval);
+        Assert.Equal(1, Volatile.Read(ref client.AutomaticSends));
+        client.ReleaseFirstSend.TrySetResult();
+        using var trailing = JsonDocument.Parse(await server.ReceiveTextAsync().WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal("sessions.list", trailing.RootElement.GetProperty("method").GetString());
+        Assert.Equal(2, Volatile.Read(ref client.AutomaticSends));
+        Assert.Contains(logger.Logs, message => message.Contains("Session event refresh failed: IOException"));
+        await Task.Delay(SessionRefreshQuietInterval);
+        Assert.Equal(2, Volatile.Read(ref client.AutomaticSends));
+        await client.RequestSessionsAsync("barrier");
+        using var barrier = JsonDocument.Parse(await server.ReceiveTextAsync().WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal("barrier", barrier.RootElement.GetProperty("params").GetProperty("agentId").GetString());
+    }
 
     [Theory]
     [InlineData(false)]
