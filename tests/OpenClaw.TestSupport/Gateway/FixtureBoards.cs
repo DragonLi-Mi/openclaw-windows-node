@@ -254,8 +254,8 @@ public sealed class FixtureBoards
         const string deployChart = """
             <h2>Deployments this week</h2>
             <svg viewBox="0 0 600 140" width="100%" height="140" role="img" aria-label="Deployments per day">
-              <polyline fill="none" stroke="var(--accent-fill)" stroke-width="3" points="10,110 100,90 190,100 280,60 370,70 460,30 590,40"/>
-              <g fill="var(--accent-fill)"><circle cx="10" cy="110" r="4"/><circle cx="100" cy="90" r="4"/><circle cx="190" cy="100" r="4"/><circle cx="280" cy="60" r="4"/><circle cx="370" cy="70" r="4"/><circle cx="460" cy="30" r="4"/><circle cx="590" cy="40" r="4"/></g>
+              <polyline fill="none" stroke="var(--accent)" stroke-width="3" points="10,110 100,90 190,100 280,60 370,70 460,30 590,40"/>
+              <g fill="var(--accent)"><circle cx="10" cy="110" r="4"/><circle cx="100" cy="90" r="4"/><circle cx="190" cy="100" r="4"/><circle cx="280" cy="60" r="4"/><circle cx="370" cy="70" r="4"/><circle cx="460" cy="30" r="4"/><circle cx="590" cy="40" r="4"/></g>
             </svg>
             <p class="muted">Mon to Sun. Rendered inside the isolated widget sandbox.</p>
             """;

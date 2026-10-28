@@ -396,7 +396,9 @@ The focused native regression runs both themes, captures the gallery, HTML and
 report widgets, approval/error states, tabs and an empty board, and scans the
 populated gallery and board with Axe.Windows. English Windows OCR verifies
 visible widget text in owned-window captures because UI Automation on some
-hosts stops at the WebView pane. The companion mounted test verifies that two
+hosts stops at the WebView pane. A pixel guard also requires the deployment
+curve's plot area to have a luminance range of at least 64; a blank SVG cannot
+pass merely because its heading rendered. The companion mounted test verifies that two
 same-origin website widgets do not share cookies or local storage.
 
 On an authorized Windows desktop, after building the explicit app:
