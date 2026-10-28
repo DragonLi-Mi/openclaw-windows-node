@@ -20,6 +20,7 @@ namespace OpenClaw.Shared.Tests;
 /// Tests for ExecApprovalsCoordinator: full pipeline, observability, UI-free guarantee,
 /// concurrency, production wiring inert by default, env injection guard, and log injection prevention.
 /// </summary>
+[Collection("MxcOwnership")]
 public class ExecApprovalsCoordinatorTests : IDisposable
 {
     private readonly string _dir;
@@ -895,7 +896,7 @@ public class ExecApprovalsCoordinatorTests : IDisposable
         var executable = Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe");
         const string script = "Write-Output 'first'\r\nWrite-Output 'second'";
         string[] argv = [executable, "-NoProfile", "-NonInteractive", "-Command", script];
-        var request = Req(JsonSerializer.Serialize(new { command = argv, timeoutMs = 10_000 }));
+        var request = Req(JsonSerializer.Serialize(new { command = argv }));
         ContainerRequest? captured = null;
         var cap = new SystemCapability(NullLogger.Instance);
         cap.SetV2Handler(coordinator);
@@ -917,7 +918,7 @@ public class ExecApprovalsCoordinatorTests : IDisposable
 
         Assert.True(response.Ok, response.Error);
         var payload = JsonSerializer.SerializeToElement(response.Payload);
-        Assert.True(payload.GetProperty("success").GetBoolean());
+        Assert.True(payload.GetProperty("success").GetBoolean(), payload.GetRawText());
         Assert.Equal("first\r\nsecond\r\n", payload.GetProperty("stdout").GetString());
         if (unsupportedWindows)
             Assert.Null(captured);
