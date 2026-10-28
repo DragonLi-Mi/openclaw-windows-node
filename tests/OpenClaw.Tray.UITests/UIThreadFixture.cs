@@ -74,6 +74,7 @@ public sealed class UIThreadFixture : IDisposable
 
     public UIThreadFixture()
     {
+        Console.WriteLine($"UIThreadFixture process={Environment.ProcessId}; WindowsAppSDK={WinAppSdkMajorMinor >> 16}.{WinAppSdkMajorMinor & 0xffff}");
         IsSlow = string.Equals(
             Environment.GetEnvironmentVariable("SLOW_UI_TESTS"), "1", StringComparison.Ordinal);
         SlowStepMs = int.TryParse(
@@ -204,10 +205,13 @@ public sealed class UIThreadFixture : IDisposable
         {
             OnboardingNativeProof.InitializeProductProcessDpi();
             OnboardingNativeProof.TraceDpiContext("UIThreadProc: before bootstrap");
-            _startupPhase = "initializing Windows App SDK bootstrap";
+            _startupPhase = "initializing WinRT COM wrappers";
+            OnboardingNativeProof.TraceDpiContext("UIThreadProc: before COM wrappers");
             WinRT.ComWrappersSupport.InitializeComWrappers();
+            OnboardingNativeProof.TraceDpiContext("UIThreadProc: COM wrappers initialized");
 
             // Initialize WinAppSDK runtime (unpackaged process).
+            _startupPhase = "initializing Windows App SDK bootstrap";
             if (Interlocked.Exchange(ref s_bootstrapInitialized, 1) == 0)
             {
                 Bootstrap.Initialize(WinAppSdkMajorMinor, WinAppSdkVersionTag);
