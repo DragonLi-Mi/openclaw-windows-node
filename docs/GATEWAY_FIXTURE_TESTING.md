@@ -189,6 +189,18 @@ dotnet test .\tests\OpenClaw.Tray.UITests\OpenClaw.Tray.UITests.csproj -r win-ar
 On x64 use `-r win-x64 -p:Platform=x64`. Artifacts include owned-window
 captures of each state. This proves the app/fixture wire path, not production
 Gateway persistence or scheduling.
+
+The same filter includes editor lifetime regressions: an unsaved draft survives
+reconnect, a delayed save cannot close a newer editor, and old-route directory
+suggestions disappear while the next route's response is held. Host-side
+`HoldResponses`/`ReleaseResponses` gates delay real fixture replies; they do not
+bypass page callbacks or supply the UI behavior being asserted.
+
+The directory case also requires Reactor to apply an empty `Suggestions` array
+to the native AutoSuggestBox. Published preview.16 skips that write and retains
+old native items. Until a fixed package is available, this case needs the local
+Reactor empty-list binding fix; do not mask it with a Companion-side control reset.
+
 ## Targeted context-usage proof
 
 `ContextFooterReconcilesLiveReplayHistoryAndAuthoritativeUsage` opts into

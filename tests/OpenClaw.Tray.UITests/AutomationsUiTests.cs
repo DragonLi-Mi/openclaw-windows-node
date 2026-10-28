@@ -10,6 +10,112 @@ namespace OpenClaw.Tray.UITests;
 /// </summary>
 public sealed partial class GatewayFixtureUiTests
 {
+    [GatewayFixtureUiFact]
+    [Trait("Category", "GatewayFixture")]
+    public async Task Automations_EditorDraftSurvivesReconnect()
+    {
+        await WithAppAsync(async run =>
+        {
+            await OpenAutomationEditorAsync(run);
+            const string draft = "Keep this unsaved draft";
+            SetValue(FindById(run, "AutomationEditorName")!, draft);
+            await run.Gateway.GoOfflineAsync();
+            await WaitUiAsync(run, () => FindById(run, "AutomationsOpenConnection") is not null, "disconnected editor");
+            run.Gateway.GoOnline();
+            await WaitUiAsync(run, () => FindById(run, "AutomationEditorSave") is { Current.IsEnabled: true }, "reconnected editor");
+            Assert.Equal(draft, EditorValue(run, "AutomationEditorName"));
+            Capture(run, "automations-reconnected-draft.png", "AutomationEditorName");
+        }, scenario: GatewayScenario.CreateAutomations());
+    }
+
+    [GatewayFixtureUiFact]
+    [Trait("Category", "GatewayFixture")]
+    public async Task Automations_OldSaveCannotCloseNewEditor()
+    {
+        await WithAppAsync(async run =>
+        {
+            await OpenAutomationEditorAsync(run);
+            SetValue(FindById(run, "AutomationEditorName")!, "Saved editor A");
+            run.Gateway.HoldResponses("cron.update");
+            Invoke(FindById(run, "AutomationEditorSave")!);
+            await run.WaitForAsync(() => Task.FromResult(run.Gateway.Requests.Any(r =>
+                r.Method == "cron.update" && r.Outcome == "pending")), "held editor A save");
+            Invoke(FindById(run, "AutomationsNew")!);
+            await WaitUiAsync(run, () => EditorValue(run, "AutomationEditorName") == "", "new editor B");
+            const string draft = "Unsaved editor B";
+            SetValue(FindById(run, "AutomationEditorName")!, draft);
+            run.Gateway.ReleaseResponses("cron.update");
+            await WaitUiAsync(run, () => FindById(run, "AutomationsNotice") is not null, "completed editor A save");
+            Assert.Equal(draft, EditorValue(run, "AutomationEditorName"));
+            Capture(run, "automations-newer-editor.png", "AutomationEditorName", "AutomationsNotice");
+        }, scenario: GatewayScenario.CreateAutomations());
+    }
+
+    [GatewayFixtureUiFact]
+    [Trait("Category", "GatewayFixture")]
+    public async Task Automations_DirectorySuggestionsBelongToCurrentRoute()
+    {
+        await WithAppAsync(async run =>
+        {
+            await OpenAutomationEditorAsync(run);
+            await run.WaitForAsync(() => Task.FromResult(run.Gateway.Requests.Any(r =>
+                r.Method == "conversations.list" && r.Outcome == "ok")), "Slack directory");
+            var recipient = FindById(run, "AutomationEditorTo")!;
+            ScrollAncestorToBottom(recipient);
+            SetEditorValue(run, "AutomationEditorTo", "On-call");
+            await WaitUiAsync(run, () => FindText(run, "On-call (#oncall)") is not null, "Slack suggestion");
+            run.Gateway.HoldResponses("conversations.list");
+            SetValue(FindById(run, "AutomationEditorChannel")!, "telegram");
+            await run.WaitForAsync(() => Task.FromResult(run.Gateway.Requests.Any(r =>
+                r.Method == "conversations.list" && r.Outcome == "pending")), "held Telegram directory");
+            SetEditorValue(run, "AutomationEditorTo", "On-call");
+            await WaitUiAsync(run, () => EditorValue(run, "AutomationEditorTo") == "On-call", "current recipient input");
+            await WaitUiAsync(run, () => FindText(run, "On-call (#oncall)") is null, "removed previous-route suggestion");
+            Assert.Null(FindText(run, "On-call (#oncall)"));
+            Capture(run, "automations-route-scoped-suggestions.png", "AutomationEditorChannel", "AutomationEditorTo");
+            SetEditorValue(run, "AutomationEditorTo", "Owner");
+            await WaitUiAsync(run, () => FindText(run, "@owner") is not null, "rendered saved-recipient query");
+            SetValue(FindById(run, "AutomationEditorAccount")!, "default");
+            run.Gateway.ReleaseResponses("conversations.list");
+            await run.WaitForAsync(() => Task.FromResult(run.Gateway.Requests.All(r =>
+                r.Method != "conversations.list" || r.Outcome != "pending")), "completed Telegram directory");
+            EditorValueElement(run, "AutomationEditorTo")!.SetFocus();
+            SetEditorValue(run, "AutomationEditorTo", "Owne");
+            await WaitUiAsync(run, () => FindText(run, "Owner (@owner)") is not null, "current Telegram suggestion");
+            Assert.Null(FindText(run, "On-call (#oncall)"));
+            Capture(run, "automations-current-route-suggestions.png", "AutomationEditorAccount", "AutomationEditorTo");
+        }, scenario: GatewayScenario.CreateAutomations());
+    }
+
+    private static async Task OpenAutomationEditorAsync(GatewayFixtureRun run)
+    {
+        await run.InvokeAsync("app.navigate", new { page = "agent:main:cron" });
+        await WaitUiAsync(run, () => FindById(run, "AutomationRow:morning-brief") is not null, "main automations");
+        ((WindowPattern)AutomationsWindow(run).GetCurrentPattern(WindowPattern.Pattern))
+            .SetWindowVisualState(WindowVisualState.Maximized);
+        Invoke(FindById(run, "AutomationRow:morning-brief")!);
+        await WaitUiAsync(run, () => FindById(run, "CronEdit:morning-brief") is { Current.IsEnabled: true }, "edit action");
+        Invoke(FindById(run, "CronEdit:morning-brief")!);
+        await WaitUiAsync(run, () => FindById(run, "AutomationEditorName") is not null, "automation editor");
+    }
+
+    private static AutomationElement? EditorValueElement(GatewayFixtureRun run, string id)
+    {
+        var element = FindById(run, id);
+        if (element is null || element.TryGetCurrentPattern(ValuePattern.Pattern, out _))
+            return element;
+        return element.FindFirst(TreeScope.Descendants,
+            new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit));
+    }
+
+    private static string? EditorValue(GatewayFixtureRun run, string id) =>
+        EditorValueElement(run, id) is { } element
+            ? ((ValuePattern)element.GetCurrentPattern(ValuePattern.Pattern)).Current.Value
+            : null;
+
+    private static void SetEditorValue(GatewayFixtureRun run, string id, string value) =>
+        SetValue(EditorValueElement(run, id) ?? throw new InvalidOperationException($"Missing editor input {id}."), value);
+
     [GatewayFixtureUiTheory]
     [InlineData("Light")]
     [InlineData("Dark")]

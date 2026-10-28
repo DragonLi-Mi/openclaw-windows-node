@@ -40,6 +40,7 @@ public sealed class FixtureGatewayServer : IAsyncDisposable
     private readonly HashSet<string> _issuedApprovalIds = new(StringComparer.Ordinal);
     private readonly Dictionary<int, ActiveConnection> _authenticatedConnections = [];
     private readonly Dictionary<string, TaskCompletionSource> _historyGates = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, TaskCompletionSource> _responseGates = new(StringComparer.Ordinal);
     private TaskCompletionSource? _sessionMutationGate;
     private TaskCompletionSource? _chatSendGate;
     private TaskCompletionSource<bool>? _chatAbortGate;
@@ -360,6 +361,27 @@ public sealed class FixtureGatewayServer : IAsyncDisposable
                 message = new { role = "assistant", content }
             }
         }, cancellationToken);
+    }
+
+    /// <summary>Hold replies for one method after the scenario has produced their payloads.</summary>
+    public void HoldResponses(string method)
+    {
+        lock (_sync)
+        {
+            ObjectDisposedException.ThrowIf(_disposal is not null, this);
+            if (!_responseGates.TryAdd(method, NewSignal()))
+                throw new InvalidOperationException($"Responses for {method} are already held.");
+        }
+    }
+
+    public void ReleaseResponses(string method)
+    {
+        lock (_sync)
+        {
+            if (!_responseGates.Remove(method, out var gate))
+                throw new InvalidOperationException($"Responses for {method} are not held.");
+            gate.TrySetResult();
+        }
     }
 
     /// <summary>Hold one listing snapshot while subsequent requests remain independent.</summary>
@@ -683,6 +705,12 @@ public sealed class FixtureGatewayServer : IAsyncDisposable
                                 ? held.Task : null;
                         abortOutcome = method == "chat.abort" ? _chatAbortGate?.Task : null;
                         if (method == "sessions.list") _nextSessionListGate = null;
+                        if (_responseGates.TryGetValue(method!, out var responseGate))
+                        {
+                            if (gate is not null)
+                                throw new InvalidOperationException($"A response gate already applies to {method}.");
+                            gate = responseGate.Task;
+                        }
                     }
                     pending.RemoveAll(task => task.IsCompletedSuccessfully);
                     pending.Add(RespondAsync(socket, sendLock, id!, method!, parameters, requestIndex, connectionId,

@@ -19,10 +19,12 @@ internal sealed record AutomationEditorProps(
     EditorSession Session,
     string AgentId,
     bool CanManage,
+    Action<Func<EditorSession, EditorSession>> UpdateSession,
     Action<string?> OnClose);
 
 internal sealed record EditorRemote(
     CronEditorHints Hints,
+    string? ConversationsKey,
     IReadOnlyList<ConversationTarget> Conversations,
     string? ConversationsError,
     string? EventsServer,
@@ -30,7 +32,7 @@ internal sealed record EditorRemote(
     bool EventsLoading,
     string? EventsError)
 {
-    public static EditorRemote Empty { get; } = new(CronEditorHints.Empty, Array.Empty<ConversationTarget>(), null, null, Array.Empty<McpEventDefinition>(), false, null);
+    public static EditorRemote Empty { get; } = new(CronEditorHints.Empty, null, Array.Empty<ConversationTarget>(), null, null, Array.Empty<McpEventDefinition>(), false, null);
 }
 
 /// <summary>
@@ -58,22 +60,19 @@ internal sealed class AutomationEditor : Component<AutomationEditorProps>
     private static readonly CronDurationUnit[] EveryUnits = [CronDurationUnit.Seconds, CronDurationUnit.Minutes, CronDurationUnit.Hours, CronDurationUnit.Days];
     private static readonly CronDurationUnit[] StaggerUnits = [CronDurationUnit.Seconds, CronDurationUnit.Minutes];
     private static readonly Lazy<string[]> TimeZones = new(LoadTimeZones);
-    private static readonly IReadOnlyDictionary<CronFormField, CronFormError> NoErrors = new Dictionary<CronFormField, CronFormError>();
-
     public override Element Render()
     {
-        var (host, session, agentId, canManage, onClose) = Props;
+        var (host, session, agentId, canManage, updateSession, onClose) = Props;
         var t = host.Text;
-        var (form, setForm) = UseState(session.Form);
-        var (errors, setErrors) = UseState(NoErrors);
-        var (submitted, setSubmitted) = UseState(false);
-        var (saving, setSaving) = UseState(false, threadSafe: true);
-        var (banner, setBanner) = UseState<(string Title, string Message, InfoBarSeverity Severity)?>(null, threadSafe: true);
+        var form = session.Form;
+        var errors = session.Errors;
+        var saving = session.Saving;
+        var banner = session.Banner;
         var (remote, setRemote) = UseState(EditorRemote.Empty, threadSafe: true);
         var (advancedOpen, setAdvancedOpen) = UseState(session.Mode != EditorMode.Create && HasAdvancedValues(session.Form));
         var remoteRef = UseRef(EditorRemote.Empty);
         // After a revision conflict the editor rebases onto the latest definition.
-        var (source, setSource) = UseState(session.Source);
+        var source = session.Source;
         var ui = SynchronizationContext.Current;
 
         // Remote results arrive concurrently; apply each on the UI thread against the latest value.
@@ -94,10 +93,11 @@ internal sealed class AutomationEditor : Component<AutomationEditorProps>
 
         void Update(Func<CronJobForm, CronJobForm> change, bool sessionTargetChanged = false)
         {
-            var next = form.WithStaleThreadCleared(change(form).Normalize(sessionTargetChanged));
-            setForm(next);
-            if (submitted)
-                setErrors(next.Validate());
+            updateSession(current =>
+            {
+                var next = current.Form.WithStaleThreadCleared(change(current.Form).Normalize(sessionTargetChanged));
+                return current with { Form = next, Errors = current.Submitted ? next.Validate() : current.Errors };
+            });
         }
 
         // Editor hints: enabled MCP servers and configured models (config.get).
@@ -123,16 +123,23 @@ internal sealed class AutomationEditor : Component<AutomationEditorProps>
 
         // Delivery target suggestions for the current agent and channel.
         var routeKey = $"{form.DeliveryMode}|{form.DeliveryTarget}|{form.DeliveryChannel.Trim()}|{effectiveAgent}";
+        var currentRoute = UseRef(routeKey);
+        currentRoute.Current = routeKey;
         UseEffect((Func<Action>)(() =>
         {
             var client = host.Client();
+            UpdateRemote(r => r with
+            {
+                ConversationsKey = routeKey,
+                Conversations = Array.Empty<ConversationTarget>(),
+                ConversationsError = null,
+            });
             // Suggestions need an explicit channel: "last" could mix several channels, and a
             // target is only meaningful on the channel it came from (as on the web page).
             var channel = form.DeliveryChannel.Trim();
             if (client is null || !canManage || form.DeliveryMode != "announce" || form.DeliveryTarget == "owner"
                 || channel.Length == 0 || channel == CronProtocol.ChannelLast)
             {
-                UpdateRemote(r => r with { Conversations = Array.Empty<ConversationTarget>(), ConversationsError = null });
                 return static () => { };
             }
             var cancelled = false;
@@ -141,15 +148,19 @@ internal sealed class AutomationEditor : Component<AutomationEditorProps>
                 try
                 {
                     var conversations = await client.ListConversationsAsync(effectiveAgent, channel);
-                    if (!cancelled) UpdateRemote(r => r with { Conversations = conversations, ConversationsError = null });
+                    UpdateRemote(r => !cancelled && currentRoute.Current == routeKey
+                        ? r with { ConversationsKey = routeKey, Conversations = conversations, ConversationsError = null }
+                        : r);
                 }
                 catch (Exception ex)
                 {
-                    if (!cancelled) UpdateRemote(r => r with { Conversations = Array.Empty<ConversationTarget>(), ConversationsError = ex.Message });
+                    UpdateRemote(r => !cancelled && currentRoute.Current == routeKey
+                        ? r with { ConversationsKey = routeKey, Conversations = Array.Empty<ConversationTarget>(), ConversationsError = ex.Message }
+                        : r);
                 }
             });
             return () => cancelled = true;
-        }), routeKey);
+        }), routeKey, canManage);
 
         // MCP event catalog for the chosen server.
         var eventsKey = form.ScheduleKind == CronScheduleKind.Event ? $"{effectiveAgent}|{form.EventServer.Trim()}" : "";
@@ -182,43 +193,50 @@ internal sealed class AutomationEditor : Component<AutomationEditorProps>
 
         async Task SaveAsync(bool runAfter)
         {
-            setSubmitted(true);
             var validation = form.Normalize().Validate();
-            setErrors(validation);
+            updateSession(current => current with { Submitted = true, Errors = validation });
             if (validation.Count > 0)
             {
-                setBanner((t["Editor_CantSave"], validation.Count == 1 ? t["Editor_FixOne"] : t.Format("Editor_FixMany", validation.Count), InfoBarSeverity.Error));
+                updateSession(current => current with
+                {
+                    Banner = (t["Editor_CantSave"], validation.Count == 1 ? t["Editor_FixOne"] : t.Format("Editor_FixMany", validation.Count), InfoBarSeverity.Error),
+                });
                 return;
             }
-            setSaving(true);
-            setBanner(null);
+            updateSession(current => current with { Saving = true, Banner = null });
             var result = await host.Store.SaveAsync(form, editing, cloneSource, runAfter);
-            setSaving(false);
+            updateSession(current => current with { Saving = false });
             switch (result)
             {
                 case AutomationsSaveResult.Saved saved:
                     onClose(saved.Job.Id);
                     break;
                 case AutomationsSaveResult.Invalid invalid:
-                    setErrors(invalid.Errors);
+                    updateSession(current => current with { Errors = invalid.Errors });
                     break;
                 case AutomationsSaveResult.Conflict conflict:
                     if (conflict.Latest is { } latest)
                     {
-                        setSource(latest);
-                        setForm(CronJobForm.FromJob(latest));
-                        setBanner((t["Notice_ConflictTitle"], t["Notice_Conflict"], InfoBarSeverity.Warning));
+                        updateSession(current => current with
+                        {
+                            Source = latest,
+                            Form = CronJobForm.FromJob(latest),
+                            Banner = (t["Notice_ConflictTitle"], t["Notice_Conflict"], InfoBarSeverity.Warning),
+                        });
                     }
                     else
                     {
-                        setBanner((t["Notice_ConflictTitle"], t["Notice_ConflictUnloadable"], InfoBarSeverity.Error));
+                        updateSession(current => current with
+                        {
+                            Banner = (t["Notice_ConflictTitle"], t["Notice_ConflictUnloadable"], InfoBarSeverity.Error),
+                        });
                     }
                     break;
                 case AutomationsSaveResult.Failed failed:
-                    setBanner((t["Editor_SaveFailed"], failed.Message, InfoBarSeverity.Error));
+                    updateSession(current => current with { Banner = (t["Editor_SaveFailed"], failed.Message, InfoBarSeverity.Error) });
                     break;
                 case AutomationsSaveResult.MissingRevision:
-                    setBanner((t["Editor_SaveFailed"], t["Notice_MissingRevision"], InfoBarSeverity.Error));
+                    updateSession(current => current with { Banner = (t["Editor_SaveFailed"], t["Notice_MissingRevision"], InfoBarSeverity.Error) });
                     break;
             }
         }
@@ -235,12 +253,12 @@ internal sealed class AutomationEditor : Component<AutomationEditorProps>
         var sections = new List<Element?>
         {
             banner is { } b
-                ? (InfoBar(b.Title, b.Message) with { Severity = b.Severity, OnClosed = () => setBanner(null) }).AutomationId("AutomationEditorBanner")
+                ? (InfoBar(b.Title, b.Message) with { Severity = b.Severity, OnClosed = () => updateSession(current => current with { Banner = null }) }).AutomationId("AutomationEditorBanner")
                 : null,
             RenderBasics(t, form, Update, Err, agentId),
             RenderSchedule(t, form, Update, Err, remote, () => setEventsNonce(eventsNonce + 1)),
             RenderAction(t, form, Update, Err, remote),
-            RenderDelivery(t, form, Update, Err, remote, SavedTargets(host.Store.State.Jobs)),
+            RenderDelivery(t, form, Update, Err, remote, routeKey, () => currentRoute.Current == routeKey, SavedTargets(host.Store.State.Jobs)),
             RenderFailureAlerts(t, form, Update, Err),
             RenderAdvanced(t, form, Update, Err, advancedOpen, setAdvancedOpen),
         };
@@ -269,6 +287,7 @@ internal sealed class AutomationEditor : Component<AutomationEditorProps>
                         .Padding(PagePadding, 0, PagePadding, PagePadding)
                         .MaxWidth(ReadingWidth + 2 * PagePadding)
                         .HAlign(HorizontalAlignment.Left))
+                    .IsEnabled(!saving)
                     .Grid(row: 1),
                 footer.Grid(row: 2))
             .AutomationId("AutomationEditor");
@@ -560,7 +579,8 @@ internal sealed class AutomationEditor : Component<AutomationEditorProps>
         jobs.Select(j => j.Delivery?.To?.Trim()).OfType<string>().Where(to => to.Length > 0)
             .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
 
-    private static Element RenderDelivery(AutomationsText t, CronJobForm form, Action<Func<CronJobForm, CronJobForm>, bool> update, Func<CronFormField, string?> err, EditorRemote remote, string[] savedTargets)
+    private static Element RenderDelivery(AutomationsText t, CronJobForm form, Action<Func<CronJobForm, CronJobForm>, bool> update,
+        Func<CronFormField, string?> err, EditorRemote remote, string routeKey, Func<bool> isCurrentRoute, string[] savedTargets)
     {
         var modes = new List<string> { "none", "announce", "webhook" };
         var labels = modes.Select(t.DeliveryMode).ToList();
@@ -589,7 +609,7 @@ internal sealed class AutomationEditor : Component<AutomationEditorProps>
                 children.Add(Secondary(t["Help_Owner"]));
             // Directory targets belong to one account; offer them only once the operator names it (as on the web page).
             var account = form.DeliveryAccountId.Trim();
-            var routeable = account.Length == 0
+            var routeable = account.Length == 0 || remote.ConversationsKey != routeKey
                 ? Array.Empty<ConversationTarget>()
                 : remote.Conversations.Where(c => string.Equals(c.AccountId.Trim(), account, StringComparison.Ordinal)).ToArray();
             var suggestions = savedTargets.Concat(routeable.Select(c => c.DisplayLabel)).Distinct(StringComparer.Ordinal).ToArray();
@@ -601,11 +621,15 @@ internal sealed class AutomationEditor : Component<AutomationEditorProps>
                     ? Empty()
                     : Field(Suggest(t["Field_To"], form.DeliveryTo, suggestions, v =>
                         {
+                            if (!isCurrentRoute()) return;
                             // A suggestion fills the recipient only; the account stays operator-authored.
                             var match = routeable.FirstOrDefault(c => c.DisplayLabel == v);
-                            update(f => f with { DeliveryTo = match?.Target ?? v }, false);
+                            update(f => f.DeliveryAccountId.Trim() == account
+                                ? f with { DeliveryTo = match?.Target ?? v }
+                                : f, false);
                         }, "AutomationEditorTo", t["Placeholder_To"]),
-                        null, remote.ConversationsError is { } convError ? t.Format("Conversations_Failed", convError) : t["Help_To"])));
+                        null, remote.ConversationsKey == routeKey && remote.ConversationsError is { } convError
+                            ? t.Format("Conversations_Failed", convError) : t["Help_To"])));
             children.Add(Row(
                 Text(t["Field_Account"], form.DeliveryAccountId, v => update(f => f with { DeliveryAccountId = v }, false), "AutomationEditorAccount", t["Placeholder_Optional"]),
                 Choice(t["Field_DirectPolicy"], [t["DirectPolicy_Default"], t["DirectPolicy_Allow"], t["DirectPolicy_Block"]],

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -19,8 +20,15 @@ internal sealed record AutomationsRootProps(AutomationsHost Host);
 
 internal enum EditorMode { Create, Edit, Clone }
 
-/// <summary>An open editor: its starting form and the job it edits or clones.</summary>
-internal sealed record EditorSession(EditorMode Mode, CronJobForm Form, CronJob? Source, long Nonce);
+/// <summary>Page-owned editor state survives child remounts during reconnect or layout changes.</summary>
+internal sealed record EditorSession(EditorMode Mode, CronJobForm Form, CronJob? Source, long Nonce)
+{
+    public bool Submitted { get; init; }
+    public bool Saving { get; init; }
+    public IReadOnlyDictionary<CronFormField, CronFormError> Errors { get; init; } =
+        ImmutableDictionary<CronFormField, CronFormError>.Empty;
+    public (string Title, string Message, InfoBarSeverity Severity)? Banner { get; init; }
+}
 
 /// <summary>
 /// Native Automations page: status strip, agent-scoped list and a detail/editor
@@ -50,6 +58,9 @@ internal sealed class AutomationsRoot : Component<AutomationsRootProps>
         var (state, setState) = UseState(store.State, threadSafe: true);
         var (width, setWidth) = UseState(1200d);
         var (editor, setEditor) = UseState<EditorSession?>(null);
+        var editorRef = UseRef<EditorSession?>(null);
+        editorRef.Current = editor;
+        var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
         var (search, setSearch) = UseState(state.ListQuery.Query);
         var searchToken = UseRef(0);
         var look = new AutomationsLook(UseReducedMotion(), UseHighContrast());
@@ -59,7 +70,11 @@ internal sealed class AutomationsRoot : Component<AutomationsRootProps>
             EventHandler<AutomationsSnapshot> changed = (_, snapshot) => setState(snapshot);
             store.Changed += changed;
             setState(store.State);
-            return () => store.Changed -= changed;
+            return () =>
+            {
+                store.Changed -= changed;
+                editorRef.Current = null;
+            };
         }), store);
 
         var noticeId = state.Notice?.Id ?? 0;
@@ -87,16 +102,39 @@ internal sealed class AutomationsRoot : Component<AutomationsRootProps>
             }, TaskScheduler.FromCurrentSynchronizationContext());
         }
 
+        void SetEditorSession(EditorSession? next)
+        {
+            editorRef.Current = next;
+            setEditor(next);
+        }
+
         void OpenEditor(EditorMode mode, CronJobForm form, CronJob? source) =>
-            setEditor(new EditorSession(mode, form, source, Interlocked.Increment(ref s_editorNonce)));
+            SetEditorSession(new EditorSession(mode, form, source, Interlocked.Increment(ref s_editorNonce)));
 
         void NewAutomation() => OpenEditor(EditorMode.Create, CronJobForm.CreateDefault(state.AgentId), null);
 
-        void CloseEditor(string? savedJobId)
+        void OnEditorDispatcher(Action action)
         {
-            setEditor(null);
-            if (savedJobId is not null)
-                store.Select(savedJobId);
+            if (dispatcher.HasThreadAccess) action();
+            else dispatcher.TryEnqueue(() => action());
+        }
+
+        void UpdateEditor(long nonce, Func<EditorSession, EditorSession> change) =>
+            OnEditorDispatcher(() =>
+            {
+                if (editorRef.Current is { } current && current.Nonce == nonce)
+                    SetEditorSession(change(current));
+            });
+
+        void CloseEditor(long nonce, string? savedJobId)
+        {
+            OnEditorDispatcher(() =>
+            {
+                if (editorRef.Current?.Nonce != nonce) return;
+                SetEditorSession(null);
+                if (savedJobId is not null)
+                    store.Select(savedJobId);
+            });
         }
 
         var narrow = width < NarrowBreakpoint;
@@ -120,7 +158,7 @@ internal sealed class AutomationsRoot : Component<AutomationsRootProps>
         }
         else
         {
-            var detail = RenderDetailPane(host, state, editor, actions, CloseEditor, narrow, look);
+            var detail = RenderDetailPane(host, state, editor, actions, UpdateEditor, CloseEditor, narrow, look);
             var showDetailOnly = narrow && (editor is not null || state.SelectedJobId is not null
                 || state.View == AutomationsView.RunHistory || state.ShowSuggestions);
             var list = RenderListPane(host, state, search, OnSearchChanged, narrow, look);
@@ -502,7 +540,8 @@ internal sealed class AutomationsRoot : Component<AutomationsRootProps>
         AutomationsSnapshot state,
         EditorSession? editor,
         AutomationsActions actions,
-        Action<string?> closeEditor,
+        Action<long, Func<EditorSession, EditorSession>> updateEditor,
+        Action<long, string?> closeEditor,
         bool narrow,
         AutomationsLook look)
     {
@@ -510,7 +549,8 @@ internal sealed class AutomationsRoot : Component<AutomationsRootProps>
         Element content;
         if (editor is not null)
         {
-            content = Component<AutomationEditor, AutomationEditorProps>(new(host, editor, state.AgentId, state.CanManage, closeEditor))
+            content = Component<AutomationEditor, AutomationEditorProps>(new(host, editor, state.AgentId, state.CanManage,
+                    change => updateEditor(editor.Nonce, change), savedId => closeEditor(editor.Nonce, savedId)))
                 .WithKey($"editor-{editor.Nonce}");
         }
         else if (state.View == AutomationsView.RunHistory)
@@ -552,7 +592,7 @@ internal sealed class AutomationsRoot : Component<AutomationsRootProps>
 
         var back = Button(HStack(Gap, Glyph(GlyphBack, 12, Theme.PrimaryText), TextBlock(t["Back"])), () =>
             {
-                if (editor is not null) closeEditor(null);
+                if (editor is not null) closeEditor(editor.Nonce, null);
                 else if (state.View == AutomationsView.RunHistory) host.Store.SetView(AutomationsView.Jobs);
                 else host.Store.Select(null);
             })
