@@ -2294,7 +2294,7 @@ public sealed class OnboardingAiPageTests(UIThreadFixture ui, ITestOutputHelper 
                     ExpectedConfiguredModelRef: expectedModelRef,
                     TransportFactory: () => connects++ == 0 ? transport : reconnectTransport ?? transport,
                     LocalAiHost: localAiHost, ReviewLocalAi: reviewLocalAi, ExpectedGatewayId: expectedGatewayId,
-                    InstallAndUse: installAndUse,
+                    InstallAndUse: installAndUse, AllowClassicWizardFallback: allowClassicWizardFallback,
                     Preparation: preparation,
                     Loading: loading,
                     CloseSetupWindow: closeSetupWindow,
