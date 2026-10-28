@@ -546,11 +546,10 @@ public sealed partial class SettingsPage : Page
             var wslManager = CurrentApp.ConnectionManager;
             if (wslManager is not null)
             {
-                var wasAllowed = wslManager.IsAutomaticReconnectAllowed(target.Id);
-                if (!await wslManager.DisconnectByUserIfCurrentAsync(target, removalCts.Token))
+                if (!await wslManager.DisconnectByUserIfCurrentAsync(target, removalCts.Token,
+                        allowed => wslWasConnectionAllowed = allowed))
                     throw new InvalidOperationException(LocalizationHelper.GetString("SettingsPage_GatewayRemovalTargetChanged"));
                 wslDisconnected = true;
-                wslWasConnectionAllowed = wasAllowed;
             }
             var exePath = ResolveCurrentExecutablePath()
                 ?? throw new FileNotFoundException("OpenClaw tray executable could not be resolved for local gateway removal.");
@@ -642,7 +641,9 @@ public sealed partial class SettingsPage : Page
             {
                 ReconcileRemovalRegistry(cleanupRegistry, baselineForCleanup);
             }
-            if (wslDisconnected && !wslRemoved && wslWasConnectionAllowed && CurrentApp.ConnectionManager is { } restoreManager)
+            if (wslDisconnected && !wslRemoved && wslWasConnectionAllowed &&
+                !OpenClaw.SetupEngine.WslGatewayRemoval.HasRemovalReceipt(AppIdentity.ResolveSetupLocalDataDirectory(), target) &&
+                CurrentApp.ConnectionManager is { } restoreManager)
             {
                 try { await restoreManager.ReconnectIfSameTargetAsync(target); }
                 catch (Exception ex) { Logger.Warn($"SettingsPage: Failed to restore the Gateway connection after a failed removal: {ex.Message}"); }

@@ -90,6 +90,25 @@ public sealed class WslGatewayRemovalTests : IDisposable
     }
 
     [Fact]
+    public async Task FailedRemovalAfterTeardownStartedLeavesReceiptThatBlocksReconnect()
+    {
+        Assert.False(WslGatewayRemoval.HasRemovalReceipt(_ctx.LocalDataDir, _target));
+        _remove = () => throw new IOException("locked VHDX");
+
+        var result = await Run();
+
+        Assert.Equal(PipelineOutcome.Failed, result.Outcome);
+        Assert.True(WslGatewayRemoval.HasRemovalReceipt(_ctx.LocalDataDir, _target));
+    }
+
+    [Fact]
+    public async Task SuccessfulRemovalDeletesReceipt()
+    {
+        Assert.Equal(PipelineOutcome.Success, (await Run()).Outcome);
+        Assert.False(WslGatewayRemoval.HasRemovalReceipt(_ctx.LocalDataDir, _target));
+    }
+
+    [Fact]
     public async Task TimestampOnlyDriftDoesNotInvalidateParentConsent()
     {
         _registry.AddOrUpdate(_target with { LastConnected = DateTime.UtcNow });

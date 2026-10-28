@@ -161,7 +161,17 @@ public sealed class WslGatewayRemoval
     }
 
     private static string ReceiptPath(SetupContext ctx, GatewayRecord record) =>
-        Path.Combine(ctx.LocalDataDir, $"wsl-removal-{GatewayDashboardBinding.Capture(record)}.json");
+        ReceiptPath(ctx.LocalDataDir, record);
+
+    private static string ReceiptPath(string localDataDir, GatewayRecord record) =>
+        Path.Combine(localDataDir, $"wsl-removal-{GatewayDashboardBinding.Capture(record)}.json");
+
+    /// <summary>
+    /// True once a removal wrote its receipt. The receipt is written before any destructive step and
+    /// deleted only on success, so its presence means teardown may have started.
+    /// </summary>
+    public static bool HasRemovalReceipt(string localDataDir, GatewayRecord record) =>
+        File.Exists(ReceiptPath(localDataDir, record));
 
     private static RemovalReceipt? ReadReceipt(SetupContext ctx, GatewayRecord record, string path)
     {

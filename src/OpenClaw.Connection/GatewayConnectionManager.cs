@@ -1127,7 +1127,8 @@ public sealed class GatewayConnectionManager :
     /// Disconnects only if <paramref name="expected"/> is still the saved active gateway. The check runs
     /// under the transition gate, so a queued gateway switch cannot redirect the disconnect to another gateway.
     /// </summary>
-    public async Task<bool> DisconnectByUserIfCurrentAsync(GatewayRecord expected, CancellationToken cancellationToken = default)
+    public async Task<bool> DisconnectByUserIfCurrentAsync(GatewayRecord expected, CancellationToken cancellationToken = default,
+        Action<bool>? onPreviousConnectionAllowed = null)
     {
         ThrowIfDisposed();
         await _transitionSemaphore.WaitAsync(cancellationToken);
@@ -1135,6 +1136,8 @@ public sealed class GatewayConnectionManager :
         {
             if (!LocalGatewaySettings.IsSameTarget(expected, _registry.GetActive()))
                 return false;
+            // Read under the transition lock so a queued connect cannot change the intent afterward.
+            onPreviousConnectionAllowed?.Invoke(IsAutomaticReconnectAllowed(expected.Id));
             SetGatewayConnectionIntent(expected.Id, shouldBeConnected: false);
             await DisconnectCoreAsync(stopNativeGateway: true);
             return true;
