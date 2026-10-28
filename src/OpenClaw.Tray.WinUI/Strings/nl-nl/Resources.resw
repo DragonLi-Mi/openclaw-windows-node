@@ -4986,7 +4986,7 @@ MXC kon niet worden geverifieerd. Opdrachten worden geblokkeerd. Herstel de inst
     <value>Verwijdert het geïsoleerde gatewayaccount, de werkruimte, de configuratie, de referenties en de opstartregistraties van dit Windows-pakket definitief. Andere Companion-profielen die hetzelfde pakket en Windows-account gebruiken, verliezen ook de toegang. De Gateway-app uit de Store, WSL-gateways, andere opgeslagen gateways, Companion-instellingen en het MCP-token blijven behouden.</value>
   </data>
   <data name="SettingsPage_RemoveLegacyNativeBody" xml:space="preserve">
-    <value>Stopt deze verouderde native gateway en verwijdert de opgeslagen verbinding, referenties en lokale profielgegevens definitief. De Gateway-app uit de Store, WSL-gateways, andere opgeslagen gateways, Companion-instellingen en het MCP-token blijven behouden.</value>
+    <value>Verwijdert de opgeslagen verbinding en referenties van deze verouderde native gateway uit Companion. Stop eerst de verouderde gateway. De eigen profielgegevens worden niet verwijderd. De Gateway-app uit de Store, WSL-gateways, andere opgeslagen gateways, Companion-instellingen en het MCP-token blijven behouden.</value>
   </data>
   <data name="SettingsPage_RemoveWslBody" xml:space="preserve">
     <value>Verwijdert de WSL-gateway in {0}, de bijbehorende schijfkopie, opgeslagen verbinding en gatewayreferenties definitief. Andere gateways, lokale AI-bestanden, Companion-instellingen, opstartvermeldingen, uitvoeringsgoedkeuringen, het MCP-token en de hoofdsleutel van het apparaat blijven behouden.</value>

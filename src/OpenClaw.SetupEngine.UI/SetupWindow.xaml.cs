@@ -319,8 +319,8 @@ public sealed partial class SetupWindow : Window
         }
         _config.ApplyUiDefaults(rollbackOnFailure: setupArguments.RollbackOnFailure);
         _localAiRecoveryBaseline = LocalAiRecoveryConfigurationBaseline.Capture(_config);
-        AccessDraft = new SetupAccessDraft(_config);
         _existingWslSetup?.Apply(_config);
+        AccessDraft = new SetupAccessDraft(_config);
         if (startAtLocalAiRecoveryReview)
         {
             _config.LocalAiRecoveryGatewayId = localAiRecoveryGatewayId;

@@ -1123,6 +1123,48 @@ public sealed class GatewayConnectionManager :
         }
     }
 
+    /// <summary>
+    /// Disconnects only if <paramref name="expected"/> is still the saved active gateway. The check runs
+    /// under the transition gate, so a queued gateway switch cannot redirect the disconnect to another gateway.
+    /// </summary>
+    public async Task<bool> DisconnectByUserIfCurrentAsync(GatewayRecord expected, CancellationToken cancellationToken = default)
+    {
+        ThrowIfDisposed();
+        await _transitionSemaphore.WaitAsync(cancellationToken);
+        try
+        {
+            if (!LocalGatewaySettings.IsSameTarget(expected, _registry.GetActive()))
+                return false;
+            SetGatewayConnectionIntent(expected.Id, shouldBeConnected: false);
+            await DisconnectCoreAsync(stopNativeGateway: true);
+            return true;
+        }
+        finally
+        {
+            _transitionSemaphore.Release();
+        }
+    }
+
+    /// <summary>Restores the connection after a failed removal, only while the same gateway is still active.</summary>
+    public async Task<bool> ReconnectIfSameTargetAsync(GatewayRecord expected)
+    {
+        ThrowIfDisposed();
+        await _transitionSemaphore.WaitAsync();
+        try
+        {
+            if (!LocalGatewaySettings.IsSameTarget(expected, _registry.GetActive()))
+                return false;
+            SetGatewayConnectionIntent(expected.Id, shouldBeConnected: true);
+            await DisconnectCoreAsync();
+            await ConnectCoreAsync(expected.Id, operation: "reconnect");
+            return true;
+        }
+        finally
+        {
+            _transitionSemaphore.Release();
+        }
+    }
+
     public async Task RemoveNativeGatewayAsync(
         GatewayRecord expected, INativeGatewayPackageResolver resolver, CancellationToken cancellationToken)
     {
@@ -1131,18 +1173,39 @@ public sealed class GatewayConnectionManager :
         try
         {
             var removal = new NativeGatewayRemoval(_registry, resolver, new NativeGatewayPackageClient());
-            await removal.RemoveAsync(expected, async () =>
+            var disconnected = false;
+            try
             {
-                SetGatewayConnectionIntent(expected.Id, shouldBeConnected: false);
-                await DisconnectCoreAsync(stopNativeGateway: true);
-                if (expected.NativeRuntimeContract is null)
+                await removal.RemoveAsync(expected, async () =>
                 {
-                    var listeners = WindowsTcpListenerSnapshot.Capture();
-                    if (!listeners.Ipv4Complete || !listeners.Ipv6Complete ||
-                        listeners.Listeners.Any(listener => listener.Port == NativeGatewayPaths.ValidateRecord(expected).Port))
-                        throw new InvalidOperationException("The legacy native Gateway is still running or its listener could not be verified. Its data was retained.");
+                    disconnected = true;
+                    SetGatewayConnectionIntent(expected.Id, shouldBeConnected: false);
+                    await DisconnectCoreAsync(stopNativeGateway: true);
+                    if (expected.NativeRuntimeContract is null)
+                    {
+                        var listeners = WindowsTcpListenerSnapshot.Capture();
+                        if (!listeners.Ipv4Complete || !listeners.Ipv6Complete ||
+                            listeners.Listeners.Any(listener => listener.Port == NativeGatewayPaths.ValidateRecord(expected).Port))
+                            throw new InvalidOperationException("The legacy native Gateway is still running or its listener could not be verified. Stop it, then retry. Its data was retained.");
+                    }
+                }, cancellationToken);
+            }
+            catch (Exception removalError) when (disconnected && removalError is not NativeGatewayCleanupPendingException &&
+                        _registry.GetActive() is { } active &&
+                        string.Equals(active.Id, expected.Id, StringComparison.Ordinal))
+            {
+                // The saved gateway survived a failed removal, so restore the connection that was dropped.
+                try
+                {
+                    SetGatewayConnectionIntent(expected.Id, shouldBeConnected: true);
+                    await ConnectCoreAsync(expected.Id, operation: "reconnect");
                 }
-            }, cancellationToken);
+                catch (Exception restoreError)
+                {
+                    _logger.Warn($"Failed to restore the Gateway connection after a failed removal: {restoreError.Message}");
+                }
+                throw;
+            }
         }
         finally { _transitionSemaphore.Release(); }
     }

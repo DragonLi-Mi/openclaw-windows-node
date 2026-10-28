@@ -560,13 +560,7 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
         // The suffixed test-isolation variant is
         // intentionally not covered by AppMutex — production installs only
         // ever use the unsuffixed name.
-        var mutexName = AppIdentity.MutexBaseName;
-        if (DataDirOverride is not null)
-        {
-            var hash = System.Security.Cryptography.SHA256.HashData(
-                System.Text.Encoding.UTF8.GetBytes(DataDirOverride));
-            mutexName = $"{AppIdentity.MutexBaseName}-{Convert.ToHexString(hash, 0, 4)}";
-        }
+        var mutexName = AppIdentity.ResolveSingleInstanceMutexName();
         _mutex = new Mutex(true, mutexName, out bool createdNew);
         var ownsMutex = createdNew;
         _nativeRestartRecovery = new NativeRestartRecoveryStore(AppIdentity.ResolveRoamingDataDirectory());

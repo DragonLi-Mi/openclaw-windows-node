@@ -17,7 +17,7 @@ public sealed class LocalGatewaySettingsContractTests
         Assert.Contains("binding.AcquireAsync", page);
         Assert.Contains("if (binding.Exists)", page);
         var nativeRemovalStart = page.IndexOf("if (kind is LocalGatewayKind.Native or LocalGatewayKind.LegacyNative)", StringComparison.Ordinal);
-        var wslRemovalStart = page.IndexOf("if (CurrentApp.ConnectionManager is { } wslManager)", nativeRemovalStart, StringComparison.Ordinal);
+        var wslRemovalStart = page.IndexOf("var wslManager = CurrentApp.ConnectionManager;", nativeRemovalStart, StringComparison.Ordinal);
         var removalStart = page.IndexOf("private async Task OnRemoveGatewayAsync()", StringComparison.Ordinal);
         Assert.DoesNotContain("binding.Exists", page[removalStart..nativeRemovalStart]);
         Assert.Contains("binding.Exists", page[nativeRemovalStart..wslRemovalStart]);
@@ -69,8 +69,8 @@ public sealed class LocalGatewaySettingsContractTests
             setup.IndexOf("public bool TryNavigateToGatewayInstalledMilestone()", StringComparison.Ordinal)];
         Assert.True(clearPin.IndexOf("ResetLocalAiRecoveryMode()", StringComparison.Ordinal) <
             clearPin.IndexOf("_existingWslSetup?.Restore(_config)", StringComparison.Ordinal));
-        Assert.True(setup.IndexOf("AccessDraft = new SetupAccessDraft(_config)", StringComparison.Ordinal) <
-            setup.IndexOf("_existingWslSetup?.Apply(_config)", StringComparison.Ordinal));
+        Assert.True(setup.IndexOf("_existingWslSetup?.Apply(_config)", StringComparison.Ordinal) <
+            setup.IndexOf("AccessDraft = new SetupAccessDraft(_config)", StringComparison.Ordinal));
         var finalization = setup[setup.IndexOf("private async Task<StepResult> ApplyWindowsNodeContextCoreAsync()", StringComparison.Ordinal)..];
         Assert.True(finalization.IndexOf("UsesWslWorkspaceFinalization", StringComparison.Ordinal) <
             finalization.IndexOf("_existingWslSetup.RequireCurrent", StringComparison.Ordinal));

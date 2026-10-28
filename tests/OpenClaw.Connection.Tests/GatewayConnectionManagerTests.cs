@@ -419,6 +419,22 @@ public class GatewayConnectionManagerTests : IDisposable
     }
 
     [Fact]
+    public async Task DisconnectByUserIfCurrent_DifferentActiveGateway_DoesNotDisconnect()
+    {
+        var runtime = new FakeNativeGatewayRuntime();
+        var active = LocalGatewaySettingsTests.Native();
+        _registry.AddOrUpdate(active);
+        _registry.SetActive(active.Id);
+        await using var manager = new GatewayConnectionManager(
+            _resolver, _factory, _registry, NullLogger.Instance, nativeGatewayRuntime: runtime);
+        var other = active with { Id = "other-target", Url = "ws://other.example:18789" };
+
+        Assert.False(await manager.DisconnectByUserIfCurrentAsync(other));
+        Assert.Equal(0, runtime.StopCount);
+        Assert.True(await manager.DisconnectByUserIfCurrentAsync(active));
+    }
+
+    [Fact]
     public async Task NativeGateway_SupersededReconnectCannotRestartAfterDisconnect()
     {
         SetupNativeGateway();

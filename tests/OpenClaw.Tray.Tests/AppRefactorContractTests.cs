@@ -1849,7 +1849,7 @@ public sealed class AppRefactorContractTests
         Assert.Contains("ApplyLocalGatewaySection(CurrentApp.Registry?.GetActive(), PackageHelper.IsPackaged)", code);
         Assert.Contains("LocalGatewaySettings.Classify(_localGatewayTarget)", code);
         Assert.Contains("OpenClawOnboardCard.Visibility = _localGatewayKind is LocalGatewayKind.Wsl or LocalGatewayKind.Native", code);
-        Assert.Contains("removalRegistry.AdoptPersistedSnapshot(removalBaseline);", code);
+        Assert.Contains("ReconcileRemovalRegistry(cleanupRegistry, baselineForCleanup);", code);
         Assert.Contains("OpenClawOnboardCard.Visibility = Visibility.Collapsed;", code);
     }
 

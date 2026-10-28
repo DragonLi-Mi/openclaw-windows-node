@@ -4985,7 +4985,7 @@ MXC n'a pas pu être vérifié. Les commandes sont bloquées. Réparez l'install
     <value>Supprime définitivement le compte de passerelle isolé de ce package Windows, son espace de travail, sa configuration, ses informations d’identification et ses entrées de démarrage. Les autres profils Companion utilisant le même package et le même compte Windows perdront également l’accès. L’application Gateway du Store, les passerelles WSL, les autres passerelles enregistrées, les paramètres de Companion et le jeton MCP sont conservés.</value>
   </data>
   <data name="SettingsPage_RemoveLegacyNativeBody" xml:space="preserve">
-    <value>Arrête cette ancienne passerelle native et supprime définitivement sa connexion enregistrée, ses informations d’identification et ses données de profil locales. L’application Gateway du Store, les passerelles WSL, les autres passerelles enregistrées, les paramètres de Companion et le jeton MCP sont conservés.</value>
+    <value>Supprime de Companion la connexion enregistrée et les informations d’identification de cette ancienne passerelle native. Arrêtez d’abord l’ancienne passerelle. Ses propres données de profil ne sont pas supprimées. L’application Gateway du Store, les passerelles WSL, les autres passerelles enregistrées, les paramètres de Companion et le jeton MCP sont conservés.</value>
   </data>
   <data name="SettingsPage_RemoveWslBody" xml:space="preserve">
     <value>Supprime définitivement la passerelle WSL dans {0}, son image disque, sa connexion enregistrée et ses informations d’identification. Les autres passerelles, les fichiers d’IA locale, les paramètres de Companion, les entrées de démarrage, les autorisations d’exécution, le jeton MCP et la clé racine de l’appareil sont conservés.</value>

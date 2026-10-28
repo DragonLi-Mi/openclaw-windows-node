@@ -41,7 +41,7 @@ public sealed class NativeGatewayRemoval(
         catch (Exception exception) when (package is not null &&
             exception is InvalidOperationException or IOException or UnauthorizedAccessException)
         {
-            throw new InvalidOperationException(
+            throw new NativeGatewayCleanupPendingException(
                 "The native Gateway installation was removed, but connection/profile cleanup needs attention. " +
                 "If the saved connection remains, select it and retry removal. " + exception.Message, exception);
         }
@@ -57,5 +57,8 @@ public sealed class NativeGatewayRemoval(
             record.NativeRuntimeContract == NativeGatewayPackageClient.IsolatedContract))
             throw new InvalidOperationException("Other saved connections use this native Gateway package. Remove those duplicate connections in Connection settings first.");
     }
-
 }
+
+/// <summary>The package session is gone, so the connection must not be restored.</summary>
+public sealed class NativeGatewayCleanupPendingException(string message, Exception inner)
+    : InvalidOperationException(message, inner);

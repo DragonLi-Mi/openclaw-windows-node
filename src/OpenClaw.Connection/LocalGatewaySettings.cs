@@ -31,10 +31,18 @@ public static class LocalGatewaySettings
         current is not null && Classify(expected) != LocalGatewayKind.None &&
         (expected with { LastConnected = null }) == (current with { LastConnected = null });
 
-    /// <summary>Binds destructive consent to the full saved target without passing credentials to a child.</summary>
+    /// <summary>
+    /// Binds destructive consent to the saved target. Credentials are excluded so the value is safe to
+    /// pass on a child command line and to log, and so a token rotation cannot invalidate consent.
+    /// </summary>
     public static string CaptureRemovalAuthority(GatewayRecord record) =>
         Convert.ToHexString(SHA256.HashData(
-            JsonSerializer.SerializeToUtf8Bytes(record with { LastConnected = null })));
+            JsonSerializer.SerializeToUtf8Bytes(record with
+            {
+                LastConnected = null,
+                SharedGatewayToken = null,
+                BootstrapToken = null,
+            })));
 
     public static string? DisplayedGatewayUrl(
         GatewayRecord? active, GatewayConnectionSnapshot? snapshot, string? legacyUrl) =>

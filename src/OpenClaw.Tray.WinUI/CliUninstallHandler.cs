@@ -16,6 +16,9 @@ internal static class CliUninstallHandler
 
     private const int AttachParentProcess = -1;
 
+    /// <summary>Passed only by the tray's own removal child.</summary>
+    internal const string TrayOwnedFlag = "--tray-owned";
+
     public static async Task RunAsync(string[] args)
     {
         AttachConsole(AttachParentProcess);
@@ -52,6 +55,17 @@ internal static class CliUninstallHandler
         string[] targetSetupArguments = [];
         if (uninstallTarget is not null)
         {
+            // A running tray keeps the removed record in memory and would fail every later save.
+            // Only the tray's own child, which reconciles the registry afterward, may run while it is open.
+            var trayOwned = args.Contains(TrayOwnedFlag, StringComparer.OrdinalIgnoreCase);
+            if (!dryRun && !trayOwned &&
+                Mutex.TryOpenExisting(AppIdentity.ResolveSingleInstanceMutexName(), out var runningTray))
+            {
+                runningTray.Dispose();
+                Console.Error.WriteLine("ERROR: OpenClaw is running. Remove the Gateway from Settings or exit OpenClaw first. No uninstall was started.");
+                Environment.Exit(2);
+                return;
+            }
             var registry = new GatewayRegistry(AppIdentity.ResolveRoamingDataDirectory());
             registry.Load();
             var target = registry.GetActive();

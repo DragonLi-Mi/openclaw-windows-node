@@ -503,6 +503,10 @@ public sealed partial class SettingsPage : Page
         _uninstallCts = new CancellationTokenSource();
         Process? proc = null;
         string? jsonOutput = null;
+        var wslDisconnected = false;
+        var wslRemoved = false;
+        var removalChildStarted = false;
+        GatewayRegistrySnapshot? removalBaselineForCleanup = null;
         try
         {
             if (kind is LocalGatewayKind.Native or LocalGatewayKind.LegacyNative)
@@ -524,13 +528,17 @@ public sealed partial class SettingsPage : Page
                 return;
             }
 
-            if (CurrentApp.ConnectionManager is { } wslManager)
-                await wslManager.DisconnectByUserAsync();
-            if (!LocalGatewaySettings.IsSameTarget(target, CurrentApp.Registry?.GetActive()))
-                throw new InvalidOperationException(LocalizationHelper.GetString("SettingsPage_GatewayRemovalTargetChanged"));
             var removalRegistry = CurrentApp.Registry ??
                 throw new InvalidOperationException("The Gateway registry is unavailable.");
             var removalBaseline = removalRegistry.CapturePersistedSnapshot();
+            removalBaselineForCleanup = removalBaseline;
+            var wslManager = CurrentApp.ConnectionManager;
+            if (wslManager is not null)
+            {
+                if (!await wslManager.DisconnectByUserIfCurrentAsync(target, _uninstallCts.Token))
+                    throw new InvalidOperationException(LocalizationHelper.GetString("SettingsPage_GatewayRemovalTargetChanged"));
+                wslDisconnected = true;
+            }
             var exePath = ResolveCurrentExecutablePath()
                 ?? throw new FileNotFoundException("OpenClaw tray executable could not be resolved for local gateway removal.");
 
@@ -543,6 +551,7 @@ public sealed partial class SettingsPage : Page
             };
             psi.ArgumentList.Add("--uninstall");
             psi.ArgumentList.Add("--confirm-destructive");
+            psi.ArgumentList.Add(CliUninstallHandler.TrayOwnedFlag);
             psi.ArgumentList.Add("--gateway-id");
             psi.ArgumentList.Add(target.Id);
             psi.ArgumentList.Add("--gateway-binding");
@@ -551,11 +560,12 @@ public sealed partial class SettingsPage : Page
             psi.ArgumentList.Add(jsonOutput);
 
             proc = Process.Start(psi) ?? throw new InvalidOperationException("Failed to start OpenClaw uninstall process.");
+            removalChildStarted = true;
             await proc.WaitForExitAsync(_uninstallCts.Token);
-            removalRegistry.AdoptPersistedSnapshot(removalBaseline);
 
             if (proc.ExitCode == 0)
             {
+                wslRemoved = true;
                 ShowUninstallSuccess(LocalizationHelper.GetString("SettingsPage_LocalGatewayRemovedMessage"));
             }
             else
@@ -614,11 +624,36 @@ public sealed partial class SettingsPage : Page
         finally
         {
             proc?.Dispose();
+            if (removalChildStarted && removalBaselineForCleanup is { } baselineForCleanup &&
+                CurrentApp.Registry is { } cleanupRegistry)
+            {
+                ReconcileRemovalRegistry(cleanupRegistry, baselineForCleanup);
+            }
+            if (wslDisconnected && !wslRemoved && CurrentApp.ConnectionManager is { } restoreManager)
+            {
+                try { await restoreManager.ReconnectIfSameTargetAsync(target); }
+                catch (Exception ex) { Logger.Warn($"SettingsPage: Failed to restore the Gateway connection after a failed removal: {ex.Message}"); }
+            }
             try { if (jsonOutput is not null && File.Exists(jsonOutput)) File.Delete(jsonOutput); }
             catch (Exception ex) { Logger.Warn($"SettingsPage: Failed to delete uninstall result file '{jsonOutput}': {ex.Message}"); }
             _uninstallCts?.Dispose();
             _uninstallCts = null;
             if (CurrentApp.Settings is { } settings) LoadGatewaySection(settings);
+        }
+    }
+
+    /// <summary>
+    /// Aligns the tray's in-memory registry with what the removal child persisted. A reconcile failure
+    /// must not change the removal result, so fall back to a full reload.
+    /// </summary>
+    private static void ReconcileRemovalRegistry(GatewayRegistry registry, GatewayRegistrySnapshot baseline)
+    {
+        try { registry.AdoptPersistedSnapshot(baseline); }
+        catch (Exception adoptError)
+        {
+            Logger.Warn($"SettingsPage: Registry adopt after removal failed: {adoptError.Message}");
+            try { registry.Load(); }
+            catch (Exception loadError) { Logger.Warn($"SettingsPage: Registry reload after removal failed: {loadError.Message}"); }
         }
     }
 

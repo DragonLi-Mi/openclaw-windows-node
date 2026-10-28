@@ -59,8 +59,6 @@ public sealed class WslGatewayRemovalTests : IDisposable
     }
 
     [Theory]
-    [InlineData("shared-token")]
-    [InlineData("bootstrap-token")]
     [InlineData("signature")]
     [InlineData("browser-port")]
     [InlineData("label")]
@@ -68,8 +66,6 @@ public sealed class WslGatewayRemovalTests : IDisposable
     {
         var changed = change switch
         {
-            "shared-token" => _target with { SharedGatewayToken = "new-fixture-token" },
-            "bootstrap-token" => _target with { BootstrapToken = "new-fixture-bootstrap" },
             "signature" => _target with { RequiresV2Signature = true },
             "browser-port" => _target with { BrowserControlPort = 19999 },
             "label" => _target with { FriendlyName = "Changed" },

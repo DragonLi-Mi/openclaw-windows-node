@@ -108,7 +108,7 @@ public sealed class NativeGatewayRemovalTests : IDisposable
     public async Task TargetChangeAfterAcknowledgedTeardownExplainsPartialOutcome()
     {
         _onTeardown = () => _registry.UpdateAndSave(_record.Id, record => record with { Url = "ws://localhost:19000" });
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => Remove());
+        var error = await Assert.ThrowsAsync<NativeGatewayCleanupPendingException>(() => Remove());
         Assert.Contains("installation was removed", error.Message);
         AssertRetained();
     }

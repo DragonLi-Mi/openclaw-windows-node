@@ -97,6 +97,17 @@ public sealed class CliUninstallTargetTests
     }
 
     [Fact]
+    public void CaptureRemovalAuthority_IgnoresRotatingTokens()
+    {
+        var saved = SavedTarget;
+        var rotated = saved with { SharedGatewayToken = "rotated-shared", BootstrapToken = "rotated-bootstrap" };
+
+        Assert.Equal(
+            LocalGatewaySettings.CaptureRemovalAuthority(saved),
+            LocalGatewaySettings.CaptureRemovalAuthority(rotated));
+    }
+
+    [Fact]
     public void TryGetSetupArguments_MixedEqualsAndSeparateValuesForwardCanonicalPair()
     {
         var saved = SavedTarget;
@@ -118,8 +129,6 @@ public sealed class CliUninstallTargetTests
     [InlineData("remote")]
     [InlineData("native")]
     [InlineData("ssh")]
-    [InlineData("shared-token")]
-    [InlineData("bootstrap-token")]
     [InlineData("signature")]
     [InlineData("browser-port")]
     [InlineData("label")]
@@ -136,8 +145,6 @@ public sealed class CliUninstallTargetTests
             "remote" => saved with { IsLocal = false, SetupManagedDistroName = null, Url = "wss://remote.example.test" },
             "native" => saved with { NativePackageFamilyName = "OpenClawGateway_test", SetupManagedDistroName = null },
             "ssh" => saved with { SshTunnel = new("user", "remote.example.test", 18789, 18789) },
-            "shared-token" => saved with { SharedGatewayToken = "changed-fixture-token" },
-            "bootstrap-token" => saved with { BootstrapToken = "changed-fixture-bootstrap" },
             "signature" => saved with { RequiresV2Signature = true },
             "browser-port" => saved with { BrowserControlPort = 19999 },
             "label" => saved with { FriendlyName = "Changed" },
