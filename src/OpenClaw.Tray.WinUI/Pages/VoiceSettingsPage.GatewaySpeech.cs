@@ -124,7 +124,7 @@ public sealed partial class VoiceSettingsPage
     }
 
     private void OnGatewayVoicePreview(object sender, RoutedEventArgs e) =>
-        Helpers.AsyncEventHandlerGuard.Run(PreviewGatewayVoiceAsync, new AppLogger(), nameof(OnGatewayVoicePreview));
+        AsyncEventHandlerGuard.Run(PreviewGatewayVoiceAsync, new AppLogger(), nameof(OnGatewayVoicePreview));
 
     private async Task PreviewGatewayVoiceAsync()
     {

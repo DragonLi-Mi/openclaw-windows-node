@@ -22,6 +22,7 @@ public sealed class GatewaySpeechTests
     [Theory]
     [InlineData("""{"provider":"fish-audio","providerStates":[{"id":"openai","configured":true}]}""", false)]
     [InlineData("""{"provider":"fish-audio","providerStates":[{"id":"openai","configured":true}],"fallbackProviders":["openai"]}""", true)]
+    [InlineData("""{"provider":"openai","providerStates":[{"id":"openai","configured":false}],"fallbackProviders":["voice-model-only"]}""", true)]
     public void ReadinessRequiresTheSelectedProviderOrItsConfiguredFallback(string payload, bool expected)
     {
         using var json = JsonDocument.Parse(payload);

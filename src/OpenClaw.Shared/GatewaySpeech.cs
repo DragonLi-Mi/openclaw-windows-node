@@ -17,8 +17,10 @@ public sealed class GatewaySpeechException(GatewaySpeechFailure failure) : Excep
 public sealed record GatewaySpeechStatus(string Provider, IReadOnlyList<string> ConfiguredProviders,
     IReadOnlyList<string>? FallbackProviders = null)
 {
+    // The Gateway reports only configured fallbacks, including model-backed
+    // providers that can be absent from its providerStates catalog.
     public bool IsReady => ConfiguredProviders.Contains(Provider, StringComparer.Ordinal)
-        || (FallbackProviders?.Any(provider => ConfiguredProviders.Contains(provider, StringComparer.Ordinal)) == true);
+        || FallbackProviders is { Count: > 0 };
 }
 
 public sealed record GatewaySpeechAudio(byte[] Bytes, string MimeType, string Provider);
