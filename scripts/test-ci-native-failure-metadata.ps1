@@ -4,7 +4,8 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if (-not $RepoRoot) { $RepoRoot = Split-Path -Parent $PSScriptRoot }
 . (Join-Path $RepoRoot 'scripts\NativeTestFailureMetadata.ps1')
-$root = Join-Path $RepoRoot ('TestResults\ci-native-metadata-' + [guid]::NewGuid().ToString('N'))
+# Keep child-process result paths below Windows PowerShell 5.1's directory limit.
+$root = Join-Path ([IO.Path]::GetTempPath()) ('ci-native-metadata-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root | Out-Null
 $marker = 'private-value-must-not-be-exported'
 $eventXml = @"
@@ -82,10 +83,18 @@ try {
 
     $harness = Join-Path $root 'runner.ps1'
     Set-Content -LiteralPath $harness -Value @'
-param([string]$Repo, [string]$Results)
+param([string]$Repo, [string]$Results, [switch]$BlockMetadataWrite)
 $ErrorActionPreference = 'Stop'
 $env:OPENCLAW_CI_COLLECT_COVERAGE = 'false'
-function global:dotnet { $global:LASTEXITCODE = 73 }
+$global:blockMetadataWrite = $BlockMetadataWrite
+function global:dotnet {
+    if ($global:blockMetadataWrite) {
+        $resultsIndex = [Array]::IndexOf($args, '--results-directory')
+        if ($resultsIndex -lt 0) { throw 'The CI runner did not supply its results directory.' }
+        New-Item -ItemType Directory -Path (Join-Path $args[$resultsIndex + 1] 'native-failure.json') | Out-Null
+    }
+    $global:LASTEXITCODE = 73
+}
 function global:Get-WinEvent {
     [CmdletBinding()]param([hashtable]$FilterHashtable)
     throw [UnauthorizedAccessException]::new('private-value-must-not-be-exported')
@@ -99,23 +108,33 @@ function global:Get-AppxPackage {
 exit $LASTEXITCODE
 '@
     $shell = (Get-Process -Id $PID).Path
-    $results = Join-Path $root 'runner-results'
-    $savedPreference = $ErrorActionPreference
-    try {
-        $ErrorActionPreference = 'Continue'
-        $output = @(& $shell -NoProfile -File $harness -Repo $RepoRoot -Results $results 2>&1)
-        $exitCode = $LASTEXITCODE
-    } finally { $ErrorActionPreference = $savedPreference }
-    if ($exitCode -ne 73 -or ($output -join "`n") -match $marker) {
-        $safeOutput = ($output -join "`n").Replace($marker, '[private fixture marker]')
-        throw "Secondary diagnostics changed the test exit code or leaked an error message (exit=$exitCode): $safeOutput"
+    foreach ($blockWrite in @($false, $true)) {
+        $resultsName = if ($blockWrite) { "runner-write-failure-$marker" } else { 'runner-results' }
+        $results = Join-Path $root $resultsName
+        $arguments = @('-NoProfile', '-File', $harness, '-Repo', $RepoRoot, '-Results', $results)
+        if ($blockWrite) { $arguments += '-BlockMetadataWrite' }
+        $savedPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $output = @(& $shell @arguments 2>&1)
+            $exitCode = $LASTEXITCODE
+        } finally { $ErrorActionPreference = $savedPreference }
+        if ($exitCode -ne 73 -or ($output -join "`n") -match $marker) {
+            $safeOutput = ($output -join "`n").Replace($marker, '[private fixture marker]')
+            throw "Secondary diagnostics changed the test exit code or leaked an error message (exit=$exitCode): $safeOutput"
+        }
+        $report = @(Get-ChildItem $results -Filter native-failure.json -Recurse)
+        if ($blockWrite) {
+            if ($report.Count -ne 1 -or -not $report[0].PSIsContainer -or
+                ($output -join "`n") -notmatch 'Secondary native diagnostic failure .*preserving test exit code 73') {
+                throw 'The blocked metadata write did not exercise the secondary diagnostic failure handler.'
+            }
+        } elseif ($report.Count -ne 1 -or $report[0].PSIsContainer -or
+            (Get-Content $report[0].FullName -Raw | ConvertFrom-Json).testCommandExitCode -ne 73) {
+            throw 'The opted-in CI runner did not preserve its failure receipt.'
+        }
+        $checks++
     }
-    $report = @(Get-ChildItem $results -Filter native-failure.json -Recurse)
-    if ($report.Count -ne 1 -or
-        (Get-Content $report[0].FullName -Raw | ConvertFrom-Json).testCommandExitCode -ne 73) {
-        throw 'The opted-in CI runner did not preserve its failure receipt.'
-    }
-    $checks++
     Write-Host "Safe native failure metadata regressions passed: $checks cases."
 } finally {
     Remove-Item -LiteralPath $root -Recurse -Force
