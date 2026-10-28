@@ -400,6 +400,9 @@ hosts stops at the WebView pane. A pixel guard also requires the deployment
 curve's plot area to have a luminance range of at least 64; a blank SVG cannot
 pass merely because its heading rendered. The companion mounted test verifies that two
 same-origin website widgets do not share cookies or local storage.
+The integrations-tab capture loads the reserved public `https://example.com/`
+page and therefore needs outbound HTTPS. It uses no production Gateway or
+browser credentials.
 
 On an authorized Windows desktop, after building the explicit app:
 

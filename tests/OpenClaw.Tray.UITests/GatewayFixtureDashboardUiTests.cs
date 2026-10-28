@@ -59,6 +59,15 @@ public sealed partial class GatewayFixtureUiTests
                     await WaitForDashboardPixelsAsync(run, hub, $"dashboards-{theme}-tabs.png",
                         ["MCP app", "Access rejected", "disabled plugin"]);
 
+                    AutomationElement? integrations = null;
+                    await WaitUiAsync(run, () => (integrations = FindInApp(run, new AndCondition(
+                        new PropertyCondition(AutomationElement.NameProperty, "Integrations"),
+                        new PropertyCondition(AutomationElement.IsSelectionItemPatternAvailableProperty, true)))) is not null,
+                        "website tab");
+                    Invoke(integrations!);
+                    await WaitForDashboardPixelsAsync(run, hub, $"dashboards-{theme}-website.png",
+                        ["documentation examples", "Open website"]);
+
                     // Reopening the same hub route must return from an in-page board to the gallery.
                     await run.InvokeAsync("app.navigate", new { page = "dashboards" });
                     AutomationElement? emptyCard = null;
