@@ -561,8 +561,27 @@ public class DesktopPresentationTests
         Assert.Equal((DesktopTitle.Enabled, DesktopHint.Connecting, false), (enabled.Title, enabled.Hint, enabled.ShowEnable));
 
         Assert.True(DesktopPresentation.Resolve(Host(DesktopSetupState.Ready), true, false, canAdmin: true).CanEnable);
-        Assert.Equal(DesktopSectionKind.HostSetup,
+        Assert.Equal(DesktopSectionKind.Available,
             DesktopPresentation.Resolve(Host(null, desktop: true), true, hostDesktopEnabled: true, canAdmin: true).Kind);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(null, true)]
+    [InlineData(DesktopSetupState.Ready, false)]
+    [InlineData(DesktopSetupState.Ready, true)]
+    [InlineData(DesktopSetupState.Managed, true)]
+    public void Resolve_AvailableHostDesktopTakesPrecedenceOverSetup(DesktopSetupState? setup, bool canAdmin)
+    {
+        var host = Host(setup, desktop: true);
+        var section = DesktopPresentation.Resolve(host, true, hostDesktopEnabled: true, canAdmin);
+
+        Assert.Equal((DesktopSectionKind.Available, DesktopTitle.Available, DesktopHint.ViewingDeferred),
+            (section.Kind, section.Title, section.Hint));
+        Assert.False(section.ShowEnable);
+        Assert.False(section.ShowCheckAgain);
+        Assert.Equal(DesktopSectionKind.Offline,
+            DesktopPresentation.Resolve(host, false, hostDesktopEnabled: true, canAdmin).Kind);
     }
 
     [Fact]

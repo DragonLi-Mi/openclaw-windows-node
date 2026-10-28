@@ -206,15 +206,19 @@ public sealed class UIThreadFixture : IDisposable
             OnboardingNativeProof.InitializeProductProcessDpi();
             OnboardingNativeProof.TraceDpiContext("UIThreadProc: before bootstrap");
             _startupPhase = "initializing WinRT COM wrappers";
+            Console.WriteLine("UIThreadFixture: initializing WinRT COM wrappers");
             OnboardingNativeProof.TraceDpiContext("UIThreadProc: before COM wrappers");
             WinRT.ComWrappersSupport.InitializeComWrappers();
             OnboardingNativeProof.TraceDpiContext("UIThreadProc: COM wrappers initialized");
+            Console.WriteLine("UIThreadFixture: WinRT COM wrappers initialized");
 
             // Initialize WinAppSDK runtime (unpackaged process).
             _startupPhase = "initializing Windows App SDK bootstrap";
             if (Interlocked.Exchange(ref s_bootstrapInitialized, 1) == 0)
             {
+                Console.WriteLine("UIThreadFixture: initializing Windows App SDK bootstrap");
                 Bootstrap.Initialize(WinAppSdkMajorMinor, WinAppSdkVersionTag);
+                Console.WriteLine("UIThreadFixture: Windows App SDK bootstrap initialized");
             }
             OnboardingNativeProof.TraceDpiContext("UIThreadProc: bootstrap complete");
 

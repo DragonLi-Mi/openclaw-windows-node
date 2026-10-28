@@ -227,6 +227,8 @@ public sealed partial class SystemsPage : Page, IDisposable
             Sessions = _appState?.Sessions ?? Array.Empty<SessionInfo>(),
             Config = _appState?.Config,
             PendingApprovals = _approvals?.Current ?? Array.Empty<PendingApproval>(),
+            NodePairList = _appState?.NodePairList,
+            OwnNodeIds = CurrentApp.OwnNodeIds,
             LocalNodeId = CurrentApp.NodeFullDeviceId,
             LocalHost = Environment.MachineName,
         });

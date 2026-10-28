@@ -19,6 +19,8 @@ internal sealed record SystemsInputs
     public IReadOnlyList<SessionInfo> Sessions { get; init; } = Array.Empty<SessionInfo>();
     public JsonElement? Config { get; init; }
     public IReadOnlyList<PendingApproval> PendingApprovals { get; init; } = Array.Empty<PendingApproval>();
+    public PairingListInfo? NodePairList { get; init; }
+    public IReadOnlyCollection<string> OwnNodeIds { get; init; } = Array.Empty<string>();
     public string? LocalNodeId { get; init; }
     public string? LocalHost { get; init; }
     /// <summary>The active Gateway record; a change means a different Gateway, not a reconnect.</summary>
@@ -76,9 +78,8 @@ internal sealed record SystemsViewState
     public bool SelectionMissing => SelectedId is not null && Selected is null && HasLoaded;
 
     /// <summary>The page's own node is waiting for approval; its capabilities stay inactive until then.</summary>
-    public bool OwnNodePending => LocalNodeId is { Length: > 0 } id && PendingApprovals.Any(approval =>
-        approval.Kind == PairingApprovalKind.NodePair &&
-        string.Equals(approval.DeviceId, id, StringComparison.OrdinalIgnoreCase));
+    public bool OwnNodePending { get; init; }
+    public int PendingPairingCount => PendingApprovals.Count + (OwnNodePending ? 1 : 0);
 }
 
 /// <summary>
@@ -224,6 +225,9 @@ internal sealed class SystemsController : IDisposable
             CanPair = HasScope(inputs.Scopes, "operator.pairing", legacyDefault: false),
             HostDesktopEnabled = hostDesktopEnabled,
             PendingApprovals = inputs.PendingApprovals,
+            OwnNodePending = inputs.Connected && inputs.NodePairList?.Pending.Any(request =>
+                !string.IsNullOrWhiteSpace(request.NodeId) &&
+                inputs.OwnNodeIds.Contains(request.NodeId, StringComparer.OrdinalIgnoreCase)) == true,
             LocalNodeId = inputs.LocalNodeId,
             Loading = inputs.Connected && next.Loading,
             Rows = Project(),

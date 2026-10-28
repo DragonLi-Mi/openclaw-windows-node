@@ -188,9 +188,9 @@ internal sealed class SystemsPageView : Component<SystemsPageProps>
             SummaryTile("offline", "\uF140", SystemsHue.Neutral, Count(offline), S("Status_Offline"),
                 state.Filter == SystemsStatusFilter.Offline, () => controller.SetFilter(SystemsStatusFilter.Offline)),
         };
-        if (state.PendingApprovals.Count > 0)
+        if (state.PendingPairingCount > 0)
         {
-            tiles.Add(SummaryTile("pairing", "\uE8FA", SystemsHue.Caution, Count(state.PendingApprovals.Count),
+            tiles.Add(SummaryTile("pairing", "\uE8FA", SystemsHue.Caution, Count(state.PendingPairingCount),
                 S("Summary_Pairing"), false, null));
         }
         if (state.Backups is { } backups && state.Rows.Any(row => row.Id == SystemsProjection.GatewayId))
@@ -273,7 +273,7 @@ internal sealed class SystemsPageView : Component<SystemsPageProps>
                 .AutomationId("SystemsPartialErrorsBanner").WithKey("partial-errors"));
         }
 
-        if (state.PendingApprovals.Count > 0)
+        if (state.PendingPairingCount > 0)
             banners.Add(PendingApprovals(state, actions, open, layout.ApprovalsMaxHeight).WithKey("pairing"));
 
         return banners.Count == 0 ? Empty() : VStack(8, banners.ToArray()).Margin(0, 0, 0, 12);
@@ -282,10 +282,10 @@ internal sealed class SystemsPageView : Component<SystemsPageProps>
     private static Element PendingApprovals(SystemsViewState state, SystemsPageActions actions, Action<SystemsDialog?> open,
         double maxHeight)
     {
-        var count = state.PendingApprovals.Count;
+        var count = state.PendingPairingCount;
         var title = count == 1 ? S("Pairing_TitleOne") : F("Pairing_TitleMany", count);
         var message = state.OwnNodePending ? S("Pairing_OwnNodeMessage") : S("Pairing_Message");
-        var rows = state.PendingApprovals.Select(approval =>
+        var rows = state.PendingApprovals.Select<PendingApproval, Element>(approval =>
         {
             var name = string.IsNullOrWhiteSpace(approval.DisplayName) ? approval.DeviceId : approval.DisplayName!;
             var kind = approval.Kind == PairingApprovalKind.NodePair ? S("Pairing_KindNode") : S("Pairing_KindDevice");
@@ -310,10 +310,14 @@ internal sealed class SystemsPageView : Component<SystemsPageProps>
                             .Foreground(Theme.Ref("TextFillColorSecondaryBrush"))).Grid(column: 1),
                     buttons.VAlign(VerticalAlignment.Center).Grid(column: 2))
                 .WithKey(approval.Key);
-        }).ToArray();
+        }).ToList();
+        if (state.OwnNodePending)
+            rows.Insert(0, Button(S("Pairing_Review"), () => actions.Navigate("connection"))
+                .AutomationName(S("Pairing_Review"))
+                .AutomationId("SystemsOwnNodePairingReview").WithKey("own-node"));
         return InfoBar(title, message).Warning().IsClosable(false)
             // Many requests scroll inside the banner instead of pushing the machines off the page.
-            .Content((ScrollViewer(VStack(10, rows)) with { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled })
+            .Content((ScrollViewer(VStack(10, rows.ToArray())) with { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled })
                 .MaxHeight(maxHeight).Margin(0, 0, 0, 12))
             .AutomationId("SystemsPendingPairingBanner");
     }
@@ -401,10 +405,9 @@ internal sealed class SystemsPageView : Component<SystemsPageProps>
         Element controls = compact
             ? VStack(4, filter, sort.HAlign(HorizontalAlignment.Right))
             : Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto], filter.Grid(column: 0), sort.VAlign(VerticalAlignment.Center).Grid(column: 1));
-        return Card(Grid([GridSize.Star()], [GridSize.Auto, GridSize.Auto, GridSize.Star()],
-                    search.Grid(row: 0),
-                    controls.Margin(0, 8, 0, 8).Grid(row: 1),
-                    (ScrollViewer(list) with { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled }).Grid(row: 2)))
+        return Card((ScrollViewer(VStack(8, search, controls, list)) with
+                { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled })
+                .AutomationId("SystemsInventoryScroll"))
             .Padding(12)
             .AutomationName(S("Inventory"))
             .AutomationId("SystemsInventory");
@@ -1075,7 +1078,11 @@ internal sealed class SystemsPageView : Component<SystemsPageProps>
         // Commands key their rows, so a repeated command is listed once.
         var commands = (row.Node?.Commands ?? row.Environment?.InvocableCommands.ToList() ?? new List<string>())
             .Distinct(StringComparer.Ordinal).ToList();
-        if (capabilities.Length == 0 && commands.Count == 0 && string.IsNullOrWhiteSpace(row.Node?.PathEnv))
+        var hasPendingDeclarations =
+            row.Node?.ApprovalState is GatewayNodeApprovalState.PendingApproval or GatewayNodeApprovalState.PendingReapproval &&
+            (row.Node.PendingDeclaredCapabilities.Count > 0 || row.Node.PendingDeclaredCommands.Count > 0);
+        if (capabilities.Length == 0 && commands.Count == 0 && string.IsNullOrWhiteSpace(row.Node?.PathEnv) &&
+            !hasPendingDeclarations)
             return null;
 
         var permissions = row.Node?.Permissions ?? new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
@@ -1112,12 +1119,12 @@ internal sealed class SystemsPageView : Component<SystemsPageProps>
                 }).ToList(), 4, spacing: 6).WithKey("chips"));
         }
 
-        if (row.Node?.ApprovalState is GatewayNodeApprovalState.PendingApproval or GatewayNodeApprovalState.PendingReapproval &&
-            (row.Node.PendingDeclaredCapabilities.Count > 0 || row.Node.PendingDeclaredCommands.Count > 0))
+        if (hasPendingDeclarations && row.Node is { } pendingNode)
         {
             content.Add(TextBlock(F("Capability_PendingDeclared",
-                    string.Join(", ", row.Node.PendingDeclaredCapabilities.Concat(row.Node.PendingDeclaredCommands))))
-                .FontSize(12).TextWrapping().Foreground(Theme.Ref("SystemFillColorCautionBrush")).WithKey("pending"));
+                    string.Join(", ", pendingNode.PendingDeclaredCapabilities.Concat(pendingNode.PendingDeclaredCommands))))
+                .FontSize(12).TextWrapping().Foreground(Theme.Ref("SystemFillColorCautionBrush"))
+                .AutomationId("SystemsPendingDeclarations").WithKey("pending"));
         }
 
         if (commands.Count > 0)

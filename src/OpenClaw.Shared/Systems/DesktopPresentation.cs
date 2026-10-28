@@ -64,8 +64,14 @@ public static class DesktopPresentation
         var isHost = row.Id == SystemsProjection.GatewayId;
         var setup = environment?.DesktopSetup;
 
-        if (isHost && connected && row.Status == SystemStatus.Online &&
-            (setup is not null || (environment?.Desktop == true && hostDesktopEnabled && canAdmin)))
+        if (!connected || row.Status == SystemStatus.Offline)
+            return Simple(DesktopSectionKind.Offline, DesktopTitle.Offline, DesktopHint.Offline);
+        if (row.Status != SystemStatus.Online)
+            return Simple(DesktopSectionKind.NotReady, DesktopTitle.NotReady, DesktopHint.Offline);
+        if (environment?.Desktop == true || environment?.Worker?.Desktop == true)
+            return Simple(DesktopSectionKind.Available, DesktopTitle.Available, DesktopHint.ViewingDeferred);
+
+        if (isHost && (setup is not null || hostDesktopEnabled))
         {
             var ready = setup?.State is DesktopSetupState.Ready or DesktopSetupState.Managed;
             var mac = PlatformLabels.IsMac(row.Platform);
@@ -88,12 +94,6 @@ public static class DesktopPresentation
                 Detail: setup?.State == DesktopSetupState.Unsupported ? setup.Detail : null);
         }
 
-        if (!connected || row.Status == SystemStatus.Offline)
-            return Simple(DesktopSectionKind.Offline, DesktopTitle.Offline, DesktopHint.Offline);
-        if (row.Status != SystemStatus.Online)
-            return Simple(DesktopSectionKind.NotReady, DesktopTitle.NotReady, DesktopHint.Offline);
-        if (environment?.Desktop == true || environment?.Worker?.Desktop == true)
-            return Simple(DesktopSectionKind.Available, DesktopTitle.Available, DesktopHint.ViewingDeferred);
         return isHost
             ? Simple(DesktopSectionKind.NoHostDesktop, DesktopTitle.NoDesktop, DesktopHint.NoHostDesktop)
             : Simple(DesktopSectionKind.NoDesktop, DesktopTitle.NoDesktop, DesktopHint.NoDesktop);

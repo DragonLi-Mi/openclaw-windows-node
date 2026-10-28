@@ -319,15 +319,36 @@ public class SystemsControllerTests
         Assert.Null(controller.State.DesktopError);
     }
 
-    [Fact]
-    public void OwnNodePending_IsTrueOnlyForThisPcsNodeRequest()
+    [Theory]
+    [InlineData("MY-NODE")]
+    [InlineData("FULL-DEVICE-ID")]
+    public void OwnNodePending_SurvivesTheApprovalQueuesOwnNodeFilter(string pendingNodeId)
     {
         var (controller, _) = Create();
-        var request = PendingApproval.FromNode(new PairingRequest { RequestId = "r", NodeId = "MY-NODE" });
-        controller.UpdateInputs(new SystemsInputs { LocalNodeId = "my-node", PendingApprovals = [request] });
+        string[] ownIds = ["my-node", "full-device-id"];
+        var requests = new PairingListInfo
+        {
+            Pending = [new PairingRequest { RequestId = "r", NodeId = pendingNodeId }],
+        };
+        var queue = new PairingApprovalQueue();
+        queue.Reconcile(null, requests, ownIds, 0);
+        Assert.Empty(queue.Current);
+        var inputs = Connected() with
+        {
+            LocalNodeId = "full-device-id",
+            OwnNodeIds = ownIds,
+            NodePairList = requests,
+            PendingApprovals = queue.Current,
+        };
+        controller.UpdateInputs(inputs);
         Assert.True(controller.State.OwnNodePending);
+        Assert.Empty(controller.State.PendingApprovals);
 
-        controller.UpdateInputs(new SystemsInputs { LocalNodeId = "other", PendingApprovals = [request] });
+        controller.UpdateInputs(inputs with { OwnNodeIds = ["other"] });
+        Assert.False(controller.State.OwnNodePending);
+        controller.UpdateInputs(inputs with { NodePairList = new PairingListInfo() });
+        Assert.False(controller.State.OwnNodePending);
+        controller.UpdateInputs(inputs with { Connected = false });
         Assert.False(controller.State.OwnNodePending);
     }
 
