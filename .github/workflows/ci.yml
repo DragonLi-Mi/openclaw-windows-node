@@ -147,6 +147,9 @@ jobs:
     - name: Test repository triage automation and dashboard
       run: node --test .github/scripts/repository-triage.test.cjs .github/extensions/openclaw-triage-dashboard/triage-state.test.mjs
 
+    - name: Test upstream welcome copy monitoring
+      run: node --test .github/scripts/welcome-content-notification.test.cjs
+
     - name: Validate documentation
       shell: pwsh
       run: ./scripts/validate-docs.ps1
@@ -242,6 +245,10 @@ jobs:
     - name: Validate stable correction release ordering regressions
       shell: pwsh
       run: ./scripts/test-stable-correction-release-validator.ps1
+
+    - name: Validate release-candidate outcome classification
+      shell: pwsh
+      run: ./scripts/Resolve-ReleaseCandidateE2EOutcome.Tests.ps1
 
     - name: Validate alpha promotion policy and workflow
       shell: pwsh

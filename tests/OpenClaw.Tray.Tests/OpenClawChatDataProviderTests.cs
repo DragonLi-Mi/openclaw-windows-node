@@ -3,6 +3,8 @@ using OpenClaw.Shared;
 using OpenClaw.Shared.Telemetry;
 using OpenClaw.TestSupport.Gateway;
 using OpenClawTray.Chat;
+using OpenClawTray.Presentation;
+using OpenClawTray.Services;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
@@ -95,13 +97,6 @@ public class OpenClawChatDataProviderTests
         public Func<CommandCatalogQuery?, Task<CommandCatalog>>? ListCommandsBehavior { get; set; }
         public int ListCommandsCallCount { get; private set; }
         public CommandCatalogQuery? LastListCommandsQuery { get; private set; }
-        public Func<string, Task<ChatWelcomeCatalog?>>? WelcomeBehavior { get; set; }
-        public List<string> WelcomeLocales { get; } = [];
-        public Task<ChatWelcomeCatalog?> GetWelcomeCatalogAsync(string locale)
-        {
-            WelcomeLocales.Add(locale);
-            return WelcomeBehavior?.Invoke(locale) ?? Task.FromResult<ChatWelcomeCatalog?>(null);
-        }
         public SessionCreateResult CreateSessionResult { get; set; } = new()
         {
             Ok = true,
@@ -841,8 +836,11 @@ public class OpenClawChatDataProviderTests
             bridge.RaiseStatus(ConnectionStatus.Connected);
             await provider.SendMessageAsync("main", "first");
             bridge.RaiseAgent(MakeAgentEvent("lifecycle", """{"phase":"start"}""", runId: "run-1"));
-            using var composer = new ChatComposerFactory(new Presentation.RecordingUiDispatcher()).Create(
-                provider, new ChatComposerHostActions(null, null, null, null), initialSpeakerMuted: false);
+            var dispatcher = new Presentation.RecordingUiDispatcher();
+            using var temp = new OpenClaw.TestSupport.TempDirectory();
+            using var store = new SettingsStore(new SettingsManager(temp.Path), dispatcher);
+            using var composer = new ChatComposerFactory(dispatcher, store, new SandboxStatusStore()).Create(
+                provider, new ChatComposerHostActions(null, null, null, null, null), initialSpeakerMuted: false);
             composer.ApplyInputs(new ChatComposerInputs(
                 "connected", true, snapshots[^1].Threads.Single(thread => thread.Id == "main"),
                 [], null, true, [], null, false));
@@ -11380,93 +11378,6 @@ public class OpenClawChatDataProviderTests
     }
 
     [Fact]
-    public async Task WelcomeContent_LoadsOncePerConnectionAndTracksCurrentGatewayCopy()
-    {
-        var (bridge, provider, _, _) = CreateProvider();
-        var catalog = new ChatWelcomeCatalog("fr", "Guide from Gateway", "Gateway recents",
-            [new("future-key", "Visible label", "Exact prompt from Gateway")]);
-        bridge.WelcomeBehavior = _ => Task.FromResult<ChatWelcomeCatalog?>(catalog);
-        bridge.RaiseStatus(ConnectionStatus.Connected);
-        var first = await provider.LoadAsync();
-        Assert.Equal(ChatWelcomeContentStatus.Available, first.WelcomeContent?.Status);
-        Assert.Same(catalog, first.WelcomeContent?.Catalog);
-        await provider.LoadAsync();
-        Assert.Single(bridge.WelcomeLocales);
-        Assert.Equal(System.Globalization.CultureInfo.CurrentUICulture.Name, bridge.WelcomeLocales[0]);
-
-        bridge.RaiseStatus(ConnectionStatus.Disconnected);
-        catalog = catalog with { Hint = "Updated at the Gateway" };
-        bridge.RaiseStatus(ConnectionStatus.Connected);
-        var reconnected = await provider.LoadAsync();
-        Assert.Equal(2, bridge.WelcomeLocales.Count);
-        Assert.Equal("Updated at the Gateway", reconnected.WelcomeContent?.Catalog?.Hint);
-        await provider.DisposeAsync();
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task WelcomeContent_UnsupportedAndFailuresDoNotInventPrompts(bool fail)
-    {
-        var (bridge, provider, _, _) = CreateProvider();
-        if (fail)
-            bridge.WelcomeBehavior = _ => Task.FromException<ChatWelcomeCatalog?>(new InvalidDataException("Invalid catalog"));
-        bridge.RaiseStatus(ConnectionStatus.Connected);
-        var snapshot = await provider.LoadAsync();
-        Assert.Equal(fail ? ChatWelcomeContentStatus.Failed : ChatWelcomeContentStatus.Unsupported,
-            snapshot.WelcomeContent?.Status);
-        Assert.Null(snapshot.WelcomeContent?.Catalog);
-        await provider.DisposeAsync();
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task WelcomeContent_DiscardsLateResultsAfterDisconnectOrDispose(bool dispose)
-    {
-        var release = new TaskCompletionSource<ChatWelcomeCatalog?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var bridge = new FakeBridge
-        {
-            CurrentStatus = ConnectionStatus.Connected,
-            WelcomeBehavior = _ => release.Task
-        };
-        var provider = new OpenClawChatDataProvider(bridge);
-        var snapshots = new List<ChatDataSnapshot>();
-        provider.Changed += (_, args) => snapshots.Add(args.Snapshot);
-        var fetch = provider.EnsureWelcomeContentAsync();
-        if (dispose)
-            await provider.DisposeAsync();
-        else
-            bridge.RaiseStatus(ConnectionStatus.Disconnected);
-        release.SetResult(new("en", "Stale hint", "Stale recents", [new("stale", "Stale", "Stale")]));
-        await fetch;
-        Assert.DoesNotContain(snapshots, snapshot => snapshot.WelcomeContent?.Catalog is not null);
-        if (!dispose)
-            await provider.DisposeAsync();
-    }
-
-    [Fact]
-    public async Task WelcomeContent_DisconnectBeforeUiDeliveryDropsStaleCatalog()
-    {
-        var bridge = new FakeBridge
-        {
-            CurrentStatus = ConnectionStatus.Connected,
-            WelcomeBehavior = _ => Task.FromResult<ChatWelcomeCatalog?>(new("en", "Stale", "Recents", []))
-        };
-        var queued = new List<Action>();
-        var provider = new OpenClawChatDataProvider(bridge, post: queued.Add);
-        var delivered = new List<ChatDataSnapshot>();
-        provider.Changed += (_, args) => delivered.Add(args.Snapshot);
-        await provider.EnsureWelcomeContentAsync();
-        bridge.RaiseStatus(ConnectionStatus.Disconnected);
-        foreach (var action in queued.ToArray())
-            action();
-        Assert.NotEmpty(delivered);
-        Assert.DoesNotContain(delivered, snapshot => snapshot.WelcomeContent?.Catalog is not null);
-        await provider.DisposeAsync();
-    }
-
-    [Fact]
     public async Task EnsureCommandCatalogAsync_PopulatesCatalogInSnapshot()
     {
         var (bridge, provider, snapshots, _) = CreateProvider(new[] { MainSession() });
@@ -12090,15 +12001,18 @@ public class OpenClawChatDataProviderTests
             bridge.SentMessages);
     }
 
-    [Fact]
-    public async Task ComposerPort_StaleFailureAfterReconnect_IsNotAccepted()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ComposerPort_StaleFailureAfterReconnect_IsNotAccepted(bool withAttachment)
     {
         var sendStarted = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseSend = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var sendCount = 0;
-        var (bridge, provider, _, notifications) = CreateProvider(new[] { MainSession() });
+        var (bridge, provider, snapshots, notifications) = CreateProvider(new[] { MainSession() });
+        await using var providerLifetime = provider;
         bridge.SendBehavior = async (_, _, _) =>
         {
             if (Interlocked.Increment(ref sendCount) != 1)
@@ -12107,28 +12021,56 @@ public class OpenClawChatDataProviderTests
             await releaseSend.Task;
             throw new InvalidOperationException("stale failure");
         };
-        await provider.LoadAsync();
-        var port = new ChatComposerRuntimePort(provider);
+        var initialSnapshot = await provider.LoadAsync();
+        var dispatcher = new Presentation.RecordingUiDispatcher();
+        using var settingsDirectory = new OpenClaw.TestSupport.TempDirectory();
+        using var settingsStore = new SettingsStore(new SettingsManager(settingsDirectory.Path), dispatcher);
+        var factory = new ChatComposerFactory(dispatcher, settingsStore, new SandboxStatusStore());
+        using var staleComposer = factory.Create(
+            provider, new ChatComposerHostActions(null, null, null, null, null), initialSpeakerMuted: false);
+        using var freshComposer = factory.Create(
+            provider, new ChatComposerHostActions(null, null, null, null, null), initialSpeakerMuted: false);
+        var inputs = new ChatComposerInputs(
+            "connected", false, initialSnapshot.Threads.Single(thread => thread.Id == "main"),
+            [], [], false, [], null, false);
+        staleComposer.ApplyInputs(inputs);
+        staleComposer.ViewModel.SetDraft("failing in flight");
+        var attachment = new ChatAttachment { FileName = "keep.txt", MimeType = "text/plain", Content = "a2VlcA==" };
+        if (withAttachment)
+            staleComposer.ViewModel.AddAttachments([attachment]);
 
-        var staleSend = port.SendMessageAsync(
-            "main",
-            "failing in flight",
-            [],
-            CancellationToken.None);
+        var staleSend = staleComposer.Controller.SendAsync();
         await sendStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
         bridge.RaiseStatus(ConnectionStatus.Connected);
-        var freshAccepted = await port.SendMessageAsync(
-            "main",
-            "fresh after stale failure",
-            [],
-            CancellationToken.None);
-        releaseSend.SetResult();
+        freshComposer.ApplyInputs(inputs);
+        freshComposer.ViewModel.SetDraft("fresh after stale failure");
+        freshComposer.ViewModel.AddAttachments([new ChatAttachment { FileName = "queued.txt" }]);
+        try
+        {
+            Assert.True(await freshComposer.Controller.SendAsync());
+            Assert.Empty(freshComposer.ViewModel.Draft);
+            Assert.Empty(freshComposer.ViewModel.PendingAttachments);
+            Assert.Single(bridge.SentMessages);
+            var queued = Assert.Single(GetQueuedMessages(snapshots[^1], "main"));
+            Assert.StartsWith("fresh after stale failure\n", queued.Text);
+            Assert.Contains("queued.txt", queued.Text);
+        }
+        finally
+        {
+            releaseSend.TrySetResult();
+        }
         var staleAccepted = await staleSend;
 
         Assert.False(staleAccepted);
-        Assert.True(freshAccepted);
+        Assert.Equal("failing in flight", staleComposer.ViewModel.Draft);
+        Assert.False(staleComposer.ViewModel.IsSending);
+        if (withAttachment)
+            Assert.Same(attachment, Assert.Single(staleComposer.ViewModel.PendingAttachments));
+        else
+            Assert.Empty(staleComposer.ViewModel.PendingAttachments);
         Assert.DoesNotContain(notifications, note => note.Message == "stale failure");
         await WaitForConditionAsync(() => bridge.SentMessages.Count == 2);
+        Assert.Equal(["failing in flight", "fresh after stale failure"], bridge.SentMessages);
     }
 
     [Fact]

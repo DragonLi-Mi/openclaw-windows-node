@@ -16,10 +16,12 @@ requirement. A tool's successful exit is not proof that the intended work ran.
 |---|---|
 | Write, review, or restructure documentation/instructions | [Docs instructions](docs/AGENTS.md) and [technical-documentation](.agents/skills/technical-documentation/SKILL.md) |
 | Write or review a regression test | [Test authoring](docs/TEST_COVERAGE.md#writing-a-regression-test) and [test-audit](.agents/skills/test-audit/SKILL.md) |
-| Select tests and required proof | [Validation plan](docs/TEST_COVERAGE.md#explain-the-validation-plan) and [proof skill](.agents/skills/openclaw-proof-validation/SKILL.md) |
+| Select tests and required proof | [Windows testing](.agents/skills/openclaw-testing/SKILL.md); use the [proof skill](.agents/skills/openclaw-proof-validation/SKILL.md) for runtime evidence |
+| Simplify your own completed change before PR preparation | [PR simplification](.agents/skills/pr-simplify/SKILL.md); preserve distinct Windows contracts and reprove the reduced diff |
 | Prepare a local PR body and readiness handoff | [Windows PR preparation](.agents/skills/windows-pr-prepare/SKILL.md); publication needs separate authority |
 | Change a WinUI owner or its caller | [WinUI instructions](src/OpenClaw.Tray.WinUI/AGENTS.md) and the affected architecture ledger rows |
-| Debug or drive the app through local MCP | [windows-app-mcp](.agents/skills/windows-app-mcp/SKILL.md); use [winnode](.agents/skills/winnode/SKILL.md) for the shipped command contract |
+| Debug Companion, setup, Gateway connection, node capabilities, packaging, or `system.run` | [Windows debugging](.agents/skills/openclaw-debugging/SKILL.md) |
+| Drive the app through local MCP | [windows-app-mcp](.agents/skills/windows-app-mcp/SKILL.md); use [winnode](.agents/skills/winnode/SKILL.md) for the shipped command contract |
 | Review code | [Shared autoreview](.agents/skills/autoreview/SKILL.md); use [Hanselman review](.agents/skills/hanselman-code-review/SKILL.md) when adversarial review is requested |
 | Run remote native Windows proof | [Crabbox](.agents/skills/crabbox/SKILL.md), with explicit host/provider authority |
 | Test against a source-built native Gateway | [native-gateway-from-source](.agents/skills/native-gateway-from-source/SKILL.md) |
@@ -106,15 +108,15 @@ Use the [proof skill](.agents/skills/openclaw-proof-validation/SKILL.md) when a 
 
 ## User-Facing Copy
 
-Prefer one maintained source of truth for strings shared with the Gateway or web dashboard:
+Keep client presentation and Gateway data ownership distinct:
 
-- Before adding copy, find its existing owner and localization resources. Reuse the authoritative content rather than hard-coding or manually copying a second prompt/label catalog into Companion.
+- Before adding copy, find its existing owner and localization resources. Client-owned presentation belongs in native `.resw` resources; shared wording alone does not require a Gateway contract.
 - For cross-client copy that should track the installed Gateway, prefer an existing supported data contract. When a catalog is justified, generate it from the owner's translation sources at build time, package it with that owner, and serve validated, versioned data through the authenticated connection. Do not generate translations at launch or fetch repository sources at runtime.
 - Load shared catalogs asynchronously and cache them at the appropriate connection/package lifetime. Define locale fallback, unsupported-version behavior, and disconnect/update invalidation explicitly. Render strings as data, never executable UI or code.
-- Keep Windows-specific labels and loading/error/compatibility messages in native `.resw` resources. A minimal localized fallback, such as "Recent chats" when the shared catalog is unavailable, is appropriate; a duplicate starter-prompt list is not. Document any necessary duplication and its owner.
+- Keep Windows labels, welcome guidance, starter prompts, and loading/error/compatibility messages in native `.resw` resources. Update all supported languages together.
 - Use the simplest approach that fits. This is not a requirement to add an RPC or catalog for every string; existing native resources are the right home for native-only copy. Add focused coverage for source-to-catalog consistency and consumer failure/fallback behavior when introducing a shared contract.
 
-Reference pattern: welcome copy uses the web i18n sources in `openclaw/openclaw`, a build-generated `dist/control-ui-welcome.json`, and `controlUi.welcome.get`. Companion fetches once per connection; Gateway lazily reads and caches the packaged catalog on the first request. See [the native chat visual contract](docs/CHAT_VISUAL_DESIGN.md#controls-and-states). This pattern requires a Gateway build advertising that method; do not assume all released Gateways support it.
+Welcome copy is bundled with Companion and works independently of Gateway version. See [the native chat visual contract](docs/CHAT_VISUAL_DESIGN.md#controls-and-states).
 
 Do not use em dashes in user-facing prose, including UI text, error messages, CLI output, notifications, and agent-facing help. Use a period, colon, comma, parentheses, or a simple hyphen instead. A standalone em dash is allowed as an unavailable-value or status placeholder.
 
