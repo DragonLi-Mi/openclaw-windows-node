@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Reflection;
 using System.Text.Json;
 using OpenClaw.TestSupport;
@@ -177,6 +178,38 @@ public sealed class GatewaySpeechTests
     }
 
     [Fact]
+    public async Task CanceledSpeechLateRejectionDoesNotLogProviderContentOrPoisonNextRequest()
+    {
+        const string privateDetail = "SYNTHETIC_PRIVATE_PROVIDER_DETAIL_NOT_A_SECRET";
+        using var server = new LoopbackWebSocketServer();
+        using var identity = new TempDirectory("gateway-speech-");
+        await server.StartAsync();
+        var logger = new SpeechResponseLogger();
+        using var client = await ReadyClient(server, identity.Path, logger);
+        using var stop = new CancellationTokenSource();
+        var epoch = client.SessionMutationConnectionEpoch!.Value;
+        var canceled = client.SynthesizeSpeechAsync("First synthetic check.", epoch, stop.Token);
+        using var firstRequest = JsonDocument.Parse(await server.ReceiveTextAsync().WaitAsync(Deadline));
+        stop.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => canceled.WaitAsync(Deadline));
+
+        await server.SendTextAsync(JsonSerializer.Serialize(new
+        {
+            type = "res", id = firstRequest.RootElement.GetProperty("id").GetString(), ok = false,
+            error = new { code = "UNAVAILABLE", message = privateDetail }
+        }));
+        var warning = await logger.UncorrelatedWarning.Task.WaitAsync(Deadline);
+        Assert.DoesNotContain(privateDetail, warning, StringComparison.Ordinal);
+
+        var next = client.SynthesizeSpeechAsync("Second synthetic check.", epoch);
+        using var nextRequest = JsonDocument.Parse(await server.ReceiveTextAsync().WaitAsync(Deadline));
+        Assert.Equal("Second synthetic check.", nextRequest.RootElement.GetProperty("params").GetProperty("text").GetString());
+        await Reply(server, nextRequest, AudioPayload("openai"));
+        Assert.Equal("openai", (await next.WaitAsync(Deadline)).Provider);
+        Assert.DoesNotContain(logger.Messages, message => message.Contains(privateDetail, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task ChangedEpochIsRejectedBeforeSending()
     {
         using var server = new LoopbackWebSocketServer();
@@ -219,9 +252,10 @@ public sealed class GatewaySpeechTests
     private static Task Reply(LoopbackWebSocketServer server, JsonDocument request, JsonElement payload) =>
         server.SendTextAsync(JsonSerializer.Serialize(new { type = "res", id = request.RootElement.GetProperty("id").GetString(), ok = true, payload }));
 
-    private static async Task<OpenClawGatewayClient> ReadyClient(LoopbackWebSocketServer server, string identityPath)
+    private static async Task<OpenClawGatewayClient> ReadyClient(LoopbackWebSocketServer server, string identityPath,
+        IOpenClawLogger? logger = null)
     {
-        var client = new OpenClawGatewayClient(server.WebSocketUrl, "test-token", identityPath: identityPath);
+        var client = new OpenClawGatewayClient(server.WebSocketUrl, "test-token", logger, identityPath: identityPath);
         await client.ConnectAsync();
         var generation = (long)typeof(WebSocketClientBase).GetProperty("CurrentConnectionGeneration", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(client)!;
         // Follow the existing media protocol fixture: real socket and response correlation,
@@ -231,6 +265,25 @@ public sealed class GatewaySpeechTests
         Set(client, "_grantedOperatorScopes", new[] { "operator.read", "operator.write" });
         Set(client, "_advertisedServerMethods", new[] { "tts.status", "tts.speak" });
         return client;
+    }
+
+    private sealed class SpeechResponseLogger : IOpenClawLogger
+    {
+        private readonly ConcurrentQueue<string> _messages = new();
+        public string[] Messages => _messages.ToArray();
+        public TaskCompletionSource<string> UncorrelatedWarning { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void Info(string message) => _messages.Enqueue(message);
+        public void Debug(string message) => _messages.Enqueue(message);
+        public void Trace(string message) => _messages.Enqueue(message);
+        public void Warn(string message)
+        {
+            _messages.Enqueue(message);
+            if (message.StartsWith("Gateway request failed", StringComparison.Ordinal))
+                UncorrelatedWarning.TrySetResult(message);
+        }
+        public void Error(string message, Exception? ex = null) =>
+            _messages.Enqueue(message + ex?.ToString());
     }
 
     private static void Set(OpenClawGatewayClient client, string field, object value) =>

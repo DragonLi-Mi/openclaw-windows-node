@@ -2897,7 +2897,9 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
 
         if (string.IsNullOrEmpty(method))
         {
-            _logger.Warn($"Gateway request failed: {message}");
+            // A canceled request may have retired its correlation before this reply.
+            // Provider errors can contain private content, so log no response body.
+            _logger.Warn("Gateway request failed for an uncorrelated response.");
             return;
         }
 
