@@ -270,7 +270,7 @@ internal sealed class ReactorBoardView : Component<BoardViewProps>
                     body,
                     DashboardsPresentation.KindLabel(widget, kinds),
                     snapshot.GatewayOrigin,
-                    snapshot.AuthorizationFailedWidgets.Contains(widget.Name),
+                    snapshot.TicketFailures.TryGetValue(widget.Name, out var failure) ? failure : null,
                     name => model.Current?.ReportWidgetUnauthorized(name),
                     name => model.Current?.ReportWidgetReady(name),
                     name => model.Current?.RetryWidget(name),

@@ -3,13 +3,19 @@ using OpenClaw.Shared.Dashboards;
 
 namespace OpenClawTray.Dashboards;
 
+internal enum BoardWidgetTicketFailure
+{
+    RefreshUnavailable,
+    RepeatedRejection,
+}
+
 internal sealed record BoardDocumentSnapshot(
     DashboardLoadStatus Status,
     BoardSnapshot? Board,
     string? Error,
     string ActiveTabId,
     ImmutableHashSet<string> VisitedTabs,
-    ImmutableHashSet<string> AuthorizationFailedWidgets,
+    ImmutableDictionary<string, BoardWidgetTicketFailure> TicketFailures,
     ImmutableArray<PluginWidgetKind> PluginWidgetKinds,
     Uri? GatewayOrigin)
 {
@@ -36,6 +42,7 @@ internal sealed class BoardDocumentModel : IDisposable
     private readonly Action<Action> _post;
     private readonly Func<TimeSpan, Action, IDisposable> _schedule;
     private readonly Dictionary<string, int> _unauthorizedCounts = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _waitingForTicket = new(StringComparer.Ordinal);
     private readonly object _loadGate = new();
     private IDisposable? _renewal;
     private int _generation;
@@ -122,7 +129,7 @@ internal sealed class BoardDocumentModel : IDisposable
             var origin = _client.GatewayHttpOrigin;
             await Apply(
                 generation,
-                current => ApplyPendingFocus(Accept(current, board, kinds, origin), generation),
+                current => ApplyPendingFocus(AcceptTickets(current, board, kinds, origin), generation),
                 () => ScheduleRenewal(board)).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -133,7 +140,8 @@ internal sealed class BoardDocumentModel : IDisposable
                 Status = current.Board is null ? DashboardLoadStatus.Error : current.Status,
                 Error = ex.Message,
                 // Widgets waiting on this refresh for a renewed ticket won't get one; show their error with Retry.
-                AuthorizationFailedWidgets = current.AuthorizationFailedWidgets.Union(_unauthorizedCounts.Keys),
+                TicketFailures = current.TicketFailures.SetItems(_waitingForTicket.Select(name =>
+                    KeyValuePair.Create(name, BoardWidgetTicketFailure.RefreshUnavailable))),
             }).ConfigureAwait(false);
         }
     }
@@ -156,25 +164,52 @@ internal sealed class BoardDocumentModel : IDisposable
         _unauthorizedCounts[name] = ++count;
         if (count >= MaxUnauthorizedRefreshes)
         {
-            Publish(Snapshot with { AuthorizationFailedWidgets = Snapshot.AuthorizationFailedWidgets.Add(name) });
+            _waitingForTicket.Remove(name);
+            Publish(Snapshot with
+            {
+                TicketFailures = Snapshot.TicketFailures.SetItem(name, BoardWidgetTicketFailure.RepeatedRejection),
+            });
             return;
         }
+        _waitingForTicket.Add(name);
         QueueRefresh();
     }
 
     public void ReportWidgetReady(string name)
     {
         _unauthorizedCounts.Remove(name);
-        if (Snapshot.AuthorizationFailedWidgets.Contains(name))
-            Publish(Snapshot with { AuthorizationFailedWidgets = Snapshot.AuthorizationFailedWidgets.Remove(name) });
+        _waitingForTicket.Remove(name);
+        if (Snapshot.TicketFailures.ContainsKey(name))
+            Publish(Snapshot with { TicketFailures = Snapshot.TicketFailures.Remove(name) });
     }
 
     /// <summary>Clears a widget's authorization failure and refetches its ticket.</summary>
     public void RetryWidget(string name)
     {
         _unauthorizedCounts.Remove(name);
-        Publish(Snapshot with { AuthorizationFailedWidgets = Snapshot.AuthorizationFailedWidgets.Remove(name) });
+        _waitingForTicket.Remove(name);
+        Publish(Snapshot with { TicketFailures = Snapshot.TicketFailures.Remove(name) });
         QueueRefresh();
+    }
+
+    private BoardDocumentSnapshot AcceptTickets(
+        BoardDocumentSnapshot current,
+        BoardSnapshot board,
+        ImmutableArray<PluginWidgetKind> kinds,
+        Uri? gatewayOrigin)
+    {
+        var failures = current.TicketFailures;
+        foreach (var name in _waitingForTicket.ToArray())
+        {
+            var widget = board.Widgets.FirstOrDefault(widget => widget.Name == name);
+            var previous = current.Board?.Widgets.FirstOrDefault(widget => widget.Name == name);
+            if (widget is null || widget.FrameUrl is not null && widget.FrameUrl != previous?.FrameUrl)
+            {
+                _waitingForTicket.Remove(name);
+                failures = failures.Remove(name);
+            }
+        }
+        return Accept(current, board, kinds, gatewayOrigin) with { TicketFailures = failures };
     }
 
     internal static BoardDocumentSnapshot Accept(

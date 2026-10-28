@@ -8290,6 +8290,9 @@ Ga na inschrijving terug naar Instellingen &gt; Windows Update en controleer op 
   <data name="Dashboards_Widget_RenderTimeout" xml:space="preserve">
     <value>De widgetinhoud is niet volledig geladen. Selecteer Opnieuw proberen.</value>
   </data>
+  <data name="Dashboards_Widget_StoppedResponding" xml:space="preserve">
+    <value>De widgetinhoud reageert herhaaldelijk niet meer. Selecteer Opnieuw proberen.</value>
+  </data>
   <data name="Dashboards_Widget_AuthorizationFailed" xml:space="preserve">
     <value>Widgetautorisatie is mislukt na herhaalde vernieuwingspogingen.</value>
   </data>

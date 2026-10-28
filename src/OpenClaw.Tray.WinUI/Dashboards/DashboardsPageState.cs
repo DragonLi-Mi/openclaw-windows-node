@@ -11,6 +11,8 @@ namespace OpenClawTray.Dashboards;
 /// </summary>
 internal sealed class DashboardsPageState
 {
+    private string? _hubAgentId;
+
     public IBoardGatewayClient? Client { get; private set; }
     public bool Connected { get; private set; }
 
@@ -33,6 +35,14 @@ internal sealed class DashboardsPageState
     public required Func<TimeSpan, Action, IDisposable> Schedule { get; init; }
 
     public event Action? Changed;
+
+    public void ApplyNavigation(IEnumerable<string> agentIds, string hubAgentId, BoardSessionTarget? target)
+    {
+        var agent = target?.AgentId ?? (_hubAgentId == hubAgentId ? AgentId : hubAgentId);
+        _hubAgentId = hubAgentId;
+        SetAgents(agentIds, agent);
+        Open(target);
+    }
 
     public void SetConnection(IBoardGatewayClient? client, bool connected)
     {

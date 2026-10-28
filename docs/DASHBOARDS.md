@@ -78,7 +78,7 @@ Status values: **Done** (available natively), **Step 2/3** (scheduled),
 | Web item | Native equivalent | Data source | Status |
 |---|---|---|---|
 | Open from gallery | Dashboard view inside the Dashboards page with Back | session key | Done |
-| Open from a session | Sessions page row menu "Open dashboard"; command palette | session key | Done |
+| Open from a session | Sessions page row menu "Open dashboard"; command palette; an explicit route agent also selects that gallery scope | session key, route `agent` | Done |
 | Widget grid with spans | 12-column grid with column/row spans | `sizeW`, `sizeH`, `position` | Done |
 | Tabs with overflow | Tab strip (`SelectorBar`), hidden for one tab, overflow menu after six | `tabs[]` ordered by `position` | Done |
 | Remote tab focus | Selects the requested tab | `board.command` `focus_tab` | Done |
@@ -98,10 +98,11 @@ Status values: **Done** (available natively), **Step 2/3** (scheduled),
 | HTML content in an isolated sandbox | WebView2 widget host (see Security) | `frameUrl`, `sandboxUrl` | Done |
 | Presentation `card`, `full-bleed`, `frameless` | Chrome padding and border variants | `presentation` | Done |
 | Loading, slow-loading notice, load timeout | Progress ring, slow notice after 10 s, timeout error | host lifecycle | Done |
-| Unauthorized ticket retries `board.get`; repeated failure message | Refetch, then "authorization failed" error | HTTP 401 | Done |
+| Unauthorized ticket retries `board.get`; repeated failure message | Refetch; a failed refresh shows content unavailable with Retry, while repeated ticket rejection shows the authorization error | HTTP 401 and refresh outcome | Done |
 | Sandbox origin required hint for remote Gateways | Same message after repeated authorization failures, or when the sandbox doesn't respond to three fresh relay pages | `sandboxOrigin` absent on non-loopback | Done |
 | Ticket renewal before expiry | Refetch board before `viewTicketTtlMs` elapses | `viewTicketTtlMs` | Done |
 | Error state with details and Retry | Error card with expandable details and Retry | host error | Done |
+| Browser or renderer repeatedly fails | Three automatic restarts, then the WebView closes and shows a localized error until Retry; crashes do not imply a sandbox configuration failure | WebView2 process failure | Done |
 | Theme matching | Initial `#theme=` seed and widget theme message on theme change | app theme | Done |
 | Auto height from content | Height reports applied to auto-height widgets | `openclaw:widget-size` | Done (toggle in Step 2) |
 | MCP app widget | Placeholder card until the MCP app host lands | `contentKind:"mcp-app"` | Step 3 |

@@ -112,10 +112,25 @@ public sealed class GatewayFixtureRun : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            try { await run.WriteReportAsync("startup-failed", ex); }
-            finally { await run.DisposeAsync(); }
+            await HandleStartupFailureAsync(ex,
+                () => run.WriteReportAsync("startup-failed", ex),
+                () => run.DisposeAsync().AsTask());
             throw;
         }
+    }
+
+    internal static async Task HandleStartupFailureAsync(
+        Exception startupFailure,
+        Func<Task> writeReport,
+        Func<Task> cleanup)
+    {
+        var failures = new List<Exception> { startupFailure };
+        try { await writeReport(); }
+        catch (Exception ex) { failures.Add(ex); }
+        try { await cleanup(); }
+        catch (Exception ex) { failures.Add(ex); }
+        if (failures.Count > 1)
+            throw new AggregateException("Fixture startup failed, and failure reporting or cleanup also failed.", failures);
     }
 
     private async Task StartAppAsync(CancellationToken cancellationToken)
@@ -505,6 +520,22 @@ public sealed class GatewayFixtureRun : IAsyncDisposable
         var browsers = FindOwnedBrowsers(_process);
         var owned = new List<Process> { _process };
         owned.AddRange(browsers);
+        try
+        {
+            await StopOwnedProcessesAsync(owned, async process =>
+            {
+                if (!process.HasExited)
+                    process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            });
+        }
+        finally { _process = null; }
+    }
+
+    internal static async Task StopOwnedProcessesAsync(
+        IReadOnlyCollection<Process> owned,
+        Func<Process, Task> stopProcess)
+    {
         var failures = new List<Exception>();
         try
         {
@@ -512,11 +543,10 @@ public sealed class GatewayFixtureRun : IAsyncDisposable
             {
                 try
                 {
-                    if (!process.HasExited)
-                        process.Kill(entireProcessTree: true);
-                    await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                    await stopProcess(process);
                 }
-                catch (Exception ex) when (ex is TimeoutException or System.ComponentModel.Win32Exception or InvalidOperationException)
+                catch (Exception ex) when (ex is TimeoutException or System.ComponentModel.Win32Exception
+                    or InvalidOperationException or AggregateException)
                 {
                     // Still attempt every retained child. Preserve failures rather than
                     // masking them or leaving later browser handles unprocessed.
@@ -528,7 +558,6 @@ public sealed class GatewayFixtureRun : IAsyncDisposable
         {
             foreach (var process in owned)
                 process.Dispose();
-            _process = null;
         }
         if (failures.Count > 0)
             throw new AggregateException("Fixture process cleanup failed.", failures);

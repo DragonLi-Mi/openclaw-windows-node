@@ -27,7 +27,6 @@ public sealed partial class DashboardsPage : Page
     private ReactorHostControl? _host;
     private AppState? _appState;
     private HubWindow? _hub;
-    private string? _hubAgentId;
 
     public DashboardsPage()
     {
@@ -37,7 +36,6 @@ public sealed partial class DashboardsPage : Page
 
     internal void Initialize(HubWindow hub, string? tag)
     {
-        var repeat = _state is not null;
         _state ??= new DashboardsPageState
         {
             Post = DispatcherQueue.AsPost(),
@@ -50,11 +48,7 @@ public sealed partial class DashboardsPage : Page
             OpenConnection = () => ((IAppCommands)CurrentApp).Navigate("connection"),
         };
         _hub = hub;
-        // Re-opening the route keeps the agent picked in the page unless the hub's own agent changed.
-        var agent = repeat && hub.CurrentAgentId == _hubAgentId ? _state.AgentId : hub.CurrentAgentId;
-        _hubAgentId = hub.CurrentAgentId;
-        _state.SetAgents(hub.GetAgentIds(), agent);
-        _state.Open(DashboardsRoute.TryParseSession(tag));
+        _state.ApplyNavigation(hub.GetAgentIds(), hub.CurrentAgentId, DashboardsRoute.TryParseSession(tag));
 
         if (_appState is null)
         {
@@ -120,7 +114,6 @@ public sealed partial class DashboardsPage : Page
         }
         _state = null;
         _hub = null;
-        _hubAgentId = null;
     }
 
     private sealed class TimerLease(DispatcherQueueTimer timer) : IDisposable

@@ -8289,6 +8289,9 @@ Après votre inscription, revenez dans Paramètres &gt; Windows Update et recher
   <data name="Dashboards_Widget_RenderTimeout" xml:space="preserve">
     <value>Le contenu du widget n'a pas fini de se charger. Sélectionnez Réessayer.</value>
   </data>
+  <data name="Dashboards_Widget_StoppedResponding" xml:space="preserve">
+    <value>Le contenu du widget a cessé de répondre à plusieurs reprises. Sélectionnez Réessayer.</value>
+  </data>
   <data name="Dashboards_Widget_AuthorizationFailed" xml:space="preserve">
     <value>L'autorisation du widget a échoué après plusieurs tentatives d'actualisation.</value>
   </data>

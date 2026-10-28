@@ -8289,6 +8289,9 @@
   <data name="Dashboards_Widget_RenderTimeout" xml:space="preserve">
     <value>小工具內容未完成載入。請選取 [重試]。</value>
   </data>
+  <data name="Dashboards_Widget_StoppedResponding" xml:space="preserve">
+    <value>小工具內容多次停止回應。請選取 [重試]。</value>
+  </data>
   <data name="Dashboards_Widget_AuthorizationFailed" xml:space="preserve">
     <value>多次重新整理後，小工具授權仍失敗。</value>
   </data>

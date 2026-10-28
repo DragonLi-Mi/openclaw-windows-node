@@ -15,6 +15,17 @@ internal enum BoardWidgetWebHostStatus
 
 internal sealed record BoardWidgetWebHostState(BoardWidgetWebHostStatus Status, string? Detail = null);
 
+internal static class BoardWidgetRetryPolicy
+{
+    public const int MaxFrameAttempts = 3;
+    public const int MaxCrashRestarts = 3;
+
+    public static BoardWidgetWebHostStatus? TerminalStatus(bool crashed, int frameAttempts, int crashRestarts) =>
+        crashed
+            ? crashRestarts > MaxCrashRestarts ? BoardWidgetWebHostStatus.Failed : null
+            : frameAttempts >= MaxFrameAttempts ? BoardWidgetWebHostStatus.SandboxUnreachable : null;
+}
+
 /// <summary>
 /// One widget document to host. <see cref="Scale"/> below 1 renders a
 /// passive miniature for gallery previews.

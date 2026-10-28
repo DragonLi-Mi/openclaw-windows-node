@@ -170,6 +170,34 @@ public sealed class DashboardGalleryModelTests
         new([.. keys.Select(key => new DashboardSessionRow { Session = new SessionInfo { Key = key, AgentId = "main" } })], hasMore, next, keys.Length);
 }
 
+public sealed class DashboardsPageStateTests
+{
+    [Theory]
+    [InlineData("main", null, "research")]
+    [InlineData("main", "ops", "ops")]
+    [InlineData("ops", null, "ops")]
+    [InlineData("ops", "research", "research")]
+    [InlineData("main", "unlisted", "unlisted")]
+    public void Navigation_ExplicitAgentWinsOtherwisePreservesSelectionUntilTheHubChanges(
+        string hubAgent, string? routeAgent, string expectedAgent)
+    {
+        var state = new DashboardsPageState
+        {
+            Post = action => action(),
+            Schedule = new FakeScheduler().Schedule,
+        };
+        state.ApplyNavigation(["main", "research", "ops"], "main", null);
+        state.SelectAgent("research");
+        var target = routeAgent is null ? null : new BoardSessionTarget("global", routeAgent);
+
+        state.ApplyNavigation(["main", "research", "ops"], hubAgent, target);
+
+        Assert.Equal(expectedAgent, state.AgentId);
+        Assert.Contains(expectedAgent, state.AgentIds);
+        Assert.Equal(target, state.OpenTarget);
+    }
+}
+
 public sealed class BoardDocumentModelTests
 {
     private static readonly BoardSessionTarget Target = new("agent:main:dashboard:ops", "main");
@@ -219,13 +247,13 @@ public sealed class BoardDocumentModelTests
 
         model.ReportWidgetUnauthorized("chart");
         model.ReportWidgetUnauthorized("chart");
-        Assert.DoesNotContain("chart", model.Snapshot.AuthorizationFailedWidgets);
+        Assert.DoesNotContain("chart", model.Snapshot.TicketFailures.Keys);
 
         model.ReportWidgetUnauthorized("chart");
-        Assert.Contains("chart", model.Snapshot.AuthorizationFailedWidgets);
+        Assert.Equal(BoardWidgetTicketFailure.RepeatedRejection, model.Snapshot.TicketFailures["chart"]);
 
         model.RetryWidget("chart");
-        Assert.DoesNotContain("chart", model.Snapshot.AuthorizationFailedWidgets);
+        Assert.DoesNotContain("chart", model.Snapshot.TicketFailures.Keys);
     }
 
     [Fact]
@@ -325,8 +353,87 @@ public sealed class BoardDocumentModelTests
         model.ReportWidgetUnauthorized("chart");
         await model.LoadAsync();
 
-        Assert.Contains("chart", model.Snapshot.AuthorizationFailedWidgets);
+        Assert.Equal(BoardWidgetTicketFailure.RefreshUnavailable, model.Snapshot.TicketFailures["chart"]);
         Assert.NotNull(model.Snapshot.Board);
+    }
+
+    [Fact]
+    public async Task FailedRefresh_DoesNotRejectAWidgetAlreadyGivenANewTicket()
+    {
+        var client = new FakeBoardClient();
+        client.Boards.Enqueue(Board(1, ("main", 0)) with
+        {
+            Widgets = [Widget("chart", 100_000) with { FrameUrl = "/chart?bt=old" }],
+        });
+        client.Boards.Enqueue(Board(2, ("main", 0)) with
+        {
+            Widgets = [Widget("chart", 100_000) with { FrameUrl = "/chart?bt=new" }],
+        });
+        using var model = new BoardDocumentModel(client, Target, action => action(), new FakeScheduler().Schedule);
+        await model.LoadAsync();
+        model.ReportWidgetUnauthorized("chart");
+
+        client.BoardFailure = new InvalidOperationException("unrelated refresh failed");
+        await model.LoadAsync();
+
+        Assert.Equal("/chart?bt=new", Assert.Single(model.Snapshot.Board!.Widgets).FrameUrl);
+        Assert.DoesNotContain("chart", model.Snapshot.TicketFailures.Keys);
+    }
+
+    [Fact]
+    public async Task RenewedTicket_ClearsAnEarlierRefreshFailure()
+    {
+        var client = new FakeBoardClient();
+        client.Boards.Enqueue(Board(1, ("main", 0)) with
+        {
+            Widgets = [Widget("chart", 100_000) with { FrameUrl = "/chart?bt=old" }],
+        });
+        using var model = new BoardDocumentModel(client, Target, action => action(), new FakeScheduler().Schedule);
+        await model.LoadAsync();
+        client.BoardFailure = new InvalidOperationException("ticket refresh failed");
+        model.ReportWidgetUnauthorized("chart");
+        Assert.Equal(BoardWidgetTicketFailure.RefreshUnavailable, model.Snapshot.TicketFailures["chart"]);
+
+        client.BoardFailure = null;
+        client.Boards.Enqueue(Board(2, ("main", 0)) with
+        {
+            Widgets = [Widget("chart", 100_000) with { FrameUrl = "/chart?bt=new" }],
+        });
+        await model.LoadAsync();
+
+        Assert.DoesNotContain("chart", model.Snapshot.TicketFailures.Keys);
+    }
+
+    [Fact]
+    public async Task RepeatedRejection_KeepsItsReasonUntilExplicitRetry()
+    {
+        var client = new FakeBoardClient();
+        var original = Board(1, ("main", 0)) with
+        {
+            Widgets = [Widget("chart", 100_000) with { FrameUrl = "/chart?bt=old" }],
+        };
+        client.Boards.Enqueue(original);
+        using var model = new BoardDocumentModel(client, Target, action => action(), new FakeScheduler().Schedule);
+        await model.LoadAsync();
+        client.BoardFailure = new InvalidOperationException("refresh unavailable");
+        for (var attempt = 0; attempt < BoardDocumentModel.MaxUnauthorizedRefreshes; attempt++)
+            model.ReportWidgetUnauthorized("chart");
+
+        await model.LoadAsync();
+        Assert.Equal(BoardWidgetTicketFailure.RepeatedRejection, model.Snapshot.TicketFailures["chart"]);
+
+        client.BoardFailure = null;
+        client.Boards.Enqueue(original with
+        {
+            Revision = 2,
+            Widgets = [Widget("chart", 100_000) with { FrameUrl = "/chart?bt=new" }],
+        });
+        await model.LoadAsync();
+        Assert.Equal(BoardWidgetTicketFailure.RepeatedRejection, model.Snapshot.TicketFailures["chart"]);
+
+        client.Boards.Enqueue(original with { Revision = 3 });
+        model.RetryWidget("chart");
+        Assert.DoesNotContain("chart", model.Snapshot.TicketFailures.Keys);
     }
 
     [Fact]
@@ -424,6 +531,22 @@ public sealed class BoardWidgetWebHostRequestTests
         var preview = new BoardWidgetWebHostRequest(widget, Origin, Scale: 0.25).DocumentKey;
         Assert.Equal(preview, new BoardWidgetWebHostRequest(widget, Origin, Scale: 0.31).DocumentKey);
         Assert.NotEqual(key, preview);
+    }
+}
+
+public sealed class BoardWidgetRetryPolicyTests
+{
+    [Theory]
+    [InlineData(true, 3, 1, null)]
+    [InlineData(true, 3, 3, null)]
+    [InlineData(true, 1, 4, BoardWidgetWebHostStatus.Failed)]
+    [InlineData(false, 2, 0, null)]
+    [InlineData(false, 3, 0, BoardWidgetWebHostStatus.SandboxUnreachable)]
+    [InlineData(false, 3, 3, BoardWidgetWebHostStatus.SandboxUnreachable)]
+    public void TerminalStatus_CrashesAreNotSandboxFailures(
+        bool crashed, int frameAttempts, int crashRestarts, object? expected)
+    {
+        Assert.Equal(expected, BoardWidgetRetryPolicy.TerminalStatus(crashed, frameAttempts, crashRestarts));
     }
 }
 

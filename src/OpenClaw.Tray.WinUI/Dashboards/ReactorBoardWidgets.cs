@@ -16,7 +16,7 @@ internal sealed record BoardWidgetCellProps(
     BoardWidgetBodyKind Body,
     string KindLabel,
     Uri? GatewayOrigin,
-    bool AuthorizationFailed,
+    BoardWidgetTicketFailure? TicketFailure,
     Action<string> OnUnauthorized,
     Action<string> OnReady,
     Action<string> OnRetryAuthorization,
@@ -170,12 +170,14 @@ internal sealed class ReactorBoardWidgetCell : Component<BoardWidgetCellProps>
             BoardWidgetUrlPolicy.TryResolveSandboxUrl(
                 widget.SandboxUrl, widget.SandboxPort, widget.SandboxOrigin, origin, BoardWidgetHostPage.PageUri, out var sandbox) &&
             BoardWidgetUrlPolicy.SandboxOriginRequired(widget, sandbox);
-        if (props.AuthorizationFailed)
+        if (props.TicketFailure is { } failure)
         {
             return ReactorBoardWidgets.Error(
-                LocalizationHelper.GetString(SandboxHint()
-                    ? "Dashboards_Widget_SandboxOriginRequired"
-                    : "Dashboards_Widget_AuthorizationFailed"),
+                LocalizationHelper.GetString(failure == BoardWidgetTicketFailure.RefreshUnavailable
+                    ? "Dashboards_Widget_ContentUnavailable"
+                    : SandboxHint()
+                        ? "Dashboards_Widget_SandboxOriginRequired"
+                        : "Dashboards_Widget_AuthorizationFailed"),
                 null,
                 () => props.OnRetryAuthorization(widget.Name));
         }

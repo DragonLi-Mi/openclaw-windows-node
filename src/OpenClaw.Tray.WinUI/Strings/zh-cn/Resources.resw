@@ -8289,6 +8289,9 @@
   <data name="Dashboards_Widget_RenderTimeout" xml:space="preserve">
     <value>小组件内容未完成加载。请选择“重试”。</value>
   </data>
+  <data name="Dashboards_Widget_StoppedResponding" xml:space="preserve">
+    <value>小组件内容多次停止响应。请选择“重试”。</value>
+  </data>
   <data name="Dashboards_Widget_AuthorizationFailed" xml:space="preserve">
     <value>多次刷新后，小组件授权仍失败。</value>
   </data>

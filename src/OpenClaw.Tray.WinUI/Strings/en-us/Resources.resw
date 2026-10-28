@@ -8356,6 +8356,9 @@ After enrolling, return to Settings &gt; Windows Update and check for updates. I
   <data name="Dashboards_Widget_RenderTimeout" xml:space="preserve">
     <value>Widget content didn't finish loading. Select Retry to try again.</value>
   </data>
+  <data name="Dashboards_Widget_StoppedResponding" xml:space="preserve">
+    <value>Widget content stopped responding repeatedly. Select Retry to try again.</value>
+  </data>
   <data name="Dashboards_Widget_AuthorizationFailed" xml:space="preserve">
     <value>Widget authorization failed after repeated refresh attempts.</value>
   </data>

@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
+using Microsoft.UI.Reactor.Hosting;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Markup;
@@ -9,12 +10,80 @@ using OpenClaw.Shared;
 using OpenClaw.Shared.Dashboards;
 using OpenClawTray.Dashboards;
 using OpenClawTray.Helpers;
+using static Microsoft.UI.Reactor.Factories;
+using static OpenClaw.Tray.UITests.TestSupport;
 
 namespace OpenClaw.Tray.UITests;
 
 [Collection(UICollection.Name)]
 public sealed class DashboardWebsiteIsolationTests(UIThreadFixture ui)
 {
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task TicketFailure_ShowsTheCorrectRecoveryMessage(bool remoteGateway, bool repeatedRejection)
+    {
+        ReactorHostControl? host = null;
+        ChatThemeProofScope? resources = null;
+        try
+        {
+            await ui.RunOnUIAsync(() =>
+            {
+                resources = new ChatThemeProofScope("Light");
+                var widget = new BoardWidget
+                {
+                    Name = "ticket-proof",
+                    TabId = "main",
+                    ContentKind = BoardWidgetContentKind.Html,
+                    SizeW = 6,
+                    SizeH = 4,
+                    Position = 0,
+                    Revision = 1,
+                    SandboxUrl = "/mcp-app-sandbox",
+                    SandboxPort = 18790,
+                };
+                var props = new BoardWidgetCellProps(widget, BoardWidgetBodyKind.Frame, "HTML",
+                    new Uri(remoteGateway ? "https://gateway.example.com/" : "http://127.0.0.1:18789/"),
+                    repeatedRejection ? BoardWidgetTicketFailure.RepeatedRejection : BoardWidgetTicketFailure.RefreshUnavailable,
+                    _ => { }, _ => { }, _ => { }, (_, _) => { }, ReducedMotion: true);
+                host = new ReactorHostControl { Width = 600, Height = 400 };
+                host.Mount(_ => Component<ReactorBoardWidgetCell, BoardWidgetCellProps>(props));
+                ui.Container.Children.Add(host);
+            });
+            await ui.YieldToRenderAsync();
+            await ui.RunOnUIAsync(() =>
+            {
+                ui.Container.UpdateLayout();
+                var expectedKey = !repeatedRejection ? "Dashboards_Widget_ContentUnavailable"
+                    : remoteGateway ? "Dashboards_Widget_SandboxOriginRequired"
+                    : "Dashboards_Widget_AuthorizationFailed";
+                var text = FindDescendants<TextBlock>(host!).Select(block => block.Text).ToArray();
+                Assert.Contains(LocalizationHelper.GetString(expectedKey), text);
+                if (!repeatedRejection)
+                {
+                    Assert.DoesNotContain(LocalizationHelper.GetString("Dashboards_Widget_AuthorizationFailed"), text);
+                    Assert.DoesNotContain(LocalizationHelper.GetString("Dashboards_Widget_SandboxOriginRequired"), text);
+                }
+                Assert.Contains(FindDescendants<Button>(host!), button =>
+                    button.Content is string label && label == LocalizationHelper.GetString("Dashboards_Retry"));
+            });
+        }
+        finally
+        {
+            await ui.RunOnUIAsync(() =>
+            {
+                if (host is not null)
+                {
+                    ui.Container.Children.Remove(host);
+                    host.Dispose();
+                }
+                resources?.Dispose();
+            });
+        }
+    }
+
     [Fact]
     public async Task OutOfRangeUpdateTimesRenderAsUnknownInsteadOfThrowing()
     {
@@ -58,6 +127,7 @@ public sealed class DashboardWebsiteIsolationTests(UIThreadFixture ui)
                 var secondView = await WaitForWebViewAsync(second);
                 var firstCore = firstView.CoreWebView2;
                 var secondCore = secondView.CoreWebView2;
+                var firstProfile = firstCore.Profile.ProfileName;
                 Assert.NotEqual(firstCore.Profile.ProfileName, secondCore.Profile.ProfileName);
                 Assert.True(firstCore.Profile.IsInPrivateModeEnabled);
                 Assert.True(secondCore.Profile.IsInPrivateModeEnabled);
@@ -75,12 +145,26 @@ public sealed class DashboardWebsiteIsolationTests(UIThreadFixture ui)
                 Assert.Equal("\"first-widget\"", await firstCore.ExecuteScriptAsync("localStorage.getItem('dashboard-proof')"));
                 Assert.Equal("null", await secondCore.ExecuteScriptAsync("localStorage.getItem('dashboard-proof')"));
 
+                var neighborCookie = secondCore.CookieManager.CreateCookie("dashboard-proof", "second-widget", url.Host, "/");
+                secondCore.CookieManager.AddOrUpdateCookie(neighborCookie);
+                await secondCore.ExecuteScriptAsync(
+                    "localStorage.setItem('dashboard-proof', 'second-widget'); window.dashboardNeighbor = 'still-loaded'");
+
                 // Retry replaces only its own WebView/profile and leaves its neighbor usable.
                 first.Update(url, attempt: 1);
                 var retried = await WaitForWebViewAsync(first);
                 Assert.NotSame(firstView, retried);
+                Assert.NotEqual(firstProfile, retried.CoreWebView2.Profile.ProfileName);
                 Assert.NotEqual(secondCore.Profile.ProfileName, retried.CoreWebView2.Profile.ProfileName);
-                Assert.Equal("null", await secondCore.ExecuteScriptAsync("localStorage.getItem('dashboard-proof')"));
+                await LoadSyntheticWebsiteAsync(retried.CoreWebView2, url);
+                Assert.Contains("Synthetic website", await retried.CoreWebView2.ExecuteScriptAsync("document.body.textContent"));
+                Assert.DoesNotContain(await retried.CoreWebView2.CookieManager.GetCookiesAsync(url.AbsoluteUri),
+                    item => item.Name == "dashboard-proof");
+                Assert.Equal("null", await retried.CoreWebView2.ExecuteScriptAsync("localStorage.getItem('dashboard-proof')"));
+                Assert.Contains(await secondCore.CookieManager.GetCookiesAsync(url.AbsoluteUri),
+                    item => item.Name == "dashboard-proof" && item.Value == "second-widget");
+                Assert.Equal("\"second-widget\"", await secondCore.ExecuteScriptAsync("localStorage.getItem('dashboard-proof')"));
+                Assert.Equal("\"still-loaded\"", await secondCore.ExecuteScriptAsync("window.dashboardNeighbor"));
             }
             finally
             {

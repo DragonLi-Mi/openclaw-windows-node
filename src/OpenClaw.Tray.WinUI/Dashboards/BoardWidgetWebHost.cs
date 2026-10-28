@@ -28,16 +28,6 @@ internal sealed class BoardWidgetWebHost : Control
     private static readonly TimeSpan s_initialRetryDelay = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan s_maxRetryDelay = TimeSpan.FromSeconds(30);
 
-    /// <summary>Fresh relay pages tried before an unresponsive sandbox becomes a terminal error.</summary>
-    internal const int MaxFrameAttempts = 3;
-
-    /// <summary>
-    /// Restarts after the widget's browser or renderer process fails. Unlike
-    /// <see cref="MaxFrameAttempts"/>, a successful render doesn't reset this,
-    /// so content that crashes right after rendering ends in an error.
-    /// </summary>
-    internal const int MaxCrashRestarts = 3;
-
     private ContentPresenter? _contentRoot;
     private Panel? _themeTokens;
     private WebView2? _webView;
@@ -431,7 +421,7 @@ internal sealed class BoardWidgetWebHost : Control
 
     /// <summary>
     /// A sandbox frame that never became ready gets a fresh relay page after
-    /// backoff. After <see cref="MaxFrameAttempts"/> pages the sandbox is
+    /// backoff. After <see cref="BoardWidgetRetryPolicy.MaxFrameAttempts"/> pages the sandbox is
     /// treated as unreachable (for example a derived sandbox port that a
     /// proxy or tunnel doesn't forward) and the widget shows a terminal error.
     /// </summary>
@@ -440,16 +430,18 @@ internal sealed class BoardWidgetWebHost : Control
         // One failing page can report several failures (process exit, frame error, deadline); retry it once.
         if (!_isLoaded || _request is null || _frameRetryTimer is not null)
             return;
-        if (crashed && ++_crashRestarts > MaxCrashRestarts)
+        if (crashed)
         {
-            Teardown(closeWebView: false);
-            Report(BoardWidgetWebHostStatus.Failed, "widget content stopped responding repeatedly");
-            return;
+            _crashRestarts++;
+            // A process failure is not evidence that the remote sandbox is unreachable.
+            _frameAttempts = 0;
         }
-        if (_frameAttempts >= MaxFrameAttempts)
+        if (BoardWidgetRetryPolicy.TerminalStatus(crashed, _frameAttempts, _crashRestarts) is { } terminal)
         {
-            Teardown(closeWebView: false);
-            Report(BoardWidgetWebHostStatus.SandboxUnreachable);
+            Teardown(closeWebView: true);
+            Report(terminal, terminal == BoardWidgetWebHostStatus.Failed
+                ? LocalizationHelper.GetString("Dashboards_Widget_StoppedResponding")
+                : null);
             return;
         }
         _frameRetryTimer = Schedule(_frameRetryTimer, _frameRetryDelay, Restart);

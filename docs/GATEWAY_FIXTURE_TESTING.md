@@ -399,7 +399,9 @@ visible widget text in owned-window captures because UI Automation on some
 hosts stops at the WebView pane. A pixel guard also requires the deployment
 curve's plot area to have a luminance range of at least 64; a blank SVG cannot
 pass merely because its heading rendered. The companion mounted test verifies that two
-same-origin website widgets do not share cookies or local storage.
+same-origin website widgets do not share cookies or local storage. Retrying one
+widget must load a fresh synthetic page without clearing its neighbor's cookie,
+storage value or in-memory document marker.
 The integrations-tab capture loads the reserved public `https://example.com/`
 page and therefore needs outbound HTTPS. It uses no production Gateway or
 browser credentials.
