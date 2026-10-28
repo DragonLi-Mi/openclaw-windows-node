@@ -87,10 +87,13 @@ public sealed class WslGatewayRemoval
             await WindowsNodeBootstrapContextStep.ForgetRemovedDistroAsync(ctx, ct).ConfigureAwait(false);
             RequireResidualDeletionAuthority(ctx, registry, expected);
             RemoveMatchingSetupState(ctx);
-            // Retain the target and its identity until every installation cleanup step succeeds.
-            GatewayIdentityRemoval.Remove(registry, expected);
+            // Finish and verify ownership metadata cleanup while the saved target still exists, so a
+            // locked marker or receipt leaves a retryable target instead of stale metadata.
             ManagedDistroOwnership.DeleteMarker(ctx.LocalDataDir, ctx.DistroName!, installPath);
+            if (ManagedDistroOwnership.HasPathBoundMarkerEvidence(ctx.LocalDataDir, ctx.DistroName!))
+                throw new IOException("The WSL ownership marker could not be deleted. The saved Gateway was retained for retry.");
             File.Delete(ReceiptPath(ctx, expected));
+            GatewayIdentityRemoval.Remove(registry, expected);
             return new(PipelineOutcome.Success, Message: "The selected WSL Gateway was removed. Other gateways and Companion data were preserved.");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

@@ -214,7 +214,9 @@ public sealed class LocalGatewaySettingsRenderingTests(UIThreadFixture ui, ITest
                 Assert.DoesNotContain("WSL", setup.Text);
                 break;
             case "legacy-native":
-                Assert.StartsWith("Stops this legacy native gateway", body.Text);
+                Assert.StartsWith("Permanently removes this legacy native gateway", body.Text);
+                Assert.Contains("profile folder", body.Text);
+                Assert.DoesNotContain("not deleted", body.Text);
                 AssertNativePreservationCopy(body.Text);
                 break;
             case "custom-wsl":

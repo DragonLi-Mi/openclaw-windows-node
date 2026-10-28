@@ -9,8 +9,6 @@ namespace OpenClaw.Tray.UITests;
 public sealed class GatewayRemovalConsentTests(ITestOutputHelper output)
 {
     [Theory]
-    [InlineData("shared-token")]
-    [InlineData("bootstrap-token")]
     [InlineData("signature")]
     [InlineData("browser-port")]
     [InlineData("label")]
@@ -29,8 +27,6 @@ public sealed class GatewayRemovalConsentTests(ITestOutputHelper output)
             : LocalGatewaySettings.CaptureRemovalAuthority(confirmed);
         var changed = change switch
         {
-            "shared-token" => confirmed with { SharedGatewayToken = "new-fixture-token" },
-            "bootstrap-token" => confirmed with { BootstrapToken = "new-fixture-bootstrap" },
             "signature" => confirmed with { RequiresV2Signature = true },
             "browser-port" => confirmed with { BrowserControlPort = 19999 },
             "label" => confirmed with { FriendlyName = "Changed" },

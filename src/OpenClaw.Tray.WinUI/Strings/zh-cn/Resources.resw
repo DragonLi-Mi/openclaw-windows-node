@@ -4985,7 +4985,7 @@
     <value>永久删除此 Windows 程序包的隔离网关账户、工作区、配置、凭据和启动记录。使用同一程序包和 Windows 账户的其他 Companion 配置文件也将失去访问权限。Store 中的 Gateway 应用、WSL 网关、其他已保存的网关、Companion 设置和 MCP 令牌将予以保留。</value>
   </data>
   <data name="SettingsPage_RemoveLegacyNativeBody" xml:space="preserve">
-    <value>从 Companion 中删除此旧版原生网关已保存的连接和凭据。请先停止旧版网关。其自身的配置文件数据不会被删除。Store 中的 Gateway 应用、WSL 网关、其他已保存的网关、Companion 设置和 MCP 令牌将予以保留。</value>
+    <value>永久删除此旧版原生网关已保存的连接和凭据，以及 Companion 网关数据中它的配置文件夹，包括其配置和工作区文件。请先停止旧版网关。Store 中的 Gateway 应用、WSL 网关、其他已保存的网关、Companion 设置和 MCP 令牌将予以保留。</value>
   </data>
   <data name="SettingsPage_RemoveWslBody" xml:space="preserve">
     <value>永久删除 {0} 中的 WSL 网关、其磁盘映像、已保存的连接和网关凭据。其他网关、本地 AI 文件、Companion 设置、启动项、执行批准、MCP 令牌和根设备密钥将予以保留。</value>

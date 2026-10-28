@@ -68,9 +68,10 @@ Local AI files.
 WSL removal passes the confirmed gateway ID and a full-record authority digest to the headless
 engine's dedicated `WslGatewayRemoval` path, not its profile-wide uninstaller.
 `LocalGatewaySettings.CaptureRemovalAuthority` covers every saved record field
-except `LastConnected`. The existing `--gateway-binding` argument carries that
+except `LastConnected` and the rotating `SharedGatewayToken` and `BootstrapToken`,
+which are nulled before hashing. The existing `--gateway-binding` argument carries that
 opaque digest, never credentials. Both tray forwarding and engine admission
-reject same-ID credential or other field drift rather than accepting a fresh
+reject same-ID ownership drift (endpoint, signature, port, label, distro) rather than accepting a fresh
 baseline after confirmation. Endpoint-only bindings cannot authorize removal.
 The on-disk retry receipt keeps its separate endpoint/registration binding so
 previous interrupted-removal receipts remain usable with fresh full-record consent.

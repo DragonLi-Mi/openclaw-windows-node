@@ -102,6 +102,25 @@ public sealed class WslGatewayRemovalTests : IDisposable
     }
 
     [Fact]
+    public async Task LockedReceiptKeepsSavedTargetForRetry()
+    {
+        FileStream? held = null;
+        _remove = () =>
+        {
+            FinishDistroRemoval();
+            var receipt = Directory.GetFiles(_ctx.LocalDataDir, "wsl-removal-*.json").Single();
+            held = new FileStream(receipt, FileMode.Open, FileAccess.Read, FileShare.None);
+        };
+        try
+        {
+            Assert.Equal(PipelineOutcome.Failed, (await Run()).Outcome);
+            AssertRetryTarget();
+            Assert.True(WslGatewayRemoval.HasRemovalReceipt(_ctx.LocalDataDir, _target));
+        }
+        finally { held?.Dispose(); }
+    }
+
+    [Fact]
     public async Task SuccessfulRemovalDeletesReceipt()
     {
         Assert.Equal(PipelineOutcome.Success, (await Run()).Outcome);

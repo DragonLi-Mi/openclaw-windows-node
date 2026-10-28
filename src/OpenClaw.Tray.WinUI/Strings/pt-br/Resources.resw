@@ -5004,7 +5004,7 @@ Não foi possível verificar o MXC. Os comandos são bloqueados. Repare a instal
     <value>Remove permanentemente a conta isolada do gateway deste pacote do Windows, seu espaço de trabalho, configuração, credenciais e registros de inicialização. Outros perfis do Companion que usam o mesmo pacote e a mesma conta do Windows também perderão o acesso. O aplicativo Gateway da Store, os gateways WSL, os outros gateways salvos, as configurações do Companion e o token MCP são preservados.</value>
   </data>
   <data name="SettingsPage_RemoveLegacyNativeBody" xml:space="preserve">
-    <value>Remove do Companion a conexão salva e as credenciais deste gateway nativo legado. Interrompa primeiro o gateway legado. Os dados do perfil dele não são excluídos. O aplicativo Gateway da Store, os gateways WSL, os outros gateways salvos, as configurações do Companion e o token MCP são preservados.</value>
+    <value>Remove permanentemente a conexão salva e as credenciais deste gateway nativo legado, além da pasta de perfil dele nos dados de gateway do Companion, incluindo a configuração e os arquivos do espaço de trabalho. Interrompa primeiro o gateway legado. O aplicativo Gateway da Store, os gateways WSL, os outros gateways salvos, as configurações do Companion e o token MCP são preservados.</value>
   </data>
   <data name="SettingsPage_RemoveWslBody" xml:space="preserve">
     <value>Remove permanentemente o gateway WSL em {0}, sua imagem de disco, a conexão salva e as credenciais do gateway. Os outros gateways, os arquivos de IA local, as configurações do Companion, as entradas de inicialização, as aprovações de execução, o token MCP e a chave raiz do dispositivo são preservados.</value>

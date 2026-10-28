@@ -5032,7 +5032,7 @@ MXC could not be verified. Commands are blocked. Repair the installation or retr
     <value>Permanently removes this Windows package's isolated gateway account, workspace, configuration, credentials, and startup records. Other Companion profiles using the same package and Windows account will also lose access. The Gateway Store app, WSL gateways, other saved gateways, Companion settings, and MCP token are preserved.</value>
   </data>
   <data name="SettingsPage_RemoveLegacyNativeBody" xml:space="preserve">
-    <value>Removes this legacy native gateway's saved connection and credentials from Companion. Stop the legacy gateway first. Its own profile data is not deleted. The Gateway Store app, WSL gateways, other saved gateways, Companion settings, and MCP token are preserved.</value>
+    <value>Permanently removes this legacy native gateway's saved connection, credentials, and its profile folder under Companion's gateway data, including its configuration and workspace files. Stop the legacy gateway first. The Gateway Store app, WSL gateways, other saved gateways, Companion settings, and MCP token are preserved.</value>
   </data>
   <data name="SettingsPage_RemoveWslBody" xml:space="preserve">
     <value>Permanently removes the WSL gateway in {0}, its disk image, saved connection, and gateway credentials. Other gateways, Local AI files, Companion settings, startup entries, execution approvals, the MCP token, and the root device key are preserved.</value>

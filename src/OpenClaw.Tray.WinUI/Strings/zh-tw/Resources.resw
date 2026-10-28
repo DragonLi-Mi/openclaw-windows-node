@@ -4985,7 +4985,7 @@
     <value>永久移除此 Windows 套件的隔離閘道帳戶、工作區、設定、認證資訊和啟動記錄。使用相同套件和 Windows 帳戶的其他 Companion 設定檔也將失去存取權。Store 中的 Gateway 應用程式、WSL 閘道、其他已儲存的閘道、Companion 設定和 MCP 權杖都會保留。</value>
   </data>
   <data name="SettingsPage_RemoveLegacyNativeBody" xml:space="preserve">
-    <value>從 Companion 移除此舊版原生閘道已儲存的連線和認證資訊。請先停止舊版閘道。其本身的設定檔資料不會被刪除。Store 中的 Gateway 應用程式、WSL 閘道、其他已儲存的閘道、Companion 設定和 MCP 權杖都會保留。</value>
+    <value>永久移除此舊版原生閘道已儲存的連線和認證資訊，以及 Companion 閘道資料中它的設定檔資料夾，包括其設定和工作區檔案。請先停止舊版閘道。Store 中的 Gateway 應用程式、WSL 閘道、其他已儲存的閘道、Companion 設定和 MCP 權杖都會保留。</value>
   </data>
   <data name="SettingsPage_RemoveWslBody" xml:space="preserve">
     <value>永久移除 {0} 中的 WSL 閘道、其磁碟映像、已儲存的連線和閘道認證資訊。其他閘道、本機 AI 檔案、Companion 設定、啟動項目、執行核准、MCP 權杖和根裝置金鑰都會保留。</value>
