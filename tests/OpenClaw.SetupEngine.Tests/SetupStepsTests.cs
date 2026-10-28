@@ -2116,6 +2116,31 @@ public class SetupStepsTests : IDisposable
     }
 
     [Fact]
+    public async Task InstallCli_OfficialInstallerUsesSqliteCapableNodeAndVerifiesInstalledRuntime()
+    {
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            (_, command, _) =>
+                command.Contains("tools/node/bin/node --version", StringComparison.Ordinal)
+                    ? Ok("v24.22.1")
+                    : command.EndsWith("openclaw --version", StringComparison.Ordinal)
+                        ? Ok("OpenClaw 2026.10.5")
+                        : Ok());
+        var config = new SetupConfig();
+        GatewayInstallPolicy.ValidateAndApply(config);
+
+        var result = await new InstallCliStep().ExecuteAsync(
+            CreateContext(config, commands), CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.Message);
+        var install = Assert.Single(commands.WslCalls,
+            call => call.Command.Contains("curl -fsSL", StringComparison.Ordinal));
+        Assert.Contains("--node-version '24.22.1'", install.Command);
+        Assert.Contains(commands.WslCalls,
+            call => call.Command.Contains("tools/node/bin/node --version", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task InstallCli_TransientDnsFailureRecoversOnSecondPipelineAttempt()
     {
         var downloadAttempts = 0;
