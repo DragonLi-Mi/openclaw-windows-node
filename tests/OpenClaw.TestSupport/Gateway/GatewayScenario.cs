@@ -255,12 +255,13 @@ public sealed partial class GatewayScenario
                 selectionRequired = requireAgentSelection,
                 agents = new[]
                 {
-                    new { id = "main", name = "Fixture Main", identity = new { name = "Fixture Main" } },
-                    new { id = "research", name = "Fixture Research", identity = new { name = "Fixture Research" } }
+                    new { id = "main", name = "Fixture Main", workspace = "/fixture/workspace", identity = new { name = "Fixture Main" } },
+                    new { id = "research", name = "Fixture Research", workspace = "/fixture/research", identity = new { name = "Fixture Research" } }
                 }
             }),
             ["node.list"] = JsonSerializer.SerializeToElement(new { ts = Epoch.ToUnixTimeMilliseconds(), nodes = Array.Empty<object>() }),
-            ["projects.list"] = JsonSerializer.SerializeToElement(new { projects = Array.Empty<object>() }),
+            ["question.list"] = JsonSerializer.SerializeToElement(new { questions = Array.Empty<object>() }),
+            ["projects.list"] = JsonSerializer.SerializeToElement(new { projects = Array.Empty<object>(), recents = Array.Empty<object>() }),
             ["environments.list"] = JsonSerializer.SerializeToElement(new
             {
                 environments = new[]

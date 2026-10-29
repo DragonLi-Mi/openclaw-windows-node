@@ -566,12 +566,83 @@ foreach ($token in @(
 }
 
 $trayUiStep = Get-StepBlock -Text $uiJob -Name "Run Tray UI Tests"
-Assert-Contains -Text $trayUiStep -Expected '-Filter "Category!=Accessibility&Category!=NativeOnboardingProof"' `
-    -Message "Tray UI tests must exclude accessibility and native-onboarding proof cases."
+Assert-Contains -Text $trayUiStep -Expected '-Filter "Category!=Accessibility&Category!=NativeOnboardingProof&Category!=GatewayFixture"' `
+    -Message "Tray UI tests must exclude cases owned by the accessibility, native-onboarding and strict Gateway fixture lanes."
 Assert-Contains -Text $trayUiStep -Expected "timeout-minutes: 15" `
     -Message "Tray UI tests must have an outer timeout rather than consuming the six-hour job limit."
 Assert-Contains -Text $trayUiStep -Expected "-HangTimeoutSeconds 300" `
     -Message "Tray UI tests must collect the interrupted test sequence on a five-minute hang."
+
+$fixtureStep = Get-StepBlock -Text $uiJob -Name "Run mock Gateway application scenarios"
+foreach ($token in @(
+        'timeout-minutes: 30',
+        './scripts/test-gateway-fixture.ps1',
+        '-AppPath .\src\OpenClaw.Tray.WinUI\bin\Debug\net10.0-windows10.0.22621.0\win-x64\OpenClaw.Tray.WinUI.exe',
+        '-ArtifactsDirectory .\TestResults\GatewayFixture',
+        '-Screenshots'
+    )) {
+    Assert-Contains -Text $fixtureStep -Expected $token -Message "Mock Gateway CI step is missing '$token'."
+}
+foreach ($token in @('continue-on-error:', 'OPENCLAW_RUN_MXC_E2E', 'OPENCLAW_RUN_E2E')) {
+    Assert-NotContains -Text $fixtureStep -Unexpected $token -Message "Mock Gateway CI must run by default without real Gateway opt-ins: '$token'."
+}
+Assert-Contains -Text $uiJob -Expected 'runs-on: windows-latest' `
+    -Message "Mock Gateway application scenarios must use the ordinary Windows hosted runner."
+if ($uiJob.IndexOf('name: Install WindowsAppRuntime', [StringComparison]::Ordinal) -ge
+    $uiJob.IndexOf('name: Run mock Gateway application scenarios', [StringComparison]::Ordinal) -or
+    $uiJob.IndexOf('name: Run mock Gateway application scenarios', [StringComparison]::Ordinal) -ge
+    $uiJob.IndexOf('name: Verify DevBuild identity marker', [StringComparison]::Ordinal)) {
+    throw 'Mock Gateway scenarios must run after matching WindowsAppRuntime installation and before DevBuild changes the app identity.'
+}
+$runtimeStep = Get-StepBlock -Text $uiJob -Name 'Install WindowsAppRuntime'
+foreach ($token in @('Directory.Build.props', 'MicrosoftWindowsAppSDKVersion', '$channel/$version/windowsappruntimeinstall-x64.exe', '$LASTEXITCODE -ne 0')) {
+    Assert-Contains -Text $runtimeStep -Expected $token -Message "UI runtime installation must match the candidate SDK and fail closed: '$token'."
+}
+$desktopStep = Get-StepBlock -Text $uiJob -Name 'Configure UI desktop'
+Assert-Contains -Text $desktopStep -Expected './scripts/Set-CiDesktopResolution.ps1' `
+    -Message 'Hosted UI proof must configure and verify the desktop before launching tests.'
+Assert-NotContains -Text $desktopStep -Unexpected 'continue-on-error:' `
+    -Message 'Unsupported hosted desktop geometry must fail explicitly.'
+if ($uiJob.IndexOf('name: Configure UI desktop', [StringComparison]::Ordinal) -ge
+    $uiJob.IndexOf('name: Run Functional UI Tests', [StringComparison]::Ordinal)) {
+    throw 'Hosted desktop geometry must be configured before any UI tests run.'
+}
+Assert-Contains -Text $fixtureStep `
+    -Expected "if: `${{ !cancelled() && steps.ui-build.outcome == 'success' && steps.ui-runtime.outcome == 'success' && steps.ui-desktop.outcome == 'success' }}" `
+    -Message 'Fixture evidence must run after unrelated test failures, but require every launch prerequisite.'
+foreach ($entry in @(
+    @{ name = 'Build UI test projects'; id = 'ui-build' },
+    @{ name = 'Install WindowsAppRuntime'; id = 'ui-runtime' },
+    @{ name = 'Configure UI desktop'; id = 'ui-desktop' }
+)) {
+    Assert-Contains -Text (Get-StepBlock -Text $uiJob -Name $entry.name) -Expected "id: $($entry.id)" `
+        -Message "Fixture launch prerequisite must expose its real step outcome: '$($entry.id)'."
+}
+$screenshotPreparation = Get-StepBlock -Text $uiJob -Name 'Prepare mock Gateway screenshot publisher'
+foreach ($token in @('always()', "steps.gateway-fixture.outcome == 'failure'", 'npm ci', '--ignore-scripts')) {
+    Assert-Contains -Text $screenshotPreparation -Expected $token -Message "Screenshot uploader preparation must run after failed fixtures and use locked dependencies: '$token'."
+}
+Assert-NotContains -Text $screenshotPreparation -Unexpected "steps.gateway-fixture.outcome == 'success'" `
+    -Message 'Successful fixture runs must keep screenshots only in the complete diagnostic archive.'
+$screenshotPublication = Get-StepBlock -Text $uiJob -Name 'Publish browsable mock Gateway screenshots'
+foreach ($token in @('always()', "steps.screenshot-publisher.outcome == 'success'", 'actions/github-script@v9', 'await report.run({ core, context })')) {
+    Assert-Contains -Text $screenshotPublication -Expected $token -Message "Screenshot previews must publish after test failures through the Actions artifact runtime: '$token'."
+}
+Assert-NotContains -Text $screenshotPublication -Unexpected 'continue-on-error:' `
+    -Message 'Screenshot publication failures must remain visible failures.'
+$uiUpload = Get-StepBlock -Text $uiJob -Name 'Upload Test Results'
+foreach ($token in @('always()', 'test-results-ui', 'path: TestResults/')) {
+    Assert-Contains -Text $uiUpload -Expected $token -Message "The complete UI diagnostic archive must be retained: '$token'."
+}
+$fixtureRunner = Get-Content -LiteralPath (Join-Path $repoRootPath 'scripts\test-gateway-fixture.ps1') -Raw
+foreach ($token in @(
+        "`$start.Environment['OPENCLAW_RUN_GATEWAY_FIXTURE_UI'] = '1'",
+        "`$start.Environment['OPENCLAW_GATEWAY_FIXTURE_APP'] = `$resolvedApp",
+        "'Category=GatewayFixture' 'fixture-ui'",
+        '[int]$counters.total -le 0 -or [int]$counters.passed -ne [int]$counters.total'
+    )) {
+    Assert-Contains -Text $fixtureRunner -Expected $token -Message "Fixture runner lost its explicit-app, category or all-pass contract: '$token'."
+}
 foreach ($token in @('"--blame-hang"', '"--blame-hang-timeout"', '"--blame-hang-dump-type"', '"none"')) {
     Assert-Contains -Text $runner -Expected $token `
         -Message "CI test runner is missing hang diagnostic argument '$token'."

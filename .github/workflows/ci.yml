@@ -150,6 +150,17 @@ jobs:
     - name: Test upstream welcome copy monitoring
       run: node --test .github/scripts/welcome-content-notification.test.cjs
 
+    - name: Test mock Gateway screenshot report
+      shell: pwsh
+      run: |
+        npm ci --prefix .github/scripts/gateway-fixture-report --ignore-scripts --no-audit --no-fund
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        node --test .github/scripts/gateway-fixture-report/report.test.mjs
+
+    - name: Test hosted desktop preflight
+      shell: pwsh
+      run: ./scripts/test-ci-desktop-resolution.ps1
+
     - name: Validate documentation
       shell: pwsh
       run: ./scripts/validate-docs.ps1
@@ -683,6 +694,7 @@ jobs:
       run: dotnet tool install --global dotnet-coverage
 
     - name: Build UI test projects
+      id: ui-build
       run: |
         dotnet build tests/OpenClaw.Tray.UITests -c Debug -r win-x64 --no-restore
         dotnet build tests/OpenClawTray.FunctionalUI.Tests -c Debug -r win-x64 --no-restore
@@ -691,6 +703,7 @@ jobs:
     # framework MSIX. The hosted runner image does not preinstall it, so install
     # the runtime matching the repo-level WindowsAppSDK version.
     - name: Install WindowsAppRuntime
+      id: ui-runtime
       shell: pwsh
       run: |
         [xml]$props = Get-Content (Join-Path $env:GITHUB_WORKSPACE "Directory.Build.props")
@@ -712,6 +725,11 @@ jobs:
         & $exe --quiet
         if ($LASTEXITCODE -ne 0) { throw "WindowsAppRuntimeInstall failed with exit code $LASTEXITCODE" }
 
+    - name: Configure UI desktop
+      id: ui-desktop
+      shell: pwsh
+      run: ./scripts/Set-CiDesktopResolution.ps1
+
     - name: Run Functional UI Tests
       run: >
         ./scripts/Invoke-CiTest.ps1
@@ -728,8 +746,19 @@ jobs:
         -ResultsDirectory TestResults\TrayUI
         -TrxFileName OpenClaw.Tray.UITests.trx
         -Runtime win-x64
-        -Filter "Category!=Accessibility&Category!=NativeOnboardingProof"
+        -Filter "Category!=Accessibility&Category!=NativeOnboardingProof&Category!=GatewayFixture"
         -HangTimeoutSeconds 300
+
+    - name: Run mock Gateway application scenarios
+      id: gateway-fixture
+      if: ${{ !cancelled() && steps.ui-build.outcome == 'success' && steps.ui-runtime.outcome == 'success' && steps.ui-desktop.outcome == 'success' }}
+      timeout-minutes: 30
+      shell: pwsh
+      run: >
+        ./scripts/test-gateway-fixture.ps1
+        -AppPath .\src\OpenClaw.Tray.WinUI\bin\Debug\net10.0-windows10.0.22621.0\win-x64\OpenClaw.Tray.WinUI.exe
+        -ArtifactsDirectory .\TestResults\GatewayFixture
+        -Screenshots
 
     # Accessibility Insights CI pass: scans each page in the real app process.
     - name: Run Accessibility Tests (Axe.Windows)
@@ -791,6 +820,23 @@ jobs:
         name: test-results-ui
         path: TestResults/
         if-no-files-found: warn
+
+    - name: Prepare mock Gateway screenshot publisher
+      id: screenshot-publisher
+      if: always() && steps.gateway-fixture.outcome == 'failure'
+      shell: pwsh
+      run: npm ci --prefix .github/scripts/gateway-fixture-report --ignore-scripts --no-audit --no-fund
+
+    - name: Publish browsable mock Gateway screenshots
+      if: always() && steps.screenshot-publisher.outcome == 'success'
+      uses: actions/github-script@v9
+      with:
+        script: |
+          const path = require('node:path');
+          const { pathToFileURL } = require('node:url');
+          const report = await import(pathToFileURL(path.join(
+            process.env.GITHUB_WORKSPACE, '.github', 'scripts', 'gateway-fixture-report', 'report.mjs')).href);
+          await report.run({ core, context });
 
   setup-e2e:
     name: Setup and connect E2E (WSL Latest)
