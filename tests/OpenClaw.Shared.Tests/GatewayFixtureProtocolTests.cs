@@ -17,7 +17,7 @@ public sealed partial class GatewayFixtureProtocolTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ReadOnlyScenarios_ReturnEmptyChannelAndScopedSkillStatus(bool nativeSetup)
+    public async Task ReadOnlyScenarios_ReturnEmptyScopedSkillStatus(bool nativeSetup)
     {
         var scenario = nativeSetup
             ? GatewayScenario.CreateNativeSetup((method, _) =>
@@ -26,10 +26,6 @@ public sealed partial class GatewayFixtureProtocolTests
         var token = CreateToken();
         await using var server = await FixtureGatewayServer.StartAsync(scenario, token);
         await using var connected = await ConnectedClient.OpenAsync(server, token);
-        var channels = await connected.Client.GetChannelsStatusAsync();
-        Assert.NotNull(channels);
-        Assert.Empty(channels.Channels);
-        Assert.Empty(channels.ChannelOrder);
         foreach (var agent in new[] { "main", "research" })
         {
             var skills = await connected.Client.SendWizardRequestAsync("skills.status", new { agentId = agent });
@@ -639,9 +635,6 @@ public sealed partial class GatewayFixtureProtocolTests
     [InlineData("usage.cost", """{"days":-1}""", "positive integer")]
     [InlineData("projects.list", """{"unexpected":true}""", "Unsupported fixture request parameter")]
     [InlineData("environments.list", """{"unexpected":true}""", "Unsupported fixture request parameter")]
-    [InlineData("channels.status", """{"probe":"yes"}""", "must be a boolean")]
-    [InlineData("channels.status", """{"timeoutMs":-1}""", "positive integer")]
-    [InlineData("channels.status", """{"unexpected":true}""", "Unsupported fixture request parameter")]
     [InlineData("skills.status", """{"agentId":"unknown"}""", "Unknown fixture agentId")]
     [InlineData("skills.status", """{"unexpected":true}""", "Unsupported fixture request parameter")]
     public async Task RealClient_InvalidOrUnknownParametersFailExplicitly(string method, string json, string message)

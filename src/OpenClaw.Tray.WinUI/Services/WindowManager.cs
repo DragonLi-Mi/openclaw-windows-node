@@ -38,7 +38,8 @@ internal sealed record WindowManagerCallbacks(
     Func<bool, CancellationToken, Task>? ApplyNativeStartup = null,
     Func<ISettingsStore?>? GetSettingsStore = null,
     Func<LocalAiGatewayLifecycle?>? GetLocalAiGatewayLifecycle = null,
-    Func<SetupNativePreparation, CancellationToken, Task>? PublishNativePreparation = null);
+    Func<SetupNativePreparation, CancellationToken, Task>? PublishNativePreparation = null,
+    Func<string, Task>? OpenSetupDashboard = null);
 
 internal sealed class WindowManager : IWindowManager
 {
@@ -206,6 +207,13 @@ internal sealed class WindowManager : IWindowManager
         ct.ThrowIfCancellationRequested();
         if (_isShuttingDown)
             throw new InvalidOperationException("The application is shutting down.");
+        if (HubPageRegistry.GetNativeSetupDashboardPath(completion.Target.Destination) is { } dashboardPath)
+        {
+            var openDashboard = _callbacks.OpenSetupDashboard
+                ?? throw new InvalidOperationException("The Gateway dashboard launcher is unavailable.");
+            await openDashboard(dashboardPath);
+            return;
+        }
         Window window;
         if (request.WorkspaceDestination is { } destination)
             ShowWorkspace(destination, activate: false, preserveCurrent: false, nativeRequest: request);

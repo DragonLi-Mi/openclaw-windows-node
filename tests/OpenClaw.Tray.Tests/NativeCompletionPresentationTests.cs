@@ -406,19 +406,19 @@ public sealed class NativeCompletionPresentationTests
     }
 
     [Fact]
-    public void NativeChannelFocusUsesBoundFreshMetadataAndNeverStartsAuthentication()
+    public void NativeChannelDestinationsOpenGatewayDashboardAfterVerifiedConnection()
     {
-        var source = Read(@"src\OpenClaw.Tray.WinUI\Pages\ChannelsPage.xaml.cs");
-        var focus = source[source.IndexOf("private void ApplyNativeChannelFocus", StringComparison.Ordinal)..
-            source.IndexOf("private Expander BuildExpander", StringComparison.Ordinal)];
-        Assert.Contains("ReferenceEquals(snapshot, _nativeSnapshot)", focus);
-        Assert.Contains("SetupChannelFocusPolicy.GetAvailability", focus);
-        Assert.Contains("row.IsExpanded = true", focus);
-        Assert.Contains("row.Loaded += loaded", focus);
-        Assert.DoesNotContain("StartLinkingAsync", focus);
-        Assert.DoesNotContain("StartChannelAsync", focus);
-        Assert.DoesNotContain("SaveAsync", focus);
-        Assert.Contains("useBuiltInFallback: _nativeSetupRequest is null", source);
-        Assert.Contains("!ReferenceEquals(client, BoundClient)", source);
+        var manager = Read(@"src\OpenClaw.Tray.WinUI\Services\WindowManager.cs");
+        var handoff = manager[manager.IndexOf("public async Task ShowNativeSetupAsync", StringComparison.Ordinal)..];
+        Assert.True(handoff.IndexOf("request.GetConnectedClient(", StringComparison.Ordinal) <
+            handoff.IndexOf("GetNativeSetupDashboardPath", StringComparison.Ordinal));
+        Assert.Contains("await openDashboard(dashboardPath)", handoff);
+        Assert.Contains("_callbacks.OpenSetupDashboard", handoff);
+        var app = Read(@"src\OpenClaw.Tray.WinUI\App.xaml.cs");
+        var callback = app[app.IndexOf("OpenSetupDashboard: async path =>", StringComparison.Ordinal)..];
+        callback = callback[..callback.IndexOf("}));", StringComparison.Ordinal)];
+        Assert.Contains("CreateDashboardLauncher(", callback);
+        Assert.Contains("throw new InvalidOperationException(", callback);
+        Assert.Contains("await launcher.OpenAsync(path)", callback);
     }
 }

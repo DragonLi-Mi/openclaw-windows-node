@@ -721,7 +721,13 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
                     _autoStartMutationGate, enabled,
                     () => _settings?.AutoStart ?? throw new InvalidOperationException("Settings are unavailable."),
                     AutoStartManager.ApplySetupPreferenceAsync, ct),
-                GetSettingsStore: () => SettingsStore));
+                GetSettingsStore: () => SettingsStore,
+                OpenSetupDashboard: async path =>
+                {
+                    var launcher = CreateDashboardLauncher(() =>
+                        throw new InvalidOperationException("Windows did not open the Gateway dashboard."));
+                    await launcher.OpenAsync(path);
+                }));
         _updateCoordinator = new UpdateCoordinator(
             _appState,
             _settings,
@@ -1261,8 +1267,8 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
                     ShowHub();
                 break;
             case "quicksend": break; // Quick Send removed
-            case "history": ShowHub("channels"); break;
-            case "activity": ShowHub("channels"); break;
+            case "history": OpenDashboard("channels"); break;
+            case "activity": OpenDashboard("channels"); break;
             case "healthcheck": _ = RunHealthCheckAsync(userInitiated: true); break;
             case "checkupdates": _ = _updateCoordinator!.CheckForUpdatesUserInitiatedAsync(); break;
             case "settings": ShowSettings(); break;
@@ -1315,7 +1321,7 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
                 else if (action.StartsWith("dashboard:", StringComparison.Ordinal))
                     OpenDashboard(action["dashboard:".Length..]);
                 else if (action.StartsWith("activity:", StringComparison.Ordinal))
-                    ShowHub("channels");
+                    OpenDashboard("channels");
                 else if (action.StartsWith("channel:", StringComparison.Ordinal))
                     ToggleChannel(action[8..]);
                 else
@@ -3201,7 +3207,7 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
                 "status",
                 AppNotificationSeverity.Error,
                 $"channels:{channel.Name}:status-error",
-                "channels",
+                "dashboard:channels",
                 LocalizationHelper.GetString("AppNotification_ActionOpenChannels"),
                 id: BuildChannelIssueNotificationId(channel.Name));
         }
@@ -3770,19 +3776,6 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
         };
     }
 
-    private void ShowNotificationHistory()
-    {
-        // ActivityPage removed; legacy callers now land on the Channels page.
-        ShowHub("channels");
-    }
-
-    private void ShowActivityStream(string? filter = null)
-    {
-        // ActivityPage removed; legacy callers now land on the Channels page.
-        _ = filter;
-        ShowHub("channels");
-    }
-
     private async Task ShowOnboardingAsync()
     {
         if (_windowManager is not null)
@@ -4032,19 +4025,22 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
     {
         AsyncEventHandlerGuard.Run(async () =>
         {
-            var launcher = new GatewayDashboardLauncher(
-                EnsureSshTunnelConfigured,
-                () => TryResolveChatCredentials(out var url, out var token, out var source, out var bootstrap)
-                    ? new InteractiveGatewayCredential(url, token, bootstrap, source) : null,
-                async url => await global::Windows.System.Launcher.LaunchUriAsync(new Uri(url)),
+            var launcher = CreateDashboardLauncher(
                 () => AsyncEventHandlerGuard.Run(
                     () => _windowManager?.ShowDashboardLaunchFailureAsync(
                         () => OpenDashboard(path))
-                        ?? Task.CompletedTask, new AppLogger(), "Dashboard launch error"),
-                () => _appNotificationService?.Dismiss(GatewayDashboardLauncher.FailureNotificationId));
+                        ?? Task.CompletedTask, new AppLogger(), "Dashboard launch error"));
             await launcher.OpenAsync(path);
         }, new AppLogger(), nameof(OpenDashboard));
     }
+
+    private GatewayDashboardLauncher CreateDashboardLauncher(Action reportFailure) => new(
+        EnsureSshTunnelConfigured,
+        () => TryResolveChatCredentials(out var url, out var token, out var source, out var bootstrap)
+            ? new InteractiveGatewayCredential(url, token, bootstrap, source) : null,
+        async url => await global::Windows.System.Launcher.LaunchUriAsync(new Uri(url)),
+        reportFailure,
+        () => _appNotificationService?.Dismiss(GatewayDashboardLauncher.FailureNotificationId));
 
     // ── IAppCommands implementation ─────────────────────────────────────
 
